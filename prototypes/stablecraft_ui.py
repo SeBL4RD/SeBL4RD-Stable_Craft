@@ -521,6 +521,7 @@ class StableCraftApp(tk.Tk):
             and self.profile_key in SUPPORTED_PROFILES
             and self.pc_ok
             and self.comfy_ok
+            and self.models_ok
             and self.has_selection
         )
         self.generate_btn.config(
@@ -689,6 +690,7 @@ class StableCraftApp(tk.Tk):
         if error:
             self.models_ok = False
             self.models_status.config(text=f"Modèles : vérification impossible ({error})", fg=YELLOW)
+            self._update_generate_state()
             return
         if missing:
             self.models_ok = False
@@ -696,6 +698,7 @@ class StableCraftApp(tk.Tk):
         else:
             self.models_ok = True
             self.models_status.config(text="Modèles : OK", fg=GREEN)
+        self._update_generate_state()
 
     # ------------------------------------------------------------------
     # Actions
