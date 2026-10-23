@@ -1,0 +1,12 @@
+# Prototype outputs
+prototypes/out/
+
+# Rust
+target/
+**/target/
+
+# Local notes
+*.local.md
+*.log
+.DS_Store
+Thumbs.db
