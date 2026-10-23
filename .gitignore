@@ -1,6 +1,7 @@
 # Prototype outputs
 prototypes/out/
 __pycache__/
+demo/
 *.pyc
 
 # Local configuration (contains absolute paths)
