@@ -11,6 +11,11 @@ avec des modèles récents quantifiés en GGUF.
 > composite → FLUX.3 → nouveau calque + masque de calque featheré. L'intégration est
 > conçue comme une **application compagne installable**, sans fork de PhotoCraft.
 
+<p>
+<img src="docs/demo/stablecraft-ui.png" width="420" alt="UI StableCraft : statut, prompt, réglages et aperçu">
+<img src="docs/demo/photocraft-bridge.png" width="620" alt="PhotoCraft avec le calque StableCraft, son masque et le feather">
+</p>
+
 ---
 
 ## La décision : pas de fork
@@ -209,3 +214,9 @@ Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (compagnon + installateur),
 [`docs/MODELS.md`](docs/MODELS.md) (modèles et réglages) et
 [`docs/TESTLOG.md`](docs/TESTLOG.md) (journal de validation).
+
+## Licence
+
+StableCraft est sous licence **MIT** (voir [`LICENSE`](LICENSE)). Les modèles, ComfyUI
+et PhotoCraft ont leurs propres licences ; aucun poids de modèle n'est distribué dans
+ce dépôt.

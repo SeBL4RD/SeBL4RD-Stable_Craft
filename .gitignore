@@ -7,8 +7,9 @@ __pycache__/
 config.toml
 config.local.toml
 
-# Downloaded models
-models/
+# Downloaded models (keep the README)
+models/*
+!models/README.md
 models-*/
 
 # Rust
