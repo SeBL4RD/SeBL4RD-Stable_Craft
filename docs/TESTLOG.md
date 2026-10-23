@@ -86,6 +86,25 @@ ComfyUI pour le bridge.
 
 Preuve : `docs/demo/stablecraft-ui.png`.
 
+### Installateur
+
+Testé avec :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
+  -InstallDir .runtime\install_test3 `
+  -PhotoCraft "D:\Programmes\photocraft-0.14.0-windows-x64-portable\photocraft.exe" `
+  -ComfyPython "F:\ComfyUI_windows_portable\python_embeded\python.exe" `
+  -ConfigFile config.toml -NoShortcuts
+```
+
+- ✅ détection PhotoCraft / Python ComfyUI / Python UI ;
+- ✅ copie des fichiers, `tmp/`, `models/` ;
+- ✅ `config.toml` avec token, automation root, endpoint et Python réécrits ;
+- ✅ `launch.cmd` avec les flags du control channel ;
+- ✅ `uninstall.ps1` en UTF-8 BOM, conservation optionnelle des modèles/config ;
+- ✅ aucun téléchargement de modèle.
+
 ### Preuves
 
 - `docs/demo/photocraft-bridge.png` : UI PhotoCraft avec calque StableCraft, masque,

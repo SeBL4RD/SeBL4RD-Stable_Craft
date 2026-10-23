@@ -878,6 +878,12 @@ class StableCraftApp(tk.Tk):
                 self.proc.terminate()
             except Exception:  # noqa: BLE001
                 pass
+            try:
+                endpoint = str(self.cfg["comfyui"]["endpoint"]).rstrip("/")
+                request = urllib.request.Request(endpoint + "/interrupt", method="POST", data=b"")
+                urllib.request.urlopen(request, timeout=1)
+            except Exception:  # noqa: BLE001
+                pass
         self.destroy()
 
 

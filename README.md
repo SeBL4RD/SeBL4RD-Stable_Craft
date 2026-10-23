@@ -181,14 +181,26 @@ Le bouton Générer vérifie la connexion, la sélection et le profil, puis lanc
 En cas d'erreur (modèle manquant, ComfyUI down, sélection vide), le message est dans le
 journal et dans la barre de statut.
 
+### 4. Installateur
+
+[`installer/install.ps1`](installer/install.ps1) installe StableCraft à côté de
+PhotoCraft : détection des chemins, config, token, dossier temporaire, lanceur
+« PhotoCraft + StableCraft » et raccourcis. Aucun modèle n'est téléchargé.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
+```
+
+Voir [`installer/README.md`](installer/README.md) pour les options et les prérequis.
+
 Workflows API validés : [`workflows/`](workflows).
 
 ---
 
 ## Prochaines étapes
 
-1. **Installateur Inno Setup** : détection PhotoCraft/ComfyUI, raccourci « PhotoCraft +
-   StableCraft », config, token.
+1. **Bundle PyInstaller + Inno Setup** : supprimer la dépendance au Python système et
+   produire un vrai installeur `.exe`.
 2. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
 3. **FLUX.2 / Krea 2**, batch, outpaint.
 4. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
