@@ -1,0 +1,80 @@
+# Journal de validation
+
+## 2026-10-23 — PhotoCraft 0.14.0 + ComfyUI 0.42.1
+
+### Environnement
+
+- Windows x64
+- PhotoCraft portable 0.14.0 (`D:\Programmes\photocraft-0.14.0-windows-x64-portable`)
+- ComfyUI 0.42.1, port `12452`
+- NVIDIA RTX 3080 Ti 12 Go, 32 Go RAM
+- Modèles locaux uniquement, aucun téléchargement
+
+### Backend ComfyUI
+
+| Test | Résultat |
+|---|---|
+| FLUX.3 Klein Q8 + Qwen3-VL-4B FP8 + VAE FLUX.2, 16 steps, CFG 1 | ✅ édition globale, ~34 s |
+| FLUX.2 Klein 9B Q8 + Qwen3-8B Q4, 6 steps, CFG 1 | ✅ édition, ~60 s, plus texturé |
+| Krea 2 Edit Q4 (`krea2_turbo_edit`) + Qwen3-VL FP8 + nœuds krea2edit, 8 steps, CFG 1 | ✅ édition, silhouette modifiée |
+| Krea 2 Turbo Q4 (arch `krea2`) avec `UnetLoaderGGUF` | ❌ `Unexpected architecture type in GGUF file: 'krea2'` |
+| `Qwen3VL-4B-Instruct-Q4_K_M.gguf` avec `CLIPLoaderGGUF` pour Flux3 | ❌ `mat1 and mat2 shapes cannot be multiplied` |
+| `Qwen3VL-4B-Instruct-Q4_K_M.gguf` avec `CLIPLoaderGGUF` pour Krea2 | ❌ `Krea2 expects conditioning with 12x2560=30720 features` |
+
+### Control channel PhotoCraft
+
+| Commande | Résultat |
+|---|---|
+| `select.lasso` | ✅ bounds `[271,294,226,380]` |
+| `document.inspect` | ✅ `hasSelection`, `selectionBounds`, calques |
+| `app.save` composite PNG | ✅ |
+| `select.saveSelection` (canal « StableCraft Mask ») | ✅ création et remplacement |
+| `channel.duplicate` vers document grayscale | ✅ retourne `{document: 1}` |
+| `app.save` masque PNG | ✅ |
+| `file.close` document temporaire | ✅ |
+| `document.activate` | ✅ |
+| `app.open` PNG dans sous-dossier | ✅ |
+| `layer.copyToDocument` offset `[175,192]` | ✅ calque 14, bounds `[175,192,416,576]`, sélection préservée |
+| `layer.layerMask.revealSelection` | ✅ `hasMask: true` |
+| `layer.layerMask.edit {"feather": 10}` | ✅ `{density:100, feather:10}` |
+| `select.loadSelection` | ✅ sélection restaurée |
+| `ui.screenshot` | ✅ capture 1920×1032 |
+
+### Bridge CLI
+
+Commande testée :
+
+```powershell
+F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\bridge_cli.py `
+  --config config.toml `
+  --prompt "Recolor the dress fabric to royal blue. Keep the exact silhouette, neckline, skin, arms, legs, pose and background unchanged. Even studio lighting, no extra shadows or folds." `
+  --save-preview
+```
+
+Résultat :
+
+- crop `(180,224)` 400×544, padding 96 ;
+- génération 31,3 s, 16 steps, seed 2708149655317791484 ;
+- nouveau calque 28, bounds `[180,224,400,544]`, masque + feather 10 ;
+- sélection restaurée ;
+- preview `after.png` et capture UI.
+
+### Problèmes rencontrés
+
+1. **Connexion inactive** : PhotoCraft a fermé la connexion de contrôle pendant le
+   sampling ComfyUI (~36 s). `app.open` a échoué avec `WinError 10053`. Solution :
+   reconnecter avant la phase d'application. Implémenté dans `bridge_cli.py`.
+2. **Fichier en cours d'écriture** : `app.open` sur un PNG encore en écriture renvoie
+   `codec: unrecognized image format`. Attendre la fin de l'écriture.
+3. **Bord du masque** : un feather de 10 px sur un lasso serré laisse parfois
+   transparaître la couleur d'origine au bord (ourlet). Réglable via `--feather` ;
+   un `select.modify.expand` de 1–2 px pourrait améliorer.
+4. **PNG aplati** : `app.save` prévient que les calques/masques ne sont pas conservés
+   dans le PNG. Le document PhotoCraft, lui, garde le calque et le masque.
+
+### Preuves
+
+- `docs/demo/photocraft-bridge.png` : UI PhotoCraft avec calque StableCraft, masque,
+  densité 100 %, feather 10 px, sélection active.
+- `docs/demo/photocraft-flux3-blue.png` : rendu final.
+- `docs/demo/photocraft-crop.png` : crop envoyé à ComfyUI.

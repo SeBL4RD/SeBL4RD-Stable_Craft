@@ -47,7 +47,7 @@ stablecraft = "0.1.x"
 photocraft = "0.14.0"
 os = "windows-x64"
 status = "tested"
-notes = "Control channel, sélection, app.save, channel.duplicate, layer.copyToDocument."
+notes = "Lasso, app.save, select.saveSelection, channel.duplicate, layer.copyToDocument, layerMask.revealSelection/edit, select.loadSelection, app.open. Voir prototypes/bridge_cli.py."
 
 [[tested]]
 stablecraft = "0.1.x"
@@ -79,3 +79,10 @@ notes = "À vérifier."
 
 Le self-test vérifie ces points sur un document synthétique avant d'activer le bouton
 « Générer ».
+
+## Connexion inactive
+
+PhotoCraft peut fermer une connexion de contrôle restée inactive pendant le sampling
+ComfyUI (~30 s). Le bridge doit se reconnecter avant la phase d'application, puis
+retrouver le document original par son nom/chemin et réactiver sa sélection
+(`select.loadSelection`). C'est ce que fait `prototypes/bridge_cli.py`.

@@ -6,9 +6,10 @@ On sélectionne une zone au lasso, on écrit ce qu'on veut changer, et le résul
 dans un nouveau calque — sans toucher aux pixels d'origine. Le tout en local, sur sa GPU,
 avec des modèles récents quantifiés en GGUF.
 
-> **Statut** : preuve de concept validée le 23/10/2026. Le backend ComfyUI fonctionne.
-> L'intégration PhotoCraft est conçue comme une **application compagne installable**,
-> sans fork de PhotoCraft. Le pont control channel reste à tester de bout en bout.
+> **Statut** : preuve de concept validée le 23/10/2026. Le backend ComfyUI fonctionne,
+> et le **control channel de PhotoCraft 0.14.0 est validé de bout en bout** : lasso →
+> composite → FLUX.3 → nouveau calque + masque de calque featheré. L'intégration est
+> conçue comme une **application compagne installable**, sans fork de PhotoCraft.
 
 ---
 
@@ -45,10 +46,13 @@ Machine de test : **RTX 3080 Ti 12 Go**, 32 Go RAM, ComfyUI 0.42.1 sur le port `
 | **Lasso → crop contexte → édition → recomposition masquée** | ✅ robe verte, fond intact, contour fondu |
 | **FLUX.2 Klein 9B Q8** sur le même crop | ✅ plus texturé, mais réinterprète davantage la silhouette |
 | **Krea 2 Edit Q4** (`krea2_turbo_edit`) | ✅ robe verte très propre, fond/personnage préservés, silhouette modifiée |
+| **PhotoCraft 0.14.0 control channel** | ✅ lasso → `app.save` → ComfyUI → `layer.copyToDocument` → masque + feather |
 | Encodage texte | ⚠️ les GGUF Qwen3-VL ne marchent **pas** pour FLUX.3 ni Krea 2 ; il faut le FP8 safetensors |
 
 Images dans [`docs/demo/`](docs/demo) :
 
+- `photocraft-bridge.png` : PhotoCraft avec le calque StableCraft, son masque et le feather 10 px
+- `photocraft-flux3-blue.png` : résultat du bridge (robe bleue)
 - `lasso-before.png` → `lasso-after-flux3.png`
 - `comparison-original-flux3-flux2.png`
 - `krea2-edit.png`
@@ -107,23 +111,53 @@ macOS/Linux.
 
 ---
 
-## Prototype backend
+## Prototypes
 
-Le script [`prototypes/stablecraft_proto.py`](prototypes/stablecraft_proto.py) reproduit
-le flux complet **sans PhotoCraft** (image de test, lasso synthétique) :
+### 1. Backend seul, sans PhotoCraft
 
-1. calcule la bbox, ajoute 96 px de contexte, aligne sur 16 px ;
-2. uploade le crop dans ComfyUI ;
-3. lance le workflow FLUX.3 Klein ;
-4. récupère le PNG, le redimensionne au crop ;
-5. le recompose dans l'image d'origine via le masque feathered ;
-6. écrit `before.png`, `after.png`, `side_by_side.png`.
+[`prototypes/stablecraft_proto.py`](prototypes/stablecraft_proto.py) reproduit le flux
+sur une image de test avec un lasso synthétique : crop + contexte, ComfyUI, recomposition
+masquée, `before.png` / `after.png`.
 
 ```powershell
 F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\stablecraft_proto.py
 ```
 
-Prérequis : ComfyUI sur `http://127.0.0.1:12452` avec les modèles FLUX.3.
+### 2. Bridge complet avec PhotoCraft (validé)
+
+[`prototypes/bridge_cli.py`](prototypes/bridge_cli.py) fait le vrai flux :
+
+1. lit la sélection active via `document.inspect` ;
+2. sauvegarde le composite avec `app.save` ;
+3. crop avec contexte et alignement 16 px ;
+4. génère avec FLUX.3 Klein dans ComfyUI ;
+5. ouvre le résultat et le copie dans le document avec `layer.copyToDocument` ;
+6. crée le masque de calque depuis la sélection (`layer.layerMask.revealSelection`) ;
+7. applique le feather (`layer.layerMask.edit`) et restaure la sélection.
+
+Lance PhotoCraft avec le control channel :
+
+```powershell
+photocraft.exe --control 7878 `
+  --control-token-file C:\...\StableCraft\control.token `
+  --automation-read-root C:\...\StableCraft\tmp `
+  --automation-write-root C:\...\StableCraft\tmp
+```
+
+Fais un lasso dans PhotoCraft, puis :
+
+```powershell
+F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\bridge_cli.py `
+  --config config.toml `
+  --prompt "Change the dress to royal blue, keep the pose and background" `
+  --save-preview
+```
+
+Options utiles : `--dry-run` (géométrie seulement), `--no-apply` (génère sans insérer),
+`--padding`, `--feather`, `--steps`, `--seed`.
+
+Détail important : PhotoCraft peut fermer une connexion de contrôle restée inactive
+pendant le sampling ComfyUI. Le bridge se reconnecte avant la phase d'application.
 
 Workflows API validés : [`workflows/`](workflows).
 
@@ -131,12 +165,14 @@ Workflows API validés : [`workflows/`](workflows).
 
 ## Prochaines étapes
 
-1. **Valider le control channel** sur PhotoCraft 0.14.0 (portable, 87 Mo) : sélection,
-   `app.save`, `channel.duplicate`, `layer.copyToDocument`, masque.
-2. **Prototype bridge Python** sans UI, testé de bout en bout.
-3. **UI PySide6** + installateur Inno Setup.
-4. **Model manager** : détection, profils, téléchargements avec consentement.
-5. **MVP public**, puis FLUX.2/Krea 2/outpaint.
+1. **UI PySide6** : prompt, profils, previews, progression, bouton Générer/Annuler.
+2. **Installateur Inno Setup** : détection PhotoCraft/ComfyUI, raccourci « PhotoCraft +
+   StableCraft », config, token.
+3. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
+4. **FLUX.2 / Krea 2**, batch, outpaint.
+5. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
 
-Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft) et
-[`docs/MODELS.md`](docs/MODELS.md) (modèles et réglages).
+Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (compagnon + installateur),
+[`docs/MODELS.md`](docs/MODELS.md) (modèles et réglages) et
+[`docs/TESTLOG.md`](docs/TESTLOG.md) (journal de validation).

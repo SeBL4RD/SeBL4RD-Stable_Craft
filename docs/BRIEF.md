@@ -299,14 +299,40 @@ pas la version finale. Ici : un installateur, une connexion PhotoCraft/ComfyUI, 
 profil FLUX.3, le lasso → prompt → nouveau calque, et des erreurs lisibles. Le reste
 (FLUX.2, Krea 2, batch, outpaint, model manager complet) vient après.
 
-## 10. Ce qu'il reste à valider
+## 10. Ce qui a été validé sur PhotoCraft 0.14.0
 
-- Le control channel de PhotoCraft 0.14.0 : `app.save`, `channel.duplicate`,
-  `layer.copyToDocument`, `layer.layerMask.revealSelection`.
-- Le comportement de la sélection après activation du document original.
-- La conversion couleur des documents CMYK/Lab/16 bits.
-- Le temps de `app.save` sur un document 4K.
-- La compatibilité des commandes sur les builds suivants.
+Testé le 23/10/2026 avec PhotoCraft portable 0.14.0 et ComfyUI 0.42.1 :
 
-Tant que ces tests ne sont pas faits, le compagnon reste une hypothèse d'ingénierie,
-pas une certitude.
+- ✅ `select.lasso` + `document.inspect` : bounds corrects.
+- ✅ `app.save` du composite en PNG.
+- ✅ `select.saveSelection` (création puis remplacement du canal « StableCraft Mask »).
+- ✅ `channel.duplicate` du canal vers un document grayscale, `app.save` du masque,
+  `file.close` du document temporaire.
+- ✅ `layer.copyToDocument` : copie du résultat à `offset [x0, y0]`, bon calque,
+  bonnes bounds, sélection préservée.
+- ✅ `layer.layerMask.revealSelection` : masque de calque créé depuis le lasso.
+- ✅ `layer.layerMask.edit {"feather": 10}` : adoucissement non destructif.
+- ✅ `select.loadSelection` : sélection restaurée après application.
+- ✅ `app.open` d'un PNG dans un sous-dossier du write root.
+- ✅ Capture UI : calque « StableCraft — … », masque, densité 100 %, feather 10 px.
+
+Fichiers : `docs/demo/photocraft-bridge.png`, `docs/demo/photocraft-flux3-blue.png`,
+`prototypes/bridge_cli.py`.
+
+### Pièges découverts
+
+- PhotoCraft peut fermer une connexion de contrôle restée inactive pendant le sampling
+  ComfyUI (~30 s). Le bridge se reconnecte avant la phase d'application.
+- `app.save` d'un PNG aplati avertit que les calques/masques ne sont pas conservés :
+  c'est normal, le document PhotoCraft garde ses calques ; seul le PNG exporté est aplati.
+- Un `app.open` lancé pendant que le fichier est encore en cours d'écriture renvoie
+  « unrecognized image format ». Toujours attendre la fin de l'écriture.
+
+### Ce qui reste à valider
+
+- La conversion couleur des documents CMYK/Lab/16/32 bits.
+- Le temps de `app.save` sur un document 4K/8K.
+- La compatibilité des commandes sur les builds PhotoCraft suivants.
+- Le comportement sur macOS/Linux (le control channel est cross-platform, le launcher
+  et l'installateur sont à adapter).
+- Les profils FLUX.2/Krea 2 dans le bridge (les workflows sont validés séparément).

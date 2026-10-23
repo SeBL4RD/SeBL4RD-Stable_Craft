@@ -401,7 +401,7 @@ pas la version finale.
 - Installateur Windows + config.
 - Connexion PhotoCraft (control channel) + ComfyUI.
 - Un seul profil : **FLUX.3 Klein Edit**.
-- Lasso → prompt → preview → nouveau calque (alpha masqué).
+- Lasso → prompt → preview → nouveau calque + masque de calque featheré.
 - Détection des modèles locaux, message si manquant, aucun téléchargement automatique.
 - Annulation, erreurs lisibles, log local.
 - Testé sur PhotoCraft 0.14.0 + ComfyUI 0.42.1 + RTX 3080 Ti 12 Go.
@@ -415,17 +415,37 @@ pas la version finale.
 - Panneau natif upstream.
 - macOS/Linux.
 
-## 12. Prochaine étape technique
+## 12. Validation du 23/10/2026
 
-1. Télécharger PhotoCraft portable **0.14.0** (87 Mo) ou utiliser une installation
-   existante.
-2. Lancer PhotoCraft avec le control channel et un dossier temporaire.
-3. Écrire un prototype Python `bridge` qui exécute le flux complet sur une image de
-   test (lasso synthétique), avec les commandes ci-dessus.
-4. Vérifier les points incertains : sélection après `layer.copyToDocument`, ajout du
-   masque, comportement de `app.save` sur un document non RGB.
-5. Construire l'UI PySide6 et l'installateur.
-6. Ajouter la gestion des profils/modèles.
+Le control channel a été testé avec PhotoCraft portable **0.14.0** et ComfyUI 0.42.1 :
 
-Tant que ces tests ne sont pas faits, le control channel reste une hypothèse
-d'ingénierie, pas une certitude.
+- `select.lasso`, `document.inspect` : bounds corrects.
+- `app.save` du composite, puis crop.
+- `select.saveSelection` (création et remplacement du canal « StableCraft Mask »).
+- `channel.duplicate` vers un document grayscale, `app.save`, `file.close`.
+- `layer.copyToDocument` : offset, bounds, nom, sélection préservée.
+- `layer.layerMask.revealSelection`, `layer.layerMask.edit {feather}`.
+- `select.loadSelection` : sélection restaurée.
+- `app.open` d'un PNG dans un sous-dossier du write root.
+- Capture UI avec calque, masque, densité, feather.
+
+Le prototype [`../prototypes/bridge_cli.py`](../prototypes/bridge_cli.py) exécute tout
+le flux. Preuves visuelles : `docs/demo/photocraft-bridge.png` et
+`docs/demo/photocraft-flux3-blue.png`.
+
+### Pièges
+
+- PhotoCraft ferme parfois une connexion de contrôle inactive pendant le sampling
+  ComfyUI (~30 s). Le bridge se reconnecte avant l'application.
+- `app.save` d'un PNG aplati avertit que les calques/masques ne sont pas conservés ;
+  le document PhotoCraft, lui, garde tout.
+- Ne pas `app.open` un fichier encore en cours d'écriture.
+
+### Prochaines étapes
+
+1. UI PySide6 (prompt, profils, previews, progression).
+2. Installateur Inno Setup + lanceur « PhotoCraft + StableCraft ».
+3. Model manager (détection ComfyUI, consentement, dossier dédié).
+4. FLUX.2/Krea 2 dans le bridge.
+5. Tests CMYK/Lab/16 bits et documents 4K.
+6. PR upstream éventuelle pour un panneau natif.

@@ -13,6 +13,7 @@
 [app]
 language = "fr"
 theme = "dark"
+default_profile = "flux3_klein"
 
 [photocraft]
 # Laisse vide pour l'auto-détection.
@@ -22,6 +23,7 @@ control_port = 7878
 # Vide = %LOCALAPPDATA%/StableCraft/control.token
 # control_token_file = ""
 # Dossier temporaire pour app.save / app.open.
+# Doit être le même que --automation-write-root de PhotoCraft.
 # Vide = %LOCALAPPDATA%/StableCraft/tmp
 # automation_root = ""
 

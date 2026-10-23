@@ -5,8 +5,8 @@
 stablecraft = "0.1.x"
 photocraft = "0.14.0"
 os = "windows-x64"
-status = "planned"
-notes = "À tester : control channel, sélection, app.save, channel.duplicate, layer.copyToDocument, masque."
+status = "tested"
+notes = "Control channel, lasso, app.save, select.saveSelection, channel.duplicate, layer.copyToDocument, layerMask.revealSelection/edit, select.loadSelection, app.open."
 
 # [[tested]]
 # stablecraft = "0.1.x"
