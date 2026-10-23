@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "updated": "2026-10-23",
+  "profiles": {
+    "flux3_klein": {
+      "label": "FLUX.3 Klein Edit",
+      "description": "Édition instructionnelle, 16 steps, CFG 1. Meilleur compromis fidélité/VRAM sur 12 Go.",
+      "license": "FLUX Kommunity License",
+      "license_url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/blob/main/LICENSE.md",
+      "source": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy",
+      "recommended": true,
+      "vram_gb": 12,
+      "weights_gb": 11.6,
+      "settings": {
+        "steps": 16,
+        "cfg": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "resolution_megapixels": 1.0
+      },
+      "files": {
+        "unet": {
+          "filename": "flux-3-image-klein-Q8_0.gguf",
+          "folder": "unet",
+          "size": 6092755872,
+          "sha256": "af562de40a975439a0f55340221bf48c951e2fc5ad0e11df0bdd73c8091eefcf",
+          "download_url": null,
+          "note": "Conversion GGUF communautaire ; la source officielle est en safetensors."
+        },
+        "text_encoder": {
+          "filename": "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors",
+          "folder": "text_encoders",
+          "size": 5610000000,
+          "sha256": null,
+          "download_url": null,
+          "note": "Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fonctionne pas pour flux3."
+        },
+        "vae": {
+          "filename": "flux2_vae.safetensors",
+          "folder": "vae",
+          "size": 335000000,
+          "sha256": null,
+          "download_url": null
+        }
+      }
+    },
+    "flux2_klein_9b": {
+      "label": "FLUX.2 Klein 9B Edit",
+      "description": "Plus de texture et de détail ; 4 steps, CFG 1. Plus lourd, peut réinterpréter la silhouette.",
+      "license": "FLUX.2 Klein 9B : non-commercial ; 4B : Apache-2.0",
+      "license_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b",
+      "source": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b",
+      "recommended": false,
+      "vram_gb": 12,
+      "weights_gb": 14.3,
+      "settings": {
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "resolution_megapixels": 1.0
+      },
+      "files": {
+        "unet": {
+          "filename": "flux-2-klein-Distilled-9b-Q8_0.gguf",
+          "folder": "unet",
+          "size": 9978304800,
+          "sha256": "dfa8908dd58c5af6479b944f80558e226ee40a8fe0903729309e8d1b98fe5297",
+          "download_url": null,
+          "note": "Pour 12 Go, préférer un Q4_K_M du même modèle."
+        },
+        "text_encoder": {
+          "filename": "Qwen3-8B-Q4_K_M.gguf",
+          "folder": "text_encoders",
+          "size": 5027000000,
+          "sha256": null,
+          "download_url": null
+        },
+        "vae": {
+          "filename": "flux2_vae.safetensors",
+          "folder": "vae",
+          "size": 335000000,
+          "sha256": null,
+          "download_url": null
+        }
+      }
+    },
+    "krea2_edit": {
+      "label": "Krea 2 Edit",
+      "description": "Édition par instruction avec les nœuds krea2edit. Turbo 8 steps, CFG 1.",
+      "license": "Krea 2 Community License",
+      "license_url": "https://huggingface.co/krea/Krea-2-Turbo/blob/main/LICENSE.md",
+      "source": "https://huggingface.co/Comfy-Org/Krea-2",
+      "recommended": false,
+      "vram_gb": 12,
+      "weights_gb": 12.6,
+      "requires_nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+      "settings": {
+        "steps": 8,
+        "cfg": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "ref_boost": 4.0,
+        "grounding_px": 768
+      },
+      "files": {
+        "unet": {
+          "filename": "krea2_turbo_edit-Q4_K_M.gguf",
+          "folder": "unet",
+          "size": 7259460736,
+          "sha256": "665b636aecc29ba05ded98a6e6863408a98eec225e08896b449b4e0ba03895b3",
+          "download_url": null,
+          "note": "Modèle fusionné (arch qwen_image) ; Krea-2-Turbo-Q4_K_M.gguf (arch krea2) n'est pas chargeable par UnetLoaderGGUF."
+        },
+        "text_encoder": {
+          "filename": "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors",
+          "folder": "text_encoders",
+          "size": 5610000000,
+          "sha256": null,
+          "download_url": null,
+          "note": "Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fournit pas les 12 couches attendues par krea2."
+        },
+        "vae": {
+          "filename": "qwen_image_vae.safetensors",
+          "folder": "vae",
+          "size": 250000000,
+          "sha256": null,
+          "download_url": null
+        }
+      }
+    }
+  }
+}

@@ -60,18 +60,19 @@ PhotoCraft est un éditeur natif **Rust + egui/eframe + wgpu**, sans Electron ni
 
 ### Deux voies d'intégration
 
-| | Fork natif (recommandé) | Compagnon externe |
+| | Fork natif (écarté) | Compagnon + installateur (retenu) |
 |---|---|---|
-| UI | Panneau docké dans PhotoCraft | Fenêtre séparée |
+| UI | Panneau docké dans PhotoCraft | Fenêtre séparée, alignable |
 | Accès composite/sélection | Direct, en mémoire | Via `app.save` + `channel.duplicate` + fichiers temporaires |
 | Calques/masques | Direct, une étape d'undo | Via commandes `layer.copyToDocument` / `layerMask` |
 | Déploiement | Un seul exe, build Rust | PhotoCraft + app + control channel |
-| Maintenance | Rebase upstream | Aucune modification de PhotoCraft |
+| Maintenance | Rebase upstream à chaque release | Aucune modification de PhotoCraft |
 | UX | Vraie intégration | Correcte mais moins « magique » |
 
-Le control channel de PhotoCraft n'expose **pas** de méthode pour récupérer le composite
-ou le masque en mémoire. Un compagnon doit donc sauvegarder des PNG temporaires et
-ouvrir des documents jetables. C'est faisable, mais on perd l'avantage principal.
+Le control channel n'expose **pas** de méthode pour récupérer le composite ou le masque
+en mémoire. Le compagnon sauvegarde donc des PNG temporaires et ouvre des documents
+jetables. C'est le prix de l'absence de fork ; il est acceptable pour le MVP, et une
+petite commande upstream (`document.renderPreview`) pourrait l'éliminer plus tard.
 
 ## 3. ComfyUI : le bon backend
 
@@ -240,38 +241,72 @@ se fait sur le thread UI dans `jobs::run`'s `apply`, en une étape `Session::edi
    hors sélection ; la recomposition masquée protège l'extérieur, mais l'intérieur peut
    dériver. Prévoir « garder le reste inchangé » dans le prompt et un bouton « Affiner ».
 
-## 7. Phasage recommandé
+## 7. Décision retenue : compagnon + installateur, pas de fork
+
+Le fork est écarté : PhotoCraft bouge vite, et maintenir un fork serait plus coûteux
+que de s'appuyer sur son API d'automatisation.
+
+StableCraft sera une **application compagne installable** :
+
+- elle détecte une installation PhotoCraft existante ;
+- elle se connecte à son **control channel** local (token, loopback) ;
+- elle lit la sélection et le composite via `document.inspect`, `app.save` et
+  `channel.duplicate` ;
+- elle insère le résultat via `layer.copyToDocument` et, si possible, un masque de
+  calque (`layer.layerMask.revealSelection`) ;
+- elle parle à ComfyUI en HTTP ;
+- elle vérifie la compatibilité **par capacités** (`engine.commands`) et non par un
+  simple numéro de version.
+
+PhotoCraft n'est pas modifié et se met à jour normalement. La contrepartie est une
+fenêtre séparée et des allers-retours PNG temporaires, acceptables pour le MVP.
+
+Voir [`ARCHITECTURE.md`](ARCHITECTURE.md) pour le détail.
+
+## 8. Phasage
 
 **Phase 0 — fait**
 - Recherche des deux repos.
-- Validation ComfyUI + FLUX.3 + FLUX.2.
+- Validation ComfyUI + FLUX.3 + FLUX.2 + Krea 2 Edit.
 - PoC lasso/crop/masque.
+- Recherche modèles, variantes « Edit », réglages, encodeurs, VRAM.
 
-**Phase 1 — MVP natif**
-- Fork PhotoCraft + crate `photocraft-comfy` + panneau.
-- Mode Edit lasso avec FLUX.3 Klein.
-- Nouveau calque + masque, undo, progression, annulation.
-- Préférences endpoint/profil.
-- Tests : workflow JSON, géométrie crop, application couche.
+**Phase 1 — MVP compagnon**
+- Installateur Windows + config TOML.
+- Connexion PhotoCraft control channel + ComfyUI.
+- Un seul profil : FLUX.3 Klein Edit.
+- Lasso → prompt → preview → nouveau calque masqué.
+- Détection des modèles, message si manquant, aucun téléchargement automatique.
+- Tests de bout en bout sur PhotoCraft 0.14.0.
 
 **Phase 2 — confort**
 - FLUX.2 Klein, choix du profil.
 - Batch de variantes + vignettes.
 - Mode Generate (txt2img) et « Generate More ».
 - Historique des prompts, seeds, presets.
+- Model manager avec téléchargements consentis.
 
 **Phase 3 — puissance**
-- Krea 2 (T2I + edit via `krea2edit`).
+- Krea 2 Edit (nœuds `krea2edit`), si le profil est stable.
 - Outpaint, upscale, remove/relight.
 - Workflows ComfyUI personnalisés (JSON API + placeholders).
-- Gestionnaire de modèles / téléchargement assisté.
+- Panneau natif upstream (PR), si le projet prend.
 
-## 8. Décision à prendre
+## 9. MVP, c'est quoi ?
 
-- **Fork natif** (recommandé) : meilleure UX, accès direct aux calques et à la sélection,
-  un seul exécutable. Coût : installer Rust, builder ~10 Go, rebaser upstream.
-- **Compagnon externe** : plus rapide à prototyper, mais fenêtre séparée et allers-retours
-  fichiers. Utile si on veut livrer sans toucher à PhotoCraft.
+**MVP = Minimum Viable Product** : la plus petite version qui rend le service principal,
+pas la version finale. Ici : un installateur, une connexion PhotoCraft/ComfyUI, un
+profil FLUX.3, le lasso → prompt → nouveau calque, et des erreurs lisibles. Le reste
+(FLUX.2, Krea 2, batch, outpaint, model manager complet) vient après.
 
-Une fois la voie choisie, le MVP FLUX.3 est réalisable en s'appuyant sur le workflow
-déjà validé et le prototype Python.
+## 10. Ce qu'il reste à valider
+
+- Le control channel de PhotoCraft 0.14.0 : `app.save`, `channel.duplicate`,
+  `layer.copyToDocument`, `layer.layerMask.revealSelection`.
+- Le comportement de la sélection après activation du document original.
+- La conversion couleur des documents CMYK/Lab/16 bits.
+- Le temps de `app.save` sur un document 4K.
+- La compatibilité des commandes sur les builds suivants.
+
+Tant que ces tests ne sont pas faits, le compagnon reste une hypothèse d'ingénierie,
+pas une certitude.

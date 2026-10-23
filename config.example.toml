@@ -1,0 +1,83 @@
+# StableCraft — exemple de configuration.
+#
+# Copie ce fichier en `config.toml` (à côté de l'exécutable) ou dans
+# `%APPDATA%\StableCraft\config.toml` sur Windows.
+#
+# Tous les chemins de modèles sont OPTIONNELS. Si tu ne les renseignes pas,
+# StableCraft utilise ce que ComfyUI voit déjà. Tu n'as pas besoin de configurer
+# les modèles que tu n'utilises pas.
+#
+# Aucun modèle n'est téléchargé automatiquement. Si un profil est activé et qu'un
+# fichier manque, StableCraft demandera confirmation (taille, chemin, licence).
+
+[app]
+language = "fr"
+theme = "dark"
+
+[photocraft]
+# Laisse vide pour l'auto-détection.
+# executable = "C:/Program Files/PhotoCraft/photocraft.exe"
+control_host = "127.0.0.1"
+control_port = 7878
+# Vide = %LOCALAPPDATA%/StableCraft/control.token
+# control_token_file = ""
+# Dossier temporaire pour app.save / app.open.
+# Vide = %LOCALAPPDATA%/StableCraft/tmp
+# automation_root = ""
+
+[comfyui]
+endpoint = "http://127.0.0.1:12452"
+# Optionnel : racine des modèles ComfyUI, pour l'affichage et la validation.
+# models_dir = "F:/ComfyUI_windows_portable/ComfyUI/models"
+# Commande de lancement optionnelle.
+# start_command = "F:/ComfyUI_windows_portable/run_nvidia_gpu.bat"
+
+[models]
+# Dossier dédié pour les téléchargements.
+# Vide = %LOCALAPPDATA%/StableCraft/models (Windows)
+#        ~/.local/share/StableCraft/models (Linux)
+#        ~/Library/Application Support/StableCraft/models (macOS)
+# store_dir = ""
+allow_downloads = true
+require_sha256 = true
+
+# ---------------------------------------------------------------------------
+# Profils
+# ---------------------------------------------------------------------------
+# `enabled = false` désactive complètement le profil : aucun chemin requis.
+# Les chemins sont des exemples : remplace-les par tes fichiers, ou laisse les
+# commentaires et laisse ComfyUI faire l'auto-détection.
+
+[profiles.flux3_klein]
+enabled = true
+# unet = "F:/IA/Models IA/Checkpoints/flux-3-image-klein-Q8_0.gguf"
+# text_encoder = "F:/Stable Diffusion/stable-diffusion-webui/models/text_encoder/Qwen-3-VL-4B-Scaled-FP8-v2.safetensors"
+# vae = "F:/Stable Diffusion/stable-diffusion-webui/models/VAE/flux2_vae.safetensors"
+steps = 16
+cfg = 1.0
+sampler = "euler"
+scheduler = "simple"
+context_padding = 96
+feather = 10
+
+[profiles.flux2_klein_9b]
+enabled = false
+# unet = "F:/IA/Models IA/Checkpoints/flux-2-klein-Distilled-9b-Q8_0.gguf"
+# text_encoder = "F:/Stable Diffusion/stable-diffusion-webui/models/text_encoder/Qwen3-8B-Q4_K_M.gguf"
+# vae = "F:/Stable Diffusion/stable-diffusion-webui/models/VAE/flux2_vae.safetensors"
+steps = 4
+cfg = 1.0
+sampler = "euler"
+scheduler = "simple"
+
+[profiles.krea2_edit]
+enabled = false
+# unet = "F:/IA/Models IA/Checkpoints/krea2_turbo_edit-Q4_K_M.gguf"
+# text_encoder = "F:/Stable Diffusion/stable-diffusion-webui/models/text_encoder/Qwen-3-VL-4B-Scaled-FP8-v2.safetensors"
+# vae = "F:/Stable Diffusion/stable-diffusion-webui/models/VAE/qwen_image_vae.safetensors"
+steps = 8
+cfg = 1.0
+sampler = "euler"
+scheduler = "simple"
+ref_boost = 4.0
+grounding_px = 768

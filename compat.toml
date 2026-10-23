@@ -1,0 +1,16 @@
+# Matrice de compatibilité StableCraft ↔ PhotoCraft.
+# Mise à jour à chaque test réel.
+
+[[tested]]
+stablecraft = "0.1.x"
+photocraft = "0.14.0"
+os = "windows-x64"
+status = "planned"
+notes = "À tester : control channel, sélection, app.save, channel.duplicate, layer.copyToDocument, masque."
+
+# [[tested]]
+# stablecraft = "0.1.x"
+# photocraft = "0.15.x"
+# os = "windows-x64"
+# status = "untested"
+# notes = ""

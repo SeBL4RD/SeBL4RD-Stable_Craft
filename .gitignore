@@ -1,6 +1,14 @@
 # Prototype outputs
 prototypes/out/
 
+# Local configuration (contains absolute paths)
+config.toml
+config.local.toml
+
+# Downloaded models
+models/
+models-*/
+
 # Rust
 target/
 **/target/

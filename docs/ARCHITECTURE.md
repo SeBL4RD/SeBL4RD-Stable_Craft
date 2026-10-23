@@ -1,452 +1,431 @@
-# Architecture technique — StableCraft (fork natif PhotoCraft)
+# Architecture — StableCraft sans fork
 
-> Cette page décrit la voie recommandée : un fork de PhotoCraft avec un panneau IA
-> natif et un client ComfyUI. Le prototype Python valide déjà le pipeline ; il reste à
-> le porter dans le moteur Rust.
+> Décision : **pas de fork de PhotoCraft**. StableCraft est une application compagne
+> installable qui se greffe à une installation PhotoCraft existante via son **control
+> channel** local, et qui parle à **ComfyUI** en HTTP. PhotoCraft reste intact et se met
+> à jour normalement.
 
-## 1. Arborescence du fork
+## 1. Pourquoi un compagnon, et pas un plugin dans l'app ?
+
+Le SDK de plugins PhotoCraft (ABI v1) accepte uniquement des **filtres WebAssembly** :
+
+- aucun import hôte (pas de réseau, pas de fichiers, pas d'horloge) ;
+- pas de panneau UI ;
+- pas d'accès aux calques, à la sélection ou au composite.
+
+Il est donc impossible d'héberger un panneau IA + client HTTP dans un plugin v1.
+Deux options existaient :
+
+1. forker PhotoCraft (rejeté : maintenance trop lourde) ;
+2. piloter PhotoCraft de l'extérieur via son **control channel** (retenu).
+
+Le control channel est l'API d'automatisation officielle de PhotoCraft : TCP loopback,
+authentification par token, commandes JSON. C'est exactement ce qu'utilisent les agents
+et le serveur MCP. On l'utilise comme une API de plugin, sans modifier l'application.
+
+### Ce qu'on peut faire
+
+- Lire l'état du document, la sélection, les calques, l'historique.
+- Sauvegarder le composite et le masque en PNG temporaires.
+- Ouvrir le résultat, le copier dans le document original, créer un calque masqué.
+- Déclencher des commandes, annuler, fermer des documents temporaires.
+- Détecter la version et les commandes disponibles.
+
+### Ce qu'on ne peut pas faire (v1)
+
+- Afficher un panneau **dans** la fenêtre de PhotoCraft (ce serait un fork ou un
+  changement upstream).
+- Récupérer le composite ou le masque **en mémoire** (il faut passer par `app.save`).
+- Être notifié en temps réel des changements de sélection (on lit à la demande).
+- Regrouper plusieurs commandes en une seule étape d'undo (on peut enchaîner, mais
+  chaque commande peut créer son étape).
+
+Ces limites sont acceptables pour le MVP. Si le projet prend, on pourra proposer un
+petit patch upstream (commande `document.renderPreview` + panneau) sans maintenir un fork.
+
+## 2. Vue d'ensemble
 
 ```
-StableCraft/
-├─ photocraft/                 # upstream storytold/photocraft (remote `upstream`)
-│  ├─ crates/
-│  │  ├─ comfy/                # NOUVEAU : client + workflows ComfyUI
-│  │  ├─ engine/src/ai_cmds.rs # NOUVEAU : commandes ai.*
-│  │  └─ ui-egui/src/stablecraft.rs # NOUVEAU : panneau
-│  └─ ...
-├─ docs/                       # recherche, design, démos
-├─ prototypes/                 # PoC Python
-└─ workflows/                  # workflows API ComfyUI de référence
+┌─────────────────────────────┐        TCP JSON (loopback)        ┌──────────────────┐
+│ StableCraft (UI + bridge)   │ ◄────────────────────────────────► │ PhotoCraft       │
+│  - prompt / profils         │   control channel + token          │  (installation   │
+│  - crops / masques          │                                    │   officielle)    │
+│  - previews                 │                                    └──────────────────┘
+│  - config / model manager   │
+└──────────────┬──────────────┘
+               │ HTTP (loopback)
+               ▼
+┌─────────────────────────────┐
+│ ComfyUI                     │
+│  /system_stats              │
+│  /upload/image              │
+│  /prompt  /history  /view   │
+│  /interrupt  /queue         │
+└─────────────────────────────┘
 ```
 
-Le fork garde `upstream` comme remote :
+Trois composants :
 
-```powershell
-git clone https://github.com/storytold/photocraft.git photocraft
-cd photocraft
-git remote add upstream https://github.com/storytold/photocraft.git
-git switch -c stablecraft
+1. **StableCraft Bridge** : logique Python (ou Rust) qui parle aux deux APIs, prépare
+   les images, construit les workflows, applique les résultats.
+2. **StableCraft UI** : panneau flottant (Qt/PySide6 recommandé) avec prompt, profils,
+   réglages, vignettes, progression.
+3. **StableCraft Installer** : détecte PhotoCraft et ComfyUI, crée les raccourcis,
+   écrit la config, installe les dépendances, propose les modèles manquants.
+
+## 3. Flux « lasso → prompt → résultat »
+
+```
+1. L'utilisateur dessine un lasso dans PhotoCraft.
+2. Il clique « Générer » dans StableCraft.
+3. Bridge : document.inspect → index du document, bounds de sélection, calque actif.
+4. Bridge : app.save → composite.png (document aplati, PNG).
+5. Bridge : channel.duplicate {channel:"selection", document:"new"} → mask doc.
+6. Bridge : app.save → mask.png ; file.close du mask doc ; réactiver l'original.
+7. Bridge : lit mask.png, calcule la bbox, ajoute le contexte, aligne sur 16 px.
+8. Bridge : crop composite + mask, feather, upload dans ComfyUI.
+9. Bridge : POST /prompt avec le workflow du profil choisi.
+10. Bridge : poll /history, télécharge le PNG via /view.
+11. Bridge : resize au crop, recompose dans le crop, écrit result.png.
+12. Bridge : app.open result.png → doc temporaire.
+13. Bridge : layer.copyToDocument {document: original, source: temp,
+             layers:[result_layer], offset:[x0,y0], name:"StableCraft — …"}.
+14. Bridge : (optionnel) layer.layerMask.revealSelection pour un masque éditable.
+15. Bridge : file.close du doc temporaire, réactive l'original.
+16. L'utilisateur voit la preview et peut annuler (edit.undo) ou garder.
 ```
 
-À chaque release upstream : `git fetch upstream && git rebase upstream/main`.
-Les modifications doivent rester concentrées dans :
+### Détails importants
 
-- `crates/comfy/` (nouveau crate) ;
-- `crates/engine/src/ai_cmds.rs` (nouveau module) ;
-- `crates/ui-egui/src/stablecraft.rs` (nouveau panneau) ;
-- quelques lignes de registre : `engine/src/lib.rs`, `engine/src/commands.rs`,
-  `ui-egui/src/lib.rs`, `ui-egui/src/dock.rs`, `ui-egui/src/panels.rs`,
-  `ui-egui/src/panel_docking.rs`, `ui-egui/src/state.rs`, `engine/src/prefs.rs`,
-  `Cargo.toml`, `xtask/src/layers.rs`.
+- **Coordonnées** : `layer.copyToDocument` accepte `offset: [dx, dy]` depuis la place
+  du calque dans le document source. Le PNG de résultat est un document de la taille
+  du crop, à (0,0) ; l'offset est donc `[x0, y0]`.
+- **Masque** : le PNG de résultat peut déjà contenir l'alpha de la sélection. C'est la
+  voie la plus fiable pour le MVP. Ensuite, on peut ajouter un masque de calque
+  éditable via `layer.layerMask.revealSelection` si la sélection est encore active.
+- **Sélection perdue** : si `layer.copyToDocument` ou l'activation du document
+  original efface la sélection, recharger le masque depuis un canal alpha sauvegardé
+  (`select.saveSelection` / `select.loadSelection`) ou utiliser l'alpha du PNG.
+- **Undo** : `layer.copyToDocument` est une étape ; le masque peut en ajouter une
+  seconde. Si on veut une seule étape, on bake l'alpha et on n'ajoute pas de masque.
+- **Couleur** : `app.save` écrit un PNG converti depuis le document. Pour les
+  documents CMYK/Lab/16/32 bits, vérifier le résultat et prévoir une conversion via le
+  profil du document avant l'insertion. MVP : RGB 8 bits.
+- **Performance** : `app.save` écrit le document entier. Pour un 4K, compter quelques
+  secondes et ~50 Mo par génération. Le mask doc est en grayscale, plus léger.
+- **Annulation** : `POST /interrupt` pour ComfyUI ; si le résultat n'est pas encore
+  appliqué, il suffit d'arrêter le job. Après application, `edit.undo`.
 
-## 2. Crate `photocraft-comfy`
+## 4. Compatibilité avec les builds PhotoCraft
 
-### Position dans les couches
+### Principe : détection de capacités, pas seulement de version
 
-- **L4**, à côté de `io` et `plugins`, au-dessus de `doc`/`compose`/`codecs`.
-- Compile pour `wasm32-unknown-unknown` (obligatoire pour L0–L6) : le module réseau
-  est `#[cfg(not(target_arch = "wasm32"))]`, et les fonctions wasm renvoient
-  `Err("ComfyUI is only available in the desktop build")`.
-- Pas de dépendance UI ; pas de `egui`.
-- Client HTTP : `ureq` avec `default-features = false` (HTTP loopback uniquement, pas
-  de TLS) ou un client maison `std::net::TcpStream` inspiré de `photocraft-ipp`.
-  Éviter `reqwest` + Tokio pour ne pas alourdir le build.
+Un numéro de version seul est fragile. Au démarrage, StableCraft :
 
-### Types principaux
+1. se connecte au control channel ;
+2. appelle `engine.commands` et récupère les IDs disponibles ;
+3. vérifie une liste de commandes requises :
 
-```rust
-pub struct ComfyConfig {
-    pub endpoint: String,        // http://127.0.0.1:12452
-    pub timeout: Duration,
-}
-
-pub struct ComfyStatus {
-    pub version: String,
-    pub gpu_name: String,
-    pub vram_total: u64,
-    pub vram_free: u64,
-}
-
-pub struct AvailableModels {
-    pub diffusion: Vec<String>,  // UnetLoaderGGUF / UNETLoader
-    pub text_encoders: Vec<String>,
-    pub vaes: Vec<String>,
-}
-
-pub enum Profile {
-    Flux3Klein,
-    Flux2Klein9b,
-    Krea2Turbo,
-}
-
-pub struct EditRequest {
-    pub profile: Profile,
-    pub prompt: String,
-    pub negative: String,
-    pub image_png: Vec<u8>,      // crop
-    pub mask_png: Option<Vec<u8>>,
-    pub width: u32,
-    pub height: u32,
-    pub steps: u32,
-    pub cfg: f32,
-    pub seed: u64,
-    pub batch: u32,
-}
-
-pub struct EditResult {
-    pub images: Vec<Vec<u8>>,    // PNG
-    pub seed: u64,
-    pub elapsed: Duration,
-}
+```
+app.open
+app.save
+document.inspect
+document.activate
+channel.duplicate
+file.close
+layer.copyToDocument
+layer.layerMask.revealSelection
+layer.select
+select.saveSelection
+select.loadSelection
+edit.undo
 ```
 
-### Client
+4. appelle `ui.inspect` et vérifie les champs utilisés (`document`, `selectionBounds`,
+   `selectedLayers`, etc.) ;
+5. lance éventuellement un **self-test** dans un document temporaire :
+   créer un document, faire une sélection, sauvegarder, dupliquer le canal, copier un
+   calque, fermer. Ce test valide le comportement réel, pas seulement la présence des
+   commandes.
 
-```rust
-pub trait ComfyClient {
-    fn status(&self) -> Result<ComfyStatus>;
-    fn models(&self) -> Result<AvailableModels>;
-    fn upload(&self, name: &str, png: &[u8]) -> Result<String>;
-    fn queue(&self, workflow: &serde_json::Value) -> Result<String>; // prompt_id
-    fn history(&self, prompt_id: &str) -> Result<HistoryEntry>;
-    fn view(&self, image: &ImageRef) -> Result<Vec<u8>>;
-    fn interrupt(&self) -> Result<()>;
-    fn delete_queued(&self, prompt_id: &str) -> Result<()>;
-}
+Si une commande manque, l'application affiche :
+
+> PhotoCraft 0.15.0 détecté. La commande `layer.copyToDocument` a changé ou disparu.
+> StableCraft 0.1.x est testé avec PhotoCraft 0.14.0. Mettez à jour StableCraft ou
+> utilisez une build compatible.
+
+### Matrice de compatibilité
+
+Fichier `compat.toml` dans le repo :
+
+```toml
+[[tested]]
+stablecraft = "0.1.x"
+photocraft = "0.14.0"
+os = "windows-x64"
+status = "tested"
+notes = "Control channel + calques + masque vérifiés."
+
+[[tested]]
+stablecraft = "0.1.x"
+photocraft = "0.13.x"
+os = "windows-x64"
+status = "untested"
+notes = "À vérifier ; les commandes de base existent."
 ```
 
-Points d'attention :
+L'application affiche la version testée et un avertissement pour les builds non
+testées. On peut aussi lire la version de `photocraft.exe` (ressource Windows) ou la
+version renvoyée par le help/system info si elle existe. Le control channel n'expose
+pas forcément la version ; la détection de commandes reste la source de vérité.
 
-- `/upload/image` est du `multipart/form-data` ; construire le corps à la main ou
-  utiliser `ureq`'s multipart.
-- `/prompt` renvoie `400` avec `node_errors` : remonter le message lisible
-  (`required_input_missing`, `value_not_in_list`, etc.).
-- `/history/{id}` peut être vide pendant l'exécution ; poller toutes les 500 ms.
-- Les sorties sont dans `outputs.<node_id>.images[]` ; prendre le premier `SaveImage`.
-- `/view` accepte `filename`, `subfolder`, `type`.
-- Annulation : `POST /interrupt` interrompt l'exécution en cours ; pour la file,
-  `POST /queue {"delete":[prompt_id]}`.
-- Ne jamais bloquer le thread UI : tout passe par `jobs::run`.
+### Versionnement
 
-### Constructeurs de workflows
+- `StableCraft 0.1.0` : première version publique.
+- Le numéro de build peut inclure la compatibilité testée :
+  `0.1.0+pc0.14.0`.
+- L'installateur affiche : « Testé avec PhotoCraft 0.14.0 ; vérification des capacités
+  au premier lancement. »
 
-Chaque profil est un `serde_json::Value` au format API ComfyUI. Les modèles sont
-paramétrables (noms de fichiers) pour s'adapter aux installations.
+## 5. Gestion des modèles et configuration
 
-**FLUX.3 Klein Edit** (validé) :
+### Principe
+
+- **Aucun modèle n'est obligatoire** pour installer StableCraft.
+- Si l'utilisateur n'utilise pas un profil, il n'a pas à renseigner ses chemins.
+- StableCraft interroge ComfyUI (`/object_info`) pour savoir quels fichiers sont
+  visibles. C'est la source de vérité pour les noms de fichiers.
+- Si un profil est choisi et qu'un fichier manque, StableCraft propose un
+  téléchargement **avec consentement** : taille, chemin de destination, licence,
+  URL. Jamais de téléchargement silencieux.
+- Les modèles sont stockés par défaut dans un dossier dédié :
+  `%LOCALAPPDATA%\StableCraft\models` (Windows),
+  `~/.local/share/StableCraft/models` (Linux),
+  `~/Library/Application Support/StableCraft/models` (macOS).
+- Pour que ComfyUI voie ce dossier, l'installateur peut :
+  1. écrire une section `stablecraft` dans `extra_model_paths.yaml` (avec sauvegarde) ;
+  2. ou créer des junctions/symlinks depuis les dossiers `models/` de ComfyUI ;
+  3. ou demander à l'utilisateur d'ajouter le chemin et redémarrer ComfyUI.
+  L'option 1 est la plus propre ; elle est proposée, jamais imposée.
+
+### `config.toml`
+
+Un exemple complet est fourni dans `config.example.toml`. Les chemins sont
+**optionnels** et commentés. Priorité :
+
+1. `--config <path>` ;
+2. `%APPDATA%\StableCraft\config.toml` ;
+3. `config.toml` à côté de l'exécutable (mode portable) ;
+4. valeurs par défaut.
+
+Extrait :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:12452"
+
+[models]
+# Dossier des téléchargements. Vide = dossier dédié de l'application.
+# models_dir = "F:/IA/StableCraft/models"
+
+[models.flux3_klein]
+# Tous les chemins sont optionnels. Si absents, StableCraft utilise ce que
+# ComfyUI voit déjà.
+# unet = "F:/IA/Models IA/Checkpoints/flux-3-image-klein-Q8_0.gguf"
+# text_encoder = "F:/Stable Diffusion/.../Qwen-3-VL-4B-Scaled-FP8-v2.safetensors"
+# vae = "F:/Stable Diffusion/.../flux2_vae.safetensors"
+enabled = true
+steps = 16
+cfg = 1.0
+
+[models.flux2_klein_9b]
+enabled = false
+steps = 4
+cfg = 1.0
+
+[models.krea2_edit]
+enabled = false
+steps = 8
+cfg = 1.0
+```
+
+### Manifeste des modèles
+
+`models.json` (dans le repo) décrit chaque profil :
 
 ```json
 {
-  "1": {"class_type":"UnetLoaderGGUF","inputs":{"unet_name":"flux-3-image-klein-Q8_0.gguf"}},
-  "2": {"class_type":"CLIPLoader","inputs":{"clip_name":"Qwen-3-VL-4B-Scaled-FP8-v2.safetensors","type":"flux3"}},
-  "3": {"class_type":"VAELoader","inputs":{"vae_name":"flux2_vae.safetensors"}},
-  "4": {"class_type":"CLIPTextEncode","inputs":{"clip":["2",0],"text":"PROMPT"}},
-  "5": {"class_type":"CLIPTextEncode","inputs":{"clip":["2",0],"text":""}},
-  "6": {"class_type":"LoadImage","inputs":{"image":"UPLOADED"}},
-  "7": {"class_type":"ReferenceMultiLatent","inputs":{
-        "positive":["4",0],"negative":["5",0],"vae":["3",0],
-        "images.image0":["6",0],"resolution":"resize","resolution.megapixels":1.0}},
-  "8": {"class_type":"KSampler","inputs":{
-        "model":["1",0],"seed":0,"steps":16,"cfg":1,
-        "sampler_name":"euler","scheduler":"simple",
-        "positive":["7",0],"negative":["7",1],"latent_image":["7",2],"denoise":1}},
-  "9": {"class_type":"VAEDecode","inputs":{"samples":["8",0],"vae":["3",0]}},
-  "10":{"class_type":"SaveImage","inputs":{"images":["9",0],"filename_prefix":"StableCraft"}}
+  "profiles": {
+    "flux3_klein": {
+      "label": "FLUX.3 Klein Edit",
+      "license": "FLUX Kommunity License",
+      "source": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy",
+      "vram_gb": 12,
+      "files": {
+        "unet": {
+          "filename": "flux-3-image-klein-Q8_0.gguf",
+          "folder": "unet",
+          "size": 6092755872,
+          "sha256": "…",
+          "url": "…"
+        },
+        "text_encoder": { "filename": "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors", "folder": "text_encoders", "size": 5610000000 },
+        "vae": { "filename": "flux2_vae.safetensors", "folder": "vae", "size": 335000000 }
+      },
+      "settings": { "steps": 16, "cfg": 1.0, "sampler": "euler", "scheduler": "simple" }
+    }
+  }
 }
 ```
 
-**FLUX.2 Klein 9B Edit** (validé) :
+L'application :
 
-```
-UnetLoaderGGUF(flux-2-klein-Distilled-9b-Q8_0.gguf)
-CLIPLoaderGGUF(Qwen3-8B-Q4_K_M.gguf, type=flux2)
-VAELoader(flux2_vae.safetensors)
-LoadImage → ImageScaleToTotalPixels(1 MP) → VAEEncode
-CLIPTextEncode(positive) → ReferenceLatent(latent)
-ConditioningZeroOut(positive) → ReferenceLatent(latent)
-KSampler(steps=6, cfg=1, euler/simple, latent=VAEEncode)
-VAEDecode → SaveImage
-```
+- compare les noms de fichiers aux listes de `/object_info` ;
+- marque chaque profil `installed` / `missing` / `partial` ;
+- affiche la taille totale et la VRAM estimée ;
+- propose « Télécharger » (dialogue de consentement) ou « Choisir un dossier » ;
+- ne télécharge jamais un modèle sans action explicite ;
+- vérifie le SHA256 quand il est connu ;
+- ouvre la page Hugging Face pour les modèles sous licence/gated.
 
-**Krea 2 Edit** (phase 3) :
+### Ce qui n'est pas requis
 
-```
-UnetLoaderGGUF(krea2_turbo_edit-Q4_K_M.gguf)  (ou Krea-2-Turbo + LoRA)
-CLIPLoader(Qwen-3-VL-4B-Scaled-FP8-v2.safetensors, type=krea2)
-VAELoader(qwen_image_vae.safetensors)
-LoadImage → VAEEncode → Krea2EditModelPatch.source_latent
-Krea2EditGroundedEncode(prompt, image) → positive
-Krea2EditGroundedEncode("", image) → negative
-EmptySD3LatentImage → KSampler.latent_image
-Krea2EditModelPatch.model → KSampler.model
-KSampler(8 steps, cfg=1) → VAEDecode → SaveImage
-```
+- Un utilisateur qui ne fait que du FLUX.3 n'a pas besoin de configurer FLUX.2,
+  Krea 2, Qwen, etc.
+- Un utilisateur qui a déjà tout dans ComfyUI n'a pas besoin de `models_dir`.
+- Un utilisateur qui ne veut pas télécharger peut utiliser « Choisir un dossier »
+  ou ignorer le profil.
 
-La variante Krea 2 est plus délicate : le nœud custom `comfyui-krea2edit` doit être
-installé, et les LoRA/modèles doivent correspondre. À valider par un test réel avant
-de l'exposer dans l'UI.
+## 6. Choix de la stack UI
 
-## 3. Commandes moteur
+### Recommandation v1 : Python + PySide6
 
-Fichier `crates/engine/src/ai_cmds.rs`, avec `pub fn specs() -> Vec<CommandSpec>` et
-un `v.extend(crate::ai_cmds::specs())` dans `commands.rs`.
+- Python est déjà présent (et l'écosystème ComfyUI est Python).
+- `requests` + Pillow suffisent pour le bridge ; PySide6 fournit une UI native,
+  un tray, des raccourcis globaux, des dialogues de fichiers.
+- Itération rapide, facile à contribuer pour un repo public.
+- Packaging : PyInstaller/Nuitka + Inno Setup (Windows), `.app` (macOS), AppImage
+  (Linux).
+- Inconvénient : installeur plus lourd (~150–250 Mo) ; acceptable pour un outil IA.
 
-### `ai.comfy.status`
+### Alternative : Rust + egui
 
-```rust
-CommandSpec {
-    id: "ai.comfy.status",
-    label: "StableCraft: ComfyUI Status",
-    menu: &[],
-    shortcut: None,
-    params: r##"{"endpoint":str?}"##,
-    enabled: |_| Ok(()),
-    run: |_s, p| {
-        let endpoint = endpoint_from(p, &s.prefs().integrations);
-        let status = ComfyClient::new(endpoint)?.status()?;
-        Ok(json!(status))
-    },
-    journal: false,
-}
-```
+- Un seul exécutable, aligné avec PhotoCraft, pas de runtime Python.
+- Plus de travail pour l'UI et les dialogues ; build Rust nécessaire.
+- À envisager si la taille de l'installeur ou la performance devient critique.
 
-### `ai.edit`
+Le **bridge** doit être isolé de l'UI (module `bridge/`) pour permettre un portage
+Rust plus tard sans réécrire la logique.
 
-Paramètres :
+## 7. UI / UX
 
-```json
-{
-  "profile": "flux3Klein|flux2Klein9b|krea2",
-  "prompt": "string",
-  "negative": "string?",
-  "mode": "edit|generate",
-  "source": "composite|activeLayer",
-  "padding": 96,
-  "feather": 10,
-  "steps": 16,
-  "cfg": 1,
-  "seed": 0,
-  "batch": 1,
-  "output": "newLayer|newLayerMasked|replace"
-}
-```
+- Panneau flottant compact, thème sombre, toujours au-dessus en option.
+- Peut s'aligner à droite de la fenêtre PhotoCraft (suivi de position via Win32 ;
+  fallback : position mémorisée).
+- Raccourci global configurable (ex. `Ctrl+Alt+G`) pour générer.
+- Barre d'état : PhotoCraft connecté (version), ComfyUI connecté (version/GPU),
+  profil actif, VRAM libre.
+- Prompt + negative prompt (collapsible), bouton « Améliorer le prompt » plus tard.
+- Profil : menu avec badge `installé` / `manquant`, taille, VRAM.
+- Réglages : mode (sélection / calque actif / canvas), padding, feather, steps, CFG,
+  seed, batch.
+- Progression : étape ComfyUI (upload, sampling, decode), temps écoulé, bouton
+  Annuler.
+- Vignettes : clic pour prévisualiser, bouton « Appliquer » (nouveau calque),
+  « Remplacer » (dernier calque StableCraft), « Supprimer ».
+- Historique des générations (prompt, seed, profil) dans un fichier local.
+- Messages d'erreur actionnables : ComfyUI down, modèle manquant, nœud custom
+  manquant, sélection vide, document non RGB.
 
-Algorithme :
+## 8. Installation et mise à jour
 
-1. Vérifier qu'un document est actif.
-2. Choisir la zone :
-   - `edit` : `doc.selection.content_bounds()` ; erreur si pas de sélection.
-   - `generate` : bbox de sélection ou canvas entier.
-3. Construire le crop :
-   - `bbox` + `padding`, clamp au canvas ;
-   - aligner largeur/hauteur sur 16 (ou 32 pour Krea 2) ;
-   - si le crop dépasse le canvas, étendre avec des pixels transparents (pour
-     l'outpaint) ou clamper (MVP).
-4. Extraire le composite du crop :
-   - `photocraft_io::export(&doc, "png", &opts)` pour un PNG sRGB 8 bits ;
-   - décoder le PNG (`photocraft_codecs::decode`) et cropper ;
-   - alternative : `photocraft_compose::render(&doc, crop).to_rgba8()` +
-     `photocraft_cms` pour la conversion.
-5. Extraire le masque : `algo::selection::mask_from_surface(Some(sel), crop)`,
-   feather gaussien, inversion si demandé. Encoder en PNG grayscale.
-6. Uploader image + masque (si le workflow en a besoin).
-7. Lancer le job (`jobs::run`) :
-   - work : queue + poll + download ;
-   - apply : pour chaque image, décoder, redimensionner au crop, créer un calque
-     raster, appliquer le masque de calque, insérer au-dessus du calque actif.
-8. Retourner `{job, promptId, seed, previews:[base64…]}`.
+### Installateur Windows (Inno Setup)
 
-Pour le MVP, `batch=1` et `output=newLayerMasked`. Le mode batch et les vignettes
-viendront ensuite.
+1. Vérifie Windows x64, Python si build source, ou installe le bundle.
+2. Cherche PhotoCraft :
+   - registre/uninstall entries ;
+   - `%LOCALAPPDATA%\Programs\PhotoCraft` ;
+   - `C:\Program Files\PhotoCraft` ;
+   - sinon, demande le chemin de `photocraft.exe`.
+3. Cherche ComfyUI :
+   - `ComfyUI_windows_portable` dans les lecteurs ;
+   - `extra_model_paths.yaml` ;
+   - sinon, demande l'endpoint et le dossier `models`.
+4. Écrit `config.toml` avec les chemins détectés (sans écraser une config existante).
+5. Crée les raccourcis :
+   - « StableCraft » ;
+   - « PhotoCraft + StableCraft » : lance PhotoCraft avec
+     `--control 7878 --control-token-file … --automation-read-root … --automation-write-root …`,
+     puis StableCraft.
+6. Propose d'ajouter le dossier de modèles à ComfyUI (`extra_model_paths.yaml`).
+7. Ne télécharge aucun modèle à l'installation.
 
-### Application du résultat
+### Mise à jour
 
-```rust
-fn apply_edit(
-    s: &mut Session,
-    crop: Rect,
-    png: &[u8],
-    selection: Option<Surface>,
-    name: &str,
-) -> Result<LayerId> {
-    let img = photocraft_codecs::decode(png)?;
-    let img = img.convert(ChannelLayout::Rgba, SampleType::U8);
-    let (w, h) = img.dimensions();
-    let fmt = s.active().ok_or(EngineError::NoDocument)?.doc.pixel_format();
+- StableCraft vérifie ses propres releases (optionnel, désactivable).
+- PhotoCraft se met à jour indépendamment ; au lancement, StableCraft refait le
+  contrôle de capacités.
+- Si une commande a changé, message clair et lien vers la matrice de compatibilité.
 
-    // Construire une Surface au format du document, positionnée à crop.x0/y0.
-    let surface = rgba_to_surface(img.data(), w, h, crop.x0, crop.y0, fmt)?;
+## 9. Sécurité
 
-    s.edit("StableCraft Edit", |doc, active| {
-        let mut layer = Layer::raster(name, doc.pixel_format());
-        *layer.surface_mut().ok_or(...)? = surface;
-        let id = doc.insert_above(*active, layer);
-        if let Some(sel) = selection {
-            let mask = LayerMask { surface: sel, ..LayerMask::reveal_all() };
-            doc.layer_mut(id).ok_or(...)?.mask = Some(mask_at_depth(mask, doc.depth)?);
-        }
-        *active = Some(id);
-        Ok(id)
-    })
-}
-```
+- Control channel : token 256 bits, fichier protégé (ACL utilisateur), loopback only.
+- ComfyUI : endpoint loopback par défaut ; URL distante interdite sans opt-in.
+- Aucune télémétrie, aucun envoi d'image hors de la machine par défaut.
+- Les prompts et images ne quittent la machine que si l'utilisateur configure un
+  ComfyUI distant.
+- Les téléchargements de modèles sont explicites, avec URL et hash.
+- Les fichiers temporaires sont dans un dossier dédié, nettoyés au démarrage et à la
+  fermeture.
+- Ne pas exécuter de code arbitraire provenant d'un workflow ComfyUI non fiable :
+  les workflows personnalisés sont une fonction avancée, avec avertissement.
 
-Notes :
+## 10. Limites connues et plan de sortie
 
-- Le résultat doit être **exactement** de la taille du crop. Sinon, resize Lanczos
-  avant insertion.
-- Le masque de calque est la sélection d'origine (pas le masque feather envoyé au
-  modèle), pour rester éditable.
-- Si `output=replace`, remplacer le contenu du calque actif au lieu d'insérer.
-- Si le document est en CMYK/Lab, convertir le PNG sRGB vers le profil du document
-  via `photocraft-cms` avant d'écrire la Surface.
+| Limite | Contournement | Sortie |
+|---|---|---|
+| Pas de panneau dans PhotoCraft | Fenêtre flottante alignée | PR upstream `document.renderPreview` + panneau |
+| Composite via fichier | `app.save` + cache par révision | Commande upstream de rendu mémoire |
+| Sélection non temps réel | Lecture au clic Générer | Événement upstream |
+| Deux étapes d'undo | Baker l'alpha | Commande de transaction upstream |
+| Dépendance au control channel | Détection de capacités | API stable / MCP |
+| ComfyUI doit tourner | Lancer/détecter au démarrage | Gestion du processus ComfyUI |
 
-## 4. Panneau UI
+## 11. Découpage MVP
 
-Fichier `crates/ui-egui/src/stablecraft.rs`.
+**MVP = Minimum Viable Product** : la plus petite version qui rend le service principal,
+pas la version finale.
 
-### Enregistrement
+### Dans le MVP
 
-Le plus simple pour le MVP : un onglet dans le groupe `History` (comme `Actions`),
-puis un groupe dédié plus tard.
+- Installateur Windows + config.
+- Connexion PhotoCraft (control channel) + ComfyUI.
+- Un seul profil : **FLUX.3 Klein Edit**.
+- Lasso → prompt → preview → nouveau calque (alpha masqué).
+- Détection des modèles locaux, message si manquant, aucun téléchargement automatique.
+- Annulation, erreurs lisibles, log local.
+- Testé sur PhotoCraft 0.14.0 + ComfyUI 0.42.1 + RTX 3080 Ti 12 Go.
 
-```rust
-// dock.rs
-Group::History => &["History", "Actions", "Layer Comps", "StableCraft"],
+### Hors MVP (phases suivantes)
 
-// panels.rs
-(Group::History, 0) => history(app, ui),
-(Group::History, 1) => crate::actions::panel(app, ui),
-(Group::History, 2) => crate::comps_ui::panel(app, ui),
-(Group::History, 3) => crate::stablecraft::panel(app, ui),
+- FLUX.2 Klein, Krea 2, Qwen-Image-Edit.
+- Batch de variantes, historique, presets.
+- Outpaint, upscale, suppression d'objet.
+- Téléchargement assisté des modèles.
+- Panneau natif upstream.
+- macOS/Linux.
 
-// panel_docking.rs
-("stablecraft", "StableCraft", Group::History),
+## 12. Prochaine étape technique
 
-// lib.rs
-pub mod stablecraft;
-```
+1. Télécharger PhotoCraft portable **0.14.0** (87 Mo) ou utiliser une installation
+   existante.
+2. Lancer PhotoCraft avec le control channel et un dossier temporaire.
+3. Écrire un prototype Python `bridge` qui exécute le flux complet sur une image de
+   test (lasso synthétique), avec les commandes ci-dessus.
+4. Vérifier les points incertains : sélection après `layer.copyToDocument`, ajout du
+   masque, comportement de `app.save` sur un document non RGB.
+5. Construire l'UI PySide6 et l'installateur.
+6. Ajouter la gestion des profils/modèles.
 
-Pour un groupe dédié, ajouter `Group::StableCraft` et les entrées `Panels`/`DockTabs`.
-
-### État
-
-```rust
-#[derive(Clone, Serialize, Deserialize)]
-pub struct StableCraftState {
-    pub prompt: String,
-    pub negative: String,
-    pub profile: ProfileId,
-    pub mode: EditMode,
-    pub padding: u32,
-    pub feather: u32,
-    pub steps: u32,
-    pub cfg: f32,
-    pub seed: i64,
-    pub batch: u32,
-    pub output: OutputMode,
-    pub previews: Vec<Preview>,
-    pub status: String,
-    pub progress: f32,
-    pub last_error: Option<String>,
-}
-```
-
-À placer dans `UiState` (persisté) et non dans le document.
-
-### Interaction
-
-- `Générer` : lit l'état, appelle `app.run("ai.edit", params)` ; si un job démarre,
-  suivre `jobs.list` et mettre à jour la barre.
-- `Annuler` : `app.run("ai.cancel", {})`.
-- Vignette cliquée : `ai.applyResult {resultId}` ou remplace le calque de prévisualisation.
-- Si pas de sélection : proposer « Générer dans tout le canvas » ou demander une
-  sélection.
-- Afficher le nom du profil, les fichiers manquants, et un bouton « Tester la connexion ».
-
-### Design
-
-Respecter `docs/ui-design.md` : tokens `Tokens::get(ctx)`, pas de couleurs en dur,
-typo 11–12 px, panneau compact, scroll interne si nécessaire. Réutiliser les widgets
-existants (boutons, sliders, combo) pour rester cohérent.
-
-## 5. Préférences
-
-Dans `crates/engine/src/prefs.rs`, étendre `Integrations` :
-
-```rust
-pub struct Integrations {
-    pub allow_agent_control: bool,
-    pub control_port: u32,
-    pub comfy_endpoint: String,       // "http://127.0.0.1:12452"
-    pub comfy_profile: String,        // "flux3Klein"
-    pub comfy_allow_remote: bool,     // false
-    pub comfy_context_padding: u32,   // 96
-    pub comfy_feather: u32,           // 10
-}
-```
-
-Validation :
-
-- URL `http://` ou `https://`, sinon erreur.
-- Si l'hôte n'est pas loopback et `comfy_allow_remote` est faux, refuser.
-- Normaliser sans slash final.
-- `prefs.set` doit accepter ces clés (mais `plugIns`/`colorSettings` restent
-  interdits au control channel).
-
-## 6. Tests
-
-### Unitaires
-
-- `workflow_flux3_edit_has_expected_nodes` : IDs, class_type, entrées.
-- `crop_geometry` : bbox + padding + clamp + alignement 16, cas bords/très petit.
-- `mask_from_selection` : couverture, feather, inversion.
-- `result_resize_and_offset` : le PNG 1024×1024 est bien placé à `crop.x0/y0`.
-- `endpoint_validation` : loopback autorisé, distant refusé sans opt-in.
-
-### Intégration
-
-- `#[ignore]` ou feature `comfy_test` : nécessite ComfyUI + modèles.
-- Test réel : image de test + lasso synthétique, vérifier que le PNG sort et que le
-  calque est créé avec un masque.
-- Ne pas mettre d'images personnelles dans le repo ; utiliser des images de test
-  publiques ou synthétiques.
-
-### Non-régression
-
-- `cargo test -p photocraft-comfy`
-- `cargo test -p photocraft-engine --test panic_hunt -- --ignored` (nouvelle commande
-  → pas de panic sur paramètres adverses)
-- `cargo clippy -p photocraft-comfy -p photocraft-engine --all-targets -- -D warnings`
-- `cargo xtask layers`
-- `cargo xtask wasm` (le crate doit compiler en wasm, même s'il renvoie une erreur)
-- `cargo xtask parity` si le menu ajoute une commande.
-
-## 7. Build Windows
-
-Prérequis :
-
-- Rust stable MSVC (`rustup default stable-x86_64-pc-windows-msvc`) ;
-- Visual Studio 2022 Build Tools + Windows SDK (déjà présents sur la machine) ;
-- pas de dépendance native supplémentaire.
-
-```powershell
-rustup default stable-x86_64-pc-windows-msvc
-cargo build --release -p photocraft
-```
-
-Le premier build est long (~20–40 min) et le dossier `target` peut atteindre ~10 Go.
-Pour itérer : `cargo build -p photocraft-ui-egui --example snapshot` ou
-`cargo run -p photocraft -- <image>`.
-
-## 8. Découpage du travail
-
-1. **Squelette** : crate `photocraft-comfy` + client HTTP + tests de workflow.
-2. **Commande headless** : `ai.edit` sans UI, testée via `photocraft-cli` ou un
-   exemple, sur une image et une sélection synthétique.
-3. **Panneau** : UI minimale, connexion, génération, application.
-4. **Intégration** : préférences, docking, raccourcis, messages d'erreur.
-5. **Polish** : batch, vignettes, annulation, profils, docs.
-
-Le prototype Python et les workflows JSON de `workflows/` servent de référence
-d'exécution à chaque étape.
+Tant que ces tests ne sont pas faits, le control channel reste une hypothèse
+d'ingénierie, pas une certitude.
