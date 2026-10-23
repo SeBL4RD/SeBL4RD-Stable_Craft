@@ -1,0 +1,4 @@
+# The bridge runs with ComfyUI's embedded Python (Pillow and requests are already
+# installed there). For a system Python 3.11+:
+requests>=2.31
+Pillow>=10.0

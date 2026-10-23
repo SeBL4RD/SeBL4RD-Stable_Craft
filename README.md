@@ -156,6 +156,9 @@ F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\bridge_cli.py `
 Options utiles : `--dry-run` (géométrie seulement), `--no-apply` (génère sans insérer),
 `--padding`, `--feather`, `--steps`, `--seed`.
 
+Le bridge tourne avec le Python embarqué de ComfyUI (Pillow + requests déjà présents).
+Avec un Python système 3.11+ : `pip install -r prototypes/requirements.txt`.
+
 Détail important : PhotoCraft peut fermer une connexion de contrôle restée inactive
 pendant le sampling ComfyUI. Le bridge se reconnecte avant la phase d'application.
 
