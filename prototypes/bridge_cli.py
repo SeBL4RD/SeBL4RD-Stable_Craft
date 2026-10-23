@@ -109,6 +109,18 @@ class ComfyClient:
                 "Add the file to ComfyUI's model folders or configure extra_model_paths.yaml."
             )
 
+    def require_node(self, node: str) -> None:
+        try:
+            info = self._get(f"/object_info/{node}").json()
+        except requests.RequestException as exc:
+            raise ComfyError(
+                f"ComfyUI node {node} is missing. Install the custom node required by this profile."
+            ) from exc
+        if node not in info:
+            raise ComfyError(
+                f"ComfyUI node {node} is missing. Install the custom node required by this profile."
+            )
+
     def upload(self, path: Path, name: str) -> str:
         with path.open("rb") as f:
             response = self._post(
@@ -175,7 +187,12 @@ def comfy_error_message(status: dict[str, Any]) -> str:
     return "ComfyUI reported an error"
 
 
-def flux3_workflow(
+def clip_loader_for(text_encoder: str) -> str:
+    return "CLIPLoaderGGUF" if text_encoder.lower().endswith(".gguf") else "CLIPLoader"
+
+
+def build_workflow(
+    profile: str,
     *,
     image_name: str,
     prompt: str,
@@ -186,50 +203,176 @@ def flux3_workflow(
     steps: int,
     cfg: float,
     seed: int,
+    width: int,
+    height: int,
     prefix: str,
+    ref_boost: float = 4.0,
+    grounding_px: int = 768,
 ) -> dict[str, Any]:
-    return {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
-        "2": {
-            "class_type": "CLIPLoader",
-            "inputs": {"clip_name": text_encoder, "type": "flux3"},
-        },
-        "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
-        "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-        "7": {
-            "class_type": "ReferenceMultiLatent",
-            "inputs": {
-                "positive": ["4", 0],
-                "negative": ["5", 0],
-                "vae": ["3", 0],
-                "images.image0": ["6", 0],
-                "resolution": "resize",
-                "resolution.megapixels": 1.0,
+    if profile == "flux3_klein":
+        return {
+            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": text_encoder, "type": "flux3"},
             },
-        },
-        "8": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["1", 0],
-                "seed": seed,
-                "steps": steps,
-                "cfg": cfg,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "positive": ["7", 0],
-                "negative": ["7", 1],
-                "latent_image": ["7", 2],
-                "denoise": 1.0,
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+            "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
+            "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+            "7": {
+                "class_type": "ReferenceMultiLatent",
+                "inputs": {
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "vae": ["3", 0],
+                    "images.image0": ["6", 0],
+                    "resolution": "resize",
+                    "resolution.megapixels": 1.0,
+                },
             },
-        },
-        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
-        "10": {
-            "class_type": "SaveImage",
-            "inputs": {"images": ["9", 0], "filename_prefix": prefix},
-        },
-    }
+            "8": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["1", 0],
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "positive": ["7", 0],
+                    "negative": ["7", 1],
+                    "latent_image": ["7", 2],
+                    "denoise": 1.0,
+                },
+            },
+            "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+            "10": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["9", 0], "filename_prefix": prefix},
+            },
+        }
+
+    if profile == "flux2_klein_9b":
+        loader = clip_loader_for(text_encoder)
+        return {
+            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
+            "2": {"class_type": loader, "inputs": {"clip_name": text_encoder, "type": "flux2"}},
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+            "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
+            "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+            "7": {
+                "class_type": "ImageScaleToTotalPixels",
+                "inputs": {
+                    "image": ["6", 0],
+                    "upscale_method": "lanczos",
+                    "megapixels": 1.0,
+                    "resolution_steps": 1,
+                },
+            },
+            "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}},
+            "9": {
+                "class_type": "ReferenceLatent",
+                "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]},
+            },
+            "10": {
+                "class_type": "ConditioningZeroOut",
+                "inputs": {"conditioning": ["4", 0]},
+            },
+            "11": {
+                "class_type": "ReferenceLatent",
+                "inputs": {"conditioning": ["10", 0], "latent": ["8", 0]},
+            },
+            "12": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["1", 0],
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "positive": ["9", 0],
+                    "negative": ["11", 0],
+                    "latent_image": ["8", 0],
+                    "denoise": 1.0,
+                },
+            },
+            "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
+            "14": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["13", 0], "filename_prefix": prefix},
+            },
+        }
+
+    if profile == "krea2_edit":
+        return {
+            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": text_encoder, "type": "krea2"},
+            },
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+            "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+            "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["3", 0]}},
+            "6": {
+                "class_type": "EmptySD3LatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": 1},
+            },
+            "7": {
+                "class_type": "Krea2EditModelPatch",
+                "inputs": {
+                    "model": ["1", 0],
+                    "source_latent": ["5", 0],
+                    "vae": ["3", 0],
+                    "source_image": ["4", 0],
+                    "ref_boost": ref_boost,
+                    "fit_mode": "fit",
+                    "target_latent": ["6", 0],
+                },
+            },
+            "8": {
+                "class_type": "Krea2EditGroundedEncode",
+                "inputs": {
+                    "clip": ["2", 0],
+                    "prompt": prompt,
+                    "image": ["4", 0],
+                    "grounding_px": grounding_px,
+                },
+            },
+            "9": {
+                "class_type": "Krea2EditGroundedEncode",
+                "inputs": {
+                    "clip": ["2", 0],
+                    "prompt": "",
+                    "image": ["4", 0],
+                    "grounding_px": grounding_px,
+                },
+            },
+            "10": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["7", 0],
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "positive": ["8", 0],
+                    "negative": ["9", 0],
+                    "latent_image": ["6", 0],
+                    "denoise": 1.0,
+                },
+            },
+            "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+            "12": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["11", 0], "filename_prefix": prefix},
+            },
+        }
+
+    raise ComfyError(f"unknown profile {profile!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -282,11 +425,6 @@ def main() -> None:
     profile_name = args.profile or cfg.get("app", {}).get("default_profile", "flux3_klein")
     pcfg = cfg.get("profiles", {}).get(profile_name, {})
     manifest = manifest_profile(profile_name)
-    if profile_name != "flux3_klein":
-        raise SystemExit(
-            "This proof-of-concept CLI supports only 'flux3_klein'. "
-            "FLUX.2 and Krea 2 are validated workflows but not wired into the bridge yet."
-        )
 
     comfy_endpoint = cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452")
     host = cfg.get("photocraft", {}).get("control_host", "127.0.0.1")
@@ -304,6 +442,8 @@ def main() -> None:
     feather = args.feather if args.feather is not None else int(pcfg.get("feather", 10))
     steps = args.steps if args.steps is not None else int(pcfg.get("steps", manifest["settings"]["steps"]))
     cfg_scale = args.cfg if args.cfg is not None else float(pcfg.get("cfg", manifest["settings"]["cfg"]))
+    ref_boost = float(pcfg.get("ref_boost", manifest.get("settings", {}).get("ref_boost", 4.0)))
+    grounding_px = int(pcfg.get("grounding_px", manifest.get("settings", {}).get("grounding_px", 768)))
 
     unet = file_name(pcfg.get("unet"), manifest["files"]["unet"]["filename"])
     text_encoder = file_name(pcfg.get("text_encoder"), manifest["files"]["text_encoder"]["filename"])
@@ -369,13 +509,18 @@ def main() -> None:
             return
 
         comfy.require("UnetLoaderGGUF", "unet_name", unet)
-        comfy.require("CLIPLoader", "clip_name", text_encoder)
+        comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
+        if profile_name == "krea2_edit":
+            comfy.require_node("Krea2EditModelPatch")
+            comfy.require_node("Krea2EditGroundedEncode")
+            comfy.require_node("EmptySD3LatentImage")
 
         upload_name = f"stablecraft_{int(time.time())}.png"
         uploaded = comfy.upload(crop_path, upload_name)
         seed = args.seed if args.seed is not None and args.seed >= 0 else random.randrange(0, 2**63 - 1)
-        workflow = flux3_workflow(
+        workflow = build_workflow(
+            profile_name,
             image_name=uploaded,
             prompt=args.prompt,
             negative=args.negative,
@@ -385,7 +530,11 @@ def main() -> None:
             steps=steps,
             cfg=cfg_scale,
             seed=seed,
+            width=cw,
+            height=ch,
             prefix="StableCraft",
+            ref_boost=ref_boost,
+            grounding_px=grounding_px,
         )
         started = time.time()
         prompt_id = comfy.queue(workflow)

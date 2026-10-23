@@ -72,6 +72,16 @@ Résultat :
 4. **PNG aplati** : `app.save` prévient que les calques/masques ne sont pas conservés
    dans le PNG. Le document PhotoCraft, lui, garde le calque et le masque.
 
+### Bridge : profils FLUX.2 et Krea 2
+
+| Profil | Commande | Résultat |
+|---|---|---|
+| FLUX.2 Klein 9B | `bridge_cli.py --profile flux2_klein_9b --no-apply` | ✅ 4 steps, 47,7 s, crop 400×544 |
+| Krea 2 Edit | `bridge_cli.py --profile krea2_edit --no-apply` | ✅ 8 steps, 25,2 s, crop 400×544 |
+
+Les deux profils passent la validation des modèles/nœuds et produisent un PNG au crop.
+L'UI les propose dans le combo de profils ; le bridge reçoit bien `--profile`.
+
 ### UI Tkinter
 
 Testée avec le Python système 3.11 (Tkinter, sans dépendance) et le Python embarqué de
@@ -82,7 +92,9 @@ ComfyUI pour le bridge.
 - ✅ bouton Générer → bridge → nouveau calque, statut « Terminé — nouveau calque dans
   PhotoCraft », preview chargée ;
 - ✅ bouton Annuler disponible pendant la génération ;
-- ✅ scrollbar pour le journal et les sections basses.
+- ✅ scrollbar pour le journal et les sections basses ;
+- ✅ profils FLUX.3, FLUX.2 et Krea 2 : smoke test OK, modèles/nœuds OK ;
+- ✅ passage en Krea 2 : 8 steps / CFG 1 / 12,6 Go affichés, bouton Générer actif.
 
 Preuve : `docs/demo/stablecraft-ui.png`.
 

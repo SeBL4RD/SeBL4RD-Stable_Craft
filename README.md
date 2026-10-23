@@ -7,9 +7,10 @@ dans un nouveau calque — sans toucher aux pixels d'origine. Le tout en local, 
 avec des modèles récents quantifiés en GGUF.
 
 > **Statut** : preuve de concept validée le 23/10/2026. Le backend ComfyUI fonctionne,
-> et le **control channel de PhotoCraft 0.14.0 est validé de bout en bout** : lasso →
-> composite → FLUX.3 → nouveau calque + masque de calque featheré. L'intégration est
-> conçue comme une **application compagne installable**, sans fork de PhotoCraft.
+> le **control channel de PhotoCraft 0.14.0 est validé de bout en bout** (lasso →
+> composite → nouveau calque + masque featheré), et **trois profils sont branchés** :
+> FLUX.3 Klein (défaut), FLUX.2 Klein 9B et Krea 2 Edit. L'intégration est conçue comme
+> une **application compagne installable**, sans fork de PhotoCraft.
 
 <p>
 <img src="docs/demo/stablecraft-ui.png" width="420" alt="UI StableCraft : statut, prompt, réglages et aperçu">
@@ -75,7 +76,7 @@ et budgets VRAM : [`docs/MODELS.md`](docs/MODELS.md).
 | **FLUX.3 Klein Edit** (défaut) | 11,6 Go | 16 / 1.0 | lasso, meilleure fidélité, 12 Go |
 | FLUX.2 Klein 9B Edit | 14,3 Go | 4 / 1.0 | qualité/texture, 12 Go avec offload |
 | Krea 2 Edit | 12,6 Go | 8 / 1.0 | identité/style, nœuds `krea2edit` |
-| FLUX.2 Klein 4B (public, à venir) | ~5–10 Go | 4 / 1.0 | 8 Go VRAM |
+| FLUX.2 Klein 4B (non branché) | ~5–10 Go | 4 / 1.0 | 8 Go VRAM, à valider |
 | Qwen-Image-Edit 2509 | ~17 Go | 8–50 | trop lourd pour 12 Go, pas local |
 
 Les poids ne sont **pas** redistribués. Chaque utilisateur installe ses fichiers dans
@@ -107,13 +108,13 @@ Le MVP StableCraft :
 
 1. s'installe et détecte PhotoCraft + ComfyUI ;
 2. connecte le control channel et vérifie les commandes ;
-3. propose **un seul profil** : FLUX.3 Klein Edit ;
+3. propose **FLUX.3 par défaut**, avec **FLUX.2 9B** et **Krea 2 Edit** au choix ;
 4. fait lasso → prompt → preview → nouveau calque masqué ;
 5. gère l'annulation et les erreurs lisibles ;
 6. ne télécharge aucun modèle sans accord.
 
-Hors MVP : FLUX.2, Krea 2, batch, outpaint, model manager complet, panneau natif,
-macOS/Linux.
+Hors MVP : FLUX.2 4B, Qwen-Image-Edit, batch, outpaint, model manager complet,
+panneau natif, macOS/Linux.
 
 ---
 
@@ -207,7 +208,7 @@ Workflows API validés : [`workflows/`](workflows).
 1. **Bundle PyInstaller + Inno Setup** : supprimer la dépendance au Python système et
    produire un vrai installeur `.exe`.
 2. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
-3. **FLUX.2 / Krea 2**, batch, outpaint.
+3. **Batch / outpaint / FLUX.2 4B**, tests CMYK/Lab/16 bits et documents 4K.
 4. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
 
 Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),

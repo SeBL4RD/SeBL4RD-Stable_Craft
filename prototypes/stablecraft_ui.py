@@ -44,6 +44,8 @@ RED = "#ef4444"
 YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
+SUPPORTED_PROFILES = {"flux3_klein", "flux2_klein_9b", "krea2_edit"}
+
 
 DEFAULTS: dict[str, Any] = {
     "app": {"default_profile": "flux3_klein"},
@@ -110,7 +112,7 @@ def file_name(path: str | None, fallback: str) -> str:
 
 
 class StableCraftApp(tk.Tk):
-    def __init__(self, config_path: Path) -> None:
+    def __init__(self, config_path: Path, initial_profile: str | None = None) -> None:
         super().__init__()
         self.config_path = config_path
         self.cfg = load_config(config_path)
@@ -123,7 +125,7 @@ class StableCraftApp(tk.Tk):
         self.last_error: str | None = None
         self.preview_paths: dict[str, str | None] = {"result": None, "document": None}
         self.preview_image: tk.PhotoImage | None = None
-        self.profile_key = str(self.cfg["app"].get("default_profile", "flux3_klein"))
+        self.profile_key = initial_profile or str(self.cfg["app"].get("default_profile", "flux3_klein"))
         self.models_ok = True
         self._closing = False
 
@@ -304,7 +306,7 @@ class StableCraftApp(tk.Tk):
         self.label_to_key: dict[str, str] = {}
         for key, profile in self.manifest["profiles"].items():
             label = profile["label"]
-            if key != "flux3_klein":
+            if key not in SUPPORTED_PROFILES:
                 label += " — bientôt"
             self.profile_labels.append(label)
             self.label_to_key[label] = key
@@ -507,7 +509,7 @@ class StableCraftApp(tk.Tk):
             detail += f" · {weights} Go de poids"
         if vram:
             detail += f" · ~{vram} Go VRAM"
-        if key != "flux3_klein":
+        if key not in SUPPORTED_PROFILES:
             detail += " · bientôt disponible"
         self.profile_detail.config(text=detail)
         self._update_generate_state()
@@ -516,7 +518,7 @@ class StableCraftApp(tk.Tk):
     def _update_generate_state(self) -> None:
         enabled = (
             not self.running
-            and self.profile_key == "flux3_klein"
+            and self.profile_key in SUPPORTED_PROFILES
             and self.pc_ok
             and self.comfy_ok
             and self.has_selection
@@ -606,16 +608,27 @@ class StableCraftApp(tk.Tk):
         missing: list[str] = []
         error: str | None = None
         try:
-            if key == "flux3_klein":
+            if key in SUPPORTED_PROFILES:
                 unet = file_name(pcfg.get("unet"), files["unet"]["filename"])
                 clip = file_name(pcfg.get("text_encoder"), files["text_encoder"]["filename"])
                 vae = file_name(pcfg.get("vae"), files["vae"]["filename"])
+                clip_loader = "CLIPLoaderGGUF" if clip.lower().endswith(".gguf") else "CLIPLoader"
                 if unet not in comfy_options(endpoint, "UnetLoaderGGUF", "unet_name"):
                     missing.append(unet)
-                if clip not in comfy_options(endpoint, "CLIPLoader", "clip_name"):
+                if clip not in comfy_options(endpoint, clip_loader, "clip_name"):
                     missing.append(clip)
                 if vae not in comfy_options(endpoint, "VAELoader", "vae_name"):
                     missing.append(vae)
+                for node in profile.get("requires_nodes", []):
+                    try:
+                        comfy_json(endpoint, f"/object_info/{node}")
+                    except Exception:  # noqa: BLE001
+                        missing.append(node)
+                if key == "krea2_edit":
+                    try:
+                        comfy_json(endpoint, "/object_info/EmptySD3LatentImage")
+                    except Exception:  # noqa: BLE001
+                        missing.append("EmptySD3LatentImage")
         except Exception as exc:  # noqa: BLE001
             error = short_error(exc)
         self.queue.put(("models", key, missing, error))
@@ -691,8 +704,8 @@ class StableCraftApp(tk.Tk):
     def _generate(self) -> None:
         if self.running:
             return
-        if self.profile_key != "flux3_klein":
-            messagebox.showinfo("Bientôt", "Ce profil sera ajouté après le MVP FLUX.3.")
+        if self.profile_key not in SUPPORTED_PROFILES:
+            messagebox.showinfo("Bientôt", "Ce profil sera ajouté plus tard.")
             return
         prompt = self.prompt_text.get("1.0", "end").strip()
         if not prompt:
@@ -715,6 +728,8 @@ class StableCraftApp(tk.Tk):
             str(bridge),
             "--config",
             str(self.config_path),
+            "--profile",
+            self.profile_key,
             "--prompt",
             prompt,
             "--padding",
@@ -890,11 +905,12 @@ class StableCraftApp(tk.Tk):
 def main() -> None:
     ap = argparse.ArgumentParser(description="StableCraft Tkinter MVP")
     ap.add_argument("--config", type=Path, default=ROOT / "config.toml")
+    ap.add_argument("--profile", default=None, help="flux3_klein, flux2_klein_9b, or krea2_edit")
     ap.add_argument("--smoke-test", action="store_true", help="open, connect, then close after 3s")
     ap.add_argument("--smoke-generate", action="store_true", help="run one generation, then close")
     args = ap.parse_args()
 
-    app = StableCraftApp(args.config)
+    app = StableCraftApp(args.config, initial_profile=args.profile)
     if args.smoke_test:
         app.after(3000, app._on_close)
     if args.smoke_generate:

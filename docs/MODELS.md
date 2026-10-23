@@ -255,17 +255,34 @@ entraînés à CFG 1 ; au-dessus, la qualité casse. Krea 2 Turbo aussi.
 - 16–24 Go VRAM : FLUX.2 9B Q8, FLUX.3 Q8, Krea 2.
 - Pour le lasso : FLUX.3 Klein est le meilleur compromis fidélité/VRAM.
 
-## 7. Ce qu'on garde pour le MVP
+## 7. Profils branchés dans l'application
 
-- **Un seul profil** : FLUX.3 Klein Edit (local, validé).
-- **Un seul encodeur** : Qwen-3-VL-4B FP8.
-- **Un seul VAE** : FLUX.2 VAE.
-- **Un seul workflow** : édition instructionnelle crop + contexte + recomposition.
-- Les autres profils sont affichés comme « disponibles plus tard » dans le model
-  manager, avec leur taille et leur licence, mais désactivés.
+Trois profils sont implémentés dans le bridge et sélectionnables dans l'UI :
 
-Cela évite de télécharger quoi que ce soit et de maintenir trois workflows avant
-d'avoir validé l'UX.
+| Profil | Modèle | Encodeur | VAE | Steps / CFG | État |
+|---|---|---|---|---:|---|
+| **FLUX.3 Klein Edit** (défaut) | `flux-3-image-klein-Q8_0.gguf` | Qwen3-VL-4B FP8 (`flux3`) | `flux2_vae` | 16 / 1.0 | ✅ testé |
+| FLUX.2 Klein 9B Edit | `flux-2-klein-Distilled-9b-Q8_0.gguf` | Qwen3-8B Q4 (`flux2`) | `flux2_vae` | 4 / 1.0 | ✅ testé |
+| Krea 2 Edit | `krea2_turbo_edit-Q4_K_M.gguf` | Qwen3-VL-4B FP8 (`krea2`) | `qwen_image_vae` | 8 / 1.0 | ✅ testé |
+
+L'UI vérifie les fichiers et les nœuds custom avant d'activer le bouton Générer :
+
+- FLUX.3 : `UnetLoaderGGUF`, `CLIPLoader`, `VAELoader` ;
+- FLUX.2 : `UnetLoaderGGUF`, `CLIPLoaderGGUF`, `VAELoader` ;
+- Krea 2 : `UnetLoaderGGUF`, `CLIPLoader`, `VAELoader`, `Krea2EditModelPatch`,
+  `Krea2EditGroundedEncode`, `EmptySD3LatentImage`.
+
+### Non branchés
+
+- **FLUX.2 Klein 4B** : pas de modèle local ; profil public à ajouter et à tester.
+- **Qwen-Image-Edit 2509** : trop lourd, poids absents.
+- **FLUX.1 Kontext / Fill** : poids absents, plus vieux.
+- **Krea 2 Turbo T2I** : `Krea-2-Turbo-Q4_K_M.gguf` (arch `krea2`) ne charge pas avec
+  `UnetLoaderGGUF` dans cette version. Le modèle fusionné `krea2_turbo_edit`
+  (arch `qwen_image`) fonctionne pour l'édition.
+
+Aucun profil ne télécharge de modèle automatiquement. Les fichiers manquants sont
+signalés, avec leur taille, leur chemin et leur licence.
 
 ## 8. Sources principales
 

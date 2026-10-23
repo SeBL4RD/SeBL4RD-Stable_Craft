@@ -405,7 +405,7 @@ pas la version finale.
 
 - Installateur Windows + config.
 - Connexion PhotoCraft (control channel) + ComfyUI.
-- Un seul profil : **FLUX.3 Klein Edit**.
+- Trois profils : **FLUX.3 Klein (défaut)**, **FLUX.2 Klein 9B**, **Krea 2 Edit**.
 - Lasso → prompt → preview → nouveau calque + masque de calque featheré.
 - Détection des modèles locaux, message si manquant, aucun téléchargement automatique.
 - Annulation, erreurs lisibles, log local.
@@ -413,7 +413,7 @@ pas la version finale.
 
 ### Hors MVP (phases suivantes)
 
-- FLUX.2 Klein, Krea 2, Qwen-Image-Edit.
+- FLUX.2 Klein 4B (profil basse VRAM), Qwen-Image-Edit.
 - Batch de variantes, historique, presets.
 - Outpaint, upscale, suppression d'objet.
 - Téléchargement assisté des modèles.
