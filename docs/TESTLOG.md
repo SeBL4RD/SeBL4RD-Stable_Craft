@@ -72,9 +72,24 @@ Résultat :
 4. **PNG aplati** : `app.save` prévient que les calques/masques ne sont pas conservés
    dans le PNG. Le document PhotoCraft, lui, garde le calque et le masque.
 
+### UI Tkinter
+
+Testée avec le Python système 3.11 (Tkinter, sans dépendance) et le Python embarqué de
+ComfyUI pour le bridge.
+
+- ✅ démarrage, connexion PhotoCraft + ComfyUI ;
+- ✅ document `input.png`, sélection `215×346`, modèles OK ;
+- ✅ bouton Générer → bridge → nouveau calque, statut « Terminé — nouveau calque dans
+  PhotoCraft », preview chargée ;
+- ✅ bouton Annuler disponible pendant la génération ;
+- ✅ scrollbar pour le journal et les sections basses.
+
+Preuve : `docs/demo/stablecraft-ui.png`.
+
 ### Preuves
 
 - `docs/demo/photocraft-bridge.png` : UI PhotoCraft avec calque StableCraft, masque,
   densité 100 %, feather 10 px, sélection active.
 - `docs/demo/photocraft-flux3-blue.png` : rendu final.
 - `docs/demo/photocraft-crop.png` : crop envoyé à ComfyUI.
+- `docs/demo/stablecraft-ui.png` : UI Tkinter du MVP après génération.

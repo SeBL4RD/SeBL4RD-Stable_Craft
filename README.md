@@ -53,6 +53,7 @@ Images dans [`docs/demo/`](docs/demo) :
 
 - `photocraft-bridge.png` : PhotoCraft avec le calque StableCraft, son masque et le feather 10 px
 - `photocraft-flux3-blue.png` : résultat du bridge (robe bleue)
+- `stablecraft-ui.png` : l'UI Tkinter du MVP
 - `lasso-before.png` → `lasso-after-flux3.png`
 - `comparison-original-flux3-flux2.png`
 - `krea2-edit.png`
@@ -162,18 +163,35 @@ Avec un Python système 3.11+ : `pip install -r prototypes/requirements.txt`.
 Détail important : PhotoCraft peut fermer une connexion de contrôle restée inactive
 pendant le sampling ComfyUI. Le bridge se reconnecte avant la phase d'application.
 
+### 3. UI Tkinter (MVP)
+
+[`prototypes/stablecraft_ui.py`](prototypes/stablecraft_ui.py) est l'UI du MVP :
+statut PhotoCraft/ComfyUI, document et sélection, prompt, profil, réglages,
+Générer/Annuler, progression, aperçu et journal.
+
+- **Zéro téléchargement** : uniquement la stdlib + Tkinter.
+- Le bridge tourne dans le Python embarqué de ComfyUI (config `[comfyui] python`).
+- L'UI se connecte directement au control channel pour le statut et la sélection.
+
+```powershell
+python prototypes\stablecraft_ui.py --config config.toml
+```
+
+Le bouton Générer vérifie la connexion, la sélection et le profil, puis lance le bridge.
+En cas d'erreur (modèle manquant, ComfyUI down, sélection vide), le message est dans le
+journal et dans la barre de statut.
+
 Workflows API validés : [`workflows/`](workflows).
 
 ---
 
 ## Prochaines étapes
 
-1. **UI PySide6** : prompt, profils, previews, progression, bouton Générer/Annuler.
-2. **Installateur Inno Setup** : détection PhotoCraft/ComfyUI, raccourci « PhotoCraft +
+1. **Installateur Inno Setup** : détection PhotoCraft/ComfyUI, raccourci « PhotoCraft +
    StableCraft », config, token.
-3. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
-4. **FLUX.2 / Krea 2**, batch, outpaint.
-5. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
+2. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
+3. **FLUX.2 / Krea 2**, batch, outpaint.
+4. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
 
 Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (compagnon + installateur),

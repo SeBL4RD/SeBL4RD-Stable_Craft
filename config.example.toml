@@ -29,6 +29,9 @@ control_port = 7878
 
 [comfyui]
 endpoint = "http://127.0.0.1:12452"
+# Python embarqué de ComfyUI, utilisé pour lancer le bridge (Pillow + requests).
+# Vide = auto-détection de python_embeded/python.exe, sinon python système.
+python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 # Optionnel : racine des modèles ComfyUI, pour l'affichage et la validation.
 # models_dir = "F:/ComfyUI_windows_portable/ComfyUI/models"
 # Commande de lancement optionnelle.

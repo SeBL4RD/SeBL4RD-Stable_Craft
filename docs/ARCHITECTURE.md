@@ -298,24 +298,29 @@ L'application :
 
 ## 6. Choix de la stack UI
 
-### Recommandation v1 : Python + PySide6
+### MVP : Python + Tkinter (retenu)
 
-- Python est déjà présent (et l'écosystème ComfyUI est Python).
-- `requests` + Pillow suffisent pour le bridge ; PySide6 fournit une UI native,
-  un tray, des raccourcis globaux, des dialogues de fichiers.
+- Python 3.11 est déjà présent ; Tkinter est inclus, donc **zéro téléchargement**.
+- L'UI ne fait que du stdlib : statut, formulaires, previews, sous-processus.
+- Le bridge tourne dans le Python embarqué de ComfyUI (Pillow + requests déjà là).
 - Itération rapide, facile à contribuer pour un repo public.
-- Packaging : PyInstaller/Nuitka + Inno Setup (Windows), `.app` (macOS), AppImage
-  (Linux).
-- Inconvénient : installeur plus lourd (~150–250 Mo) ; acceptable pour un outil IA.
+- Inconvénient : look Tkinter basique ; on peut passer à PySide6 plus tard sans
+  réécrire le bridge.
+
+### Alternative : Python + PySide6
+
+- Meilleur rendu, tray, raccourcis globaux, dialogues de fichiers.
+- Nécessite ~200 Mo de dépendances ; à envisager pour la version publique si le look
+  devient un critère.
+- Packaging : PyInstaller/Nuitka + Inno Setup.
 
 ### Alternative : Rust + egui
 
 - Un seul exécutable, aligné avec PhotoCraft, pas de runtime Python.
 - Plus de travail pour l'UI et les dialogues ; build Rust nécessaire.
-- À envisager si la taille de l'installeur ou la performance devient critique.
 
-Le **bridge** doit être isolé de l'UI (module `bridge/`) pour permettre un portage
-Rust plus tard sans réécrire la logique.
+Le **bridge** est isolé de l'UI (`prototypes/bridge_cli.py` + `control_client.py`)
+pour permettre un portage PySide6/Rust plus tard sans réécrire la logique.
 
 ## 7. UI / UX
 
