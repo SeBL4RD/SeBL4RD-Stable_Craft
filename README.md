@@ -211,7 +211,9 @@ Workflows API validés : [`workflows/`](workflows).
 3. **Batch / outpaint / FLUX.2 4B**, tests CMYK/Lab/16 bits et documents 4K.
 4. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
 
-Voir [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
+**Guide pas à pas : [`docs/USAGE.md`](docs/USAGE.md).**
+
+Voir aussi [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (compagnon + installateur),
 [`docs/MODELS.md`](docs/MODELS.md) (modèles et réglages) et
 [`docs/TESTLOG.md`](docs/TESTLOG.md) (journal de validation).
