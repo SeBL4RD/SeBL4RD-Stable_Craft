@@ -112,10 +112,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
 
 - ✅ détection PhotoCraft / Python ComfyUI / Python UI ;
 - ✅ copie des fichiers, `tmp/`, `models/` ;
-- ✅ `config.toml` avec token, automation root, endpoint et Python réécrits ;
-- ✅ `launch.cmd` avec les flags du control channel ;
+- ✅ `config.toml` avec `photocraft.executable`, `comfyui.root`,
+  `comfyui.start_command`, `comfyui.python`, token, automation root, endpoint ;
+- ✅ `StableCraft.bat` + `launcher.py` copiés, un seul raccourci ;
 - ✅ `uninstall.ps1` en UTF-8 BOM, conservation optionnelle des modèles/config ;
 - ✅ aucun téléchargement de modèle.
+
+### Lanceur un clic
+
+- **À froid** : `StableCraft.bat` a démarré ComfyUI (~43 s), PhotoCraft avec le
+  control channel, puis l'UI. `exit=0`.
+- **À chaud** : ComfyUI et PhotoCraft étaient déjà lancés, le lanceur a seulement
+  ouvert l'UI. `exit=0`.
+- Chemins obligatoires manquants : message Tkinter + arrêt (testé indirectement avec
+  la validation des chemins).
+- Modèles manquants : non bloquant, l'UI affiche `Modèles manquants` et désactive
+  Générer.
+- Le dossier accidentel nommé `` ` `` (artefact d'installation avec un chemin
+  invalide) a été supprimé.
 
 ### Preuves
 

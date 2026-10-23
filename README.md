@@ -19,6 +19,29 @@ avec des modèles récents quantifiés en GGUF.
 
 ---
 
+## Démarrage rapide
+
+**Double-clique sur `StableCraft.bat`.**
+
+Le lanceur fait tout :
+
+1. vérifie les chemins (PhotoCraft, ComfyUI, Python) ;
+2. démarre ComfyUI s'il ne tourne pas ;
+3. démarre PhotoCraft avec le control channel s'il ne tourne pas ;
+4. ouvre l'UI.
+
+Si un chemin obligatoire manque, il affiche un message clair et s'arrête. Les modèles
+manquants ne bloquent pas : l'UI les signale et désactive Générer.
+
+`config.toml` est **optionnel** : le lanceur détecte les chemins courants. Tu n'as rien
+à modifier pour démarrer. Si tu veux changer un chemin, le fichier est commenté ; les
+sections `[photocraft]` et `[comfyui]` ne sont pas des dossiers, juste des blocs de
+configuration.
+
+Guide détaillé : [`docs/USAGE.md`](docs/USAGE.md).
+
+---
+
 ## La décision : pas de fork
 
 PhotoCraft est activement maintenu ; maintenir un fork serait pénible. Ses plugins
@@ -118,7 +141,10 @@ panneau natif, macOS/Linux.
 
 ---
 
-## Prototypes
+## Développement (pour les curieux)
+
+**Le chemin normal est `StableCraft.bat`.** Les commandes ci-dessous servent à
+déboguer ou à tester les briques séparément.
 
 ### 1. Backend seul, sans PhotoCraft
 
@@ -190,8 +216,8 @@ journal et dans la barre de statut.
 ### 4. Installateur
 
 [`installer/install.ps1`](installer/install.ps1) installe StableCraft à côté de
-PhotoCraft : détection des chemins, config, token, dossier temporaire, lanceur
-« PhotoCraft + StableCraft » et raccourcis. Aucun modèle n'est téléchargé.
+PhotoCraft : détection des chemins, config, token, dossier temporaire, et un seul
+raccourci **StableCraft** vers `StableCraft.bat`. Aucun modèle n'est téléchargé.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1

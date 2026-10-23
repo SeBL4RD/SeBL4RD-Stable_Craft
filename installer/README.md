@@ -1,27 +1,39 @@
-# Installateur StableCraft (MVP)
+# Installateur StableCraft
 
-Installateur PowerShell, sans admin, pour Windows. Il installe StableCraft à côté
-d'une installation PhotoCraft existante, sans fork et sans télécharger de modèle.
+Un seul clic : **StableCraft.bat**. Il démarre ComfyUI, PhotoCraft avec le control
+channel, puis l'UI. Si un chemin obligatoire manque, il affiche un message clair et
+s'arrête. Les modèles manquants ne bloquent pas : l'UI les signale.
 
 ## Prérequis
 
 - Windows x64.
 - PhotoCraft 0.14.0 (portable ou installé).
-- ComfyUI qui tourne, avec son Python embarqué (`python_embeded\python.exe`) et
-  `requests` + Pillow (présents dans l'installation standard).
-- Python 3.11+ **avec Tkinter** pour l'UI (`python.exe` dans le PATH). C'est le cas
-  de l'installation Python standard ; si Tkinter manque, l'UI ne démarre pas.
-- Les modèles FLUX.3 doivent être visibles par ComfyUI (voir `docs/MODELS.md`).
+- ComfyUI portable avec `python_embeded\python.exe` (Pillow + requests inclus).
+- Python 3.11+ avec Tkinter pour l'UI (`python.exe` dans le PATH).
+- Les modèles FLUX.3/FLUX.2/Krea 2 doivent être visibles par ComfyUI
+  (voir `docs/MODELS.md`).
 
-## Lancer
+## Utilisation sans installer
 
-Double-clique sur `install.cmd`, ou :
+Depuis le dossier du repo :
+
+```powershell
+.\StableCraft.bat
+```
+
+C'est tout. Le lanceur lit `config.toml`, démarre ce qui manque, puis ouvre l'UI.
+Pour un premier lancement, `config.toml` doit exister (copie `config.example.toml`
+ou lance l'installateur).
+
+## Installer
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
-Installation silencieuse avec chemins explicites :
+Ou double-clique sur `installer\install.cmd`.
+
+Installation avec chemins explicites :
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
@@ -41,38 +53,27 @@ Options :
 | `-ComfyEndpoint` | endpoint ComfyUI (défaut `http://127.0.0.1:12452`) |
 | `-ConfigFile` | config existante à importer (les chemins d'installation sont réécrits) |
 | `-NoShortcuts` | ne crée aucun raccourci |
-| `-NoDesktopShortcut` | crée les raccourcis du menu Démarrer mais pas celui du bureau |
+| `-NoDesktopShortcut` | crée le raccourci du menu Démarrer mais pas celui du bureau |
 
 ## Ce que fait l'installateur
 
 1. Détecte PhotoCraft et le Python de ComfyUI.
-2. Copie l'UI, le bridge, `models.json`, `compat.toml` et les docs dans le dossier
-   d'installation.
-3. Écrit `config.toml` avec le token, le dossier temporaire, l'endpoint et le Python
-   de ComfyUI. Les chemins de modèles de la config importée sont conservés.
-4. Crée `tmp/` et `models/`.
-5. Crée `launch.cmd` : lance PhotoCraft avec le control channel, attend 3 s, puis
-   lance l'UI.
-6. Crée les raccourcis :
-   - **StableCraft** : l'UI seule (PhotoCraft doit déjà tourner avec le control channel) ;
-   - **PhotoCraft + StableCraft** : le lanceur complet ;
-   - **Désinstaller StableCraft**.
-7. Ne télécharge **aucun** modèle.
+2. Copie l'UI, le bridge, `StableCraft.bat`, `launcher.py`, la config et les docs.
+3. Écrit `config.toml` avec `photocraft.executable`, `comfyui.root`,
+   `comfyui.start_command`, le Python de ComfyUI, le token et le dossier temporaire.
+4. Crée **un seul raccourci** : `StableCraft` (menu Démarrer et bureau).
+5. Ne télécharge aucun modèle.
 
-## Après l'installation
+Le raccourci lance `StableCraft.bat`. Ce dernier :
 
-Lance **PhotoCraft + StableCraft**. PhotoCraft démarre avec :
+- vérifie les chemins (message clair + arrêt si un chemin obligatoire manque) ;
+- démarre ComfyUI si le port `12452` est fermé ;
+- démarre PhotoCraft avec `--control` si le port `7878` est fermé ;
+- lance l'UI Tkinter.
 
-```
---control 7878
---control-token-file <install>\control.token
---automation-read-root <install>\tmp
---automation-write-root <install>\tmp
-```
-
-L'UI lit le token et se connecte. Si PhotoCraft est déjà lancé sans ces options, le
-lanceur peut ouvrir une seconde instance ou ne pas exposer le control channel :
-ferme PhotoCraft avant d'utiliser le raccourci.
+Si PhotoCraft est déjà ouvert **sans** control channel, le lanceur affiche :
+« PhotoCraft est déjà ouvert, mais sans le control channel. Ferme-le, puis relance
+StableCraft.bat. »
 
 ## Désinstallation
 
@@ -81,11 +82,9 @@ aussi `models/` et `config.toml` ; réponds `N` pour les conserver.
 
 ## Limites du MVP
 
-- L'UI nécessite Python 3.11+ avec Tkinter. Un bundle PyInstaller est prévu pour
-  supprimer cette dépendance.
-- Pas encore d'installeur `.exe` Inno Setup ; le script PowerShell est la première
-  version. Le `.iss` viendra quand le bundle sera prêt.
-- Pas de téléchargement de modèles : le model manager avec consentement est la phase
-  suivante.
-- Le lanceur attend 3 s ; si PhotoCraft met plus de temps, l'UI se reconnecte toute
-  seule grâce à son rafraîchissement de statut.
+- L'UI nécessite Python 3.11+ avec Tkinter. Un bundle PyInstaller est prévu.
+- Pas encore d'installeur `.exe` Inno Setup ; le `.bat` + PowerShell est la première
+  version.
+- Pas de téléchargement de modèles dans l'UI : les profils manquants sont signalés.
+- Le premier démarrage de ComfyUI peut prendre 30–60 s ; le lanceur attend jusqu'à
+  4 minutes.

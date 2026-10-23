@@ -357,13 +357,12 @@ pour permettre un portage PySide6/Rust plus tard sans réécrire la logique.
    - `extra_model_paths.yaml` ;
    - sinon, demande l'endpoint et le dossier `models`.
 4. Écrit `config.toml` avec les chemins détectés (sans écraser une config existante).
-5. Crée les raccourcis :
-   - « StableCraft » ;
-   - « PhotoCraft + StableCraft » : lance PhotoCraft avec
-     `--control 7878 --control-token-file … --automation-read-root … --automation-write-root …`,
-     puis StableCraft.
-6. Propose d'ajouter le dossier de modèles à ComfyUI (`extra_model_paths.yaml`).
-7. Ne télécharge aucun modèle à l'installation.
+5. Crée **un seul raccourci** « StableCraft » vers `StableCraft.bat`.
+6. `StableCraft.bat` lance ComfyUI, PhotoCraft avec
+   `--control 7878 --control-token-file … --automation-read-root … --automation-write-root …`,
+   puis l'UI. Si un chemin obligatoire manque, message clair et arrêt.
+7. Propose d'ajouter le dossier de modèles à ComfyUI (`extra_model_paths.yaml`).
+8. Ne télécharge aucun modèle à l'installation.
 
 ### Mise à jour
 
@@ -448,9 +447,8 @@ le flux. Preuves visuelles : `docs/demo/photocraft-bridge.png` et
 
 ### Prochaines étapes
 
-1. UI PySide6 (prompt, profils, previews, progression).
-2. Installateur Inno Setup + lanceur « PhotoCraft + StableCraft ».
-3. Model manager (détection ComfyUI, consentement, dossier dédié).
-4. FLUX.2/Krea 2 dans le bridge.
-5. Tests CMYK/Lab/16 bits et documents 4K.
+1. Bundle PyInstaller + Inno Setup (supprimer la dépendance au Python système).
+2. Model manager (détection ComfyUI, consentement, dossier dédié).
+3. Batch, outpaint, FLUX.2 Klein 4B.
+4. Tests CMYK/Lab/16 bits et documents 4K.
 6. PR upstream éventuelle pour un panneau natif.

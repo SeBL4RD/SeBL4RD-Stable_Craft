@@ -82,7 +82,16 @@ def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
 
 def load_config(path: Path) -> dict[str, Any]:
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    return deep_merge(DEFAULTS, data)
+    cfg = deep_merge(DEFAULTS, data)
+    photocraft = cfg.setdefault("photocraft", {})
+    if not photocraft.get("control_token_file"):
+        photocraft["control_token_file"] = str(ROOT / ".runtime" / "control.token")
+    if not photocraft.get("automation_root"):
+        photocraft["automation_root"] = str(ROOT / ".runtime" / "automation")
+    comfyui = cfg.setdefault("comfyui", {})
+    if not comfyui.get("python"):
+        comfyui["python"] = os.environ.get("STABLECRAFT_COMFY_PYTHON", "")
+    return cfg
 
 
 def manifest() -> dict[str, Any]:
@@ -715,7 +724,7 @@ class StableCraftApp(tk.Tk):
             messagebox.showwarning("Prompt vide", "Écris ce que tu veux changer.")
             return
         negative = self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
-        python = str(self.cfg["comfyui"].get("python") or "")
+        python = os.environ.get("STABLECRAFT_COMFY_PYTHON") or str(self.cfg["comfyui"].get("python") or "")
         if not python or not Path(python).exists():
             messagebox.showerror(
                 "Python ComfyUI introuvable",

@@ -6,7 +6,7 @@
     - copie l'UI et le bridge dans %LOCALAPPDATA%\Programs\StableCraft ;
     - détecte PhotoCraft et le Python embarqué de ComfyUI ;
     - écrit config.toml (token, dossier temporaire, endpoint, Python) ;
-    - crée un lanceur "PhotoCraft + StableCraft" et des raccourcis ;
+    - crée un lanceur unique StableCraft.bat et des raccourcis ;
     - ne télécharge aucun modèle.
 
 .EXAMPLE
@@ -154,6 +154,8 @@ Copy-Item (Join-Path $UiSource "requirements.txt") (Join-Path $InstallDir "proto
 Copy-Item (Join-Path $Root "models.json") $InstallDir -Force
 Copy-Item (Join-Path $Root "compat.toml") $InstallDir -Force
 Copy-Item $ExampleConfig $InstallDir -Force
+Copy-Item (Join-Path $Root "StableCraft.bat") $InstallDir -Force
+Copy-Item (Join-Path $Root "launcher.py") $InstallDir -Force
 if (Test-Path (Join-Path $Root "docs")) {
     Copy-Item (Join-Path $Root "docs") $InstallDir -Recurse -Force
 }
@@ -169,9 +171,17 @@ $tokenToml = Convert-ToTomlPath $token
 $tmpToml = Convert-ToTomlPath $tmp
 $modelsToml = Convert-ToTomlPath $models
 $comfyToml = Convert-ToTomlPath $ComfyPython
+$photoToml = Convert-ToTomlPath $PhotoCraft
+$comfyRoot = Split-Path (Split-Path $ComfyPython)
+$comfyRootToml = Convert-ToTomlPath $comfyRoot
+$startCommand = Join-Path $comfyRoot "run_nvidia_gpu.bat"
+$startToml = Convert-ToTomlPath $startCommand
 
 if ($ConfigFile -and (Test-Path $ConfigFile)) {
     $text = Get-Content $ConfigFile -Raw -Encoding UTF8
+    $text = $text -replace '(?m)^\s*executable\s*=.*$', "executable = `"$photoToml`""
+    $text = $text -replace '(?m)^\s*root\s*=.*$', "root = `"$comfyRootToml`""
+    $text = $text -replace '(?m)^\s*start_command\s*=.*$', "start_command = `"$startToml`""
     $text = $text -replace '(?m)^\s*control_token_file\s*=.*$', "control_token_file = `"$tokenToml`""
     $text = $text -replace '(?m)^\s*automation_root\s*=.*$', "automation_root = `"$tmpToml`""
     $text = $text -replace '(?m)^\s*python\s*=.*$', "python = `"$comfyToml`""
@@ -191,6 +201,7 @@ theme = "dark"
 default_profile = "flux3_klein"
 
 [photocraft]
+executable = "$photoToml"
 control_host = "127.0.0.1"
 control_port = 7878
 control_token_file = "$tokenToml"
@@ -198,6 +209,8 @@ automation_root = "$tmpToml"
 
 [comfyui]
 endpoint = "$ComfyEndpoint"
+root = "$comfyRootToml"
+start_command = "$startToml"
 python = "$comfyToml"
 # models_dir = ""
 
@@ -242,17 +255,10 @@ grounding_px = 768
 # Lanceur
 # ---------------------------------------------------------------------------
 
-Write-Step "Création du lanceur"
-$launcher = Join-Path $InstallDir "launch.cmd"
-$uiPython = if ($systemPythonw) { $systemPythonw } else { "pythonw.exe" }
-$launchText = @"
-@echo off
-start "" "$PhotoCraft" --control 7878 --control-token-file "$token" --automation-read-root "$tmp" --automation-write-root "$tmp"
-timeout /t 3 /nobreak >nul
-start "" "$uiPython" "$InstallDir\prototypes\stablecraft_ui.py" --config "$InstallDir\config.toml"
-"@
-Set-Content -Path $launcher -Value $launchText -Encoding ASCII
-Write-Host "Lanceur : $launcher" -ForegroundColor Green
+Write-Step "Lanceur"
+$stablecraftBat = Join-Path $InstallDir "StableCraft.bat"
+Write-Host "Lanceur : $stablecraftBat" -ForegroundColor Green
+Write-Host "Il démarre ComfyUI, PhotoCraft et l'UI en un clic." -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # Désinstalleur
@@ -264,6 +270,7 @@ $uninstallText = @"
 `$install = Split-Path -Parent `$MyInvocation.MyCommand.Path
 `$startMenu = Join-Path `$env:APPDATA "Microsoft\Windows\Start Menu\Programs\StableCraft"
 Remove-Item `$startMenu -Recurse -Force
+Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "StableCraft.lnk") -Force
 Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "PhotoCraft + StableCraft.lnk") -Force
 `$removeData = Read-Host "Supprimer aussi les modèles et la configuration ? (o/N)"
 if (`$removeData -eq "o") {
@@ -271,6 +278,8 @@ if (`$removeData -eq "o") {
 } else {
     Remove-Item (Join-Path `$install "prototypes") -Recurse -Force
     Remove-Item (Join-Path `$install "docs") -Recurse -Force
+    Remove-Item (Join-Path `$install "StableCraft.bat") -Force
+    Remove-Item (Join-Path `$install "launcher.py") -Force
     Remove-Item (Join-Path `$install "launch.cmd") -Force
     Remove-Item (Join-Path `$install "models.json") -Force
     Remove-Item (Join-Path `$install "compat.toml") -Force
@@ -291,20 +300,12 @@ if (-not $NoShortcuts) {
     $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\StableCraft"
     New-Item -ItemType Directory -Force -Path $startMenu | Out-Null
 
-    $uiShortcut = $shell.CreateShortcut((Join-Path $startMenu "StableCraft.lnk"))
-    $uiShortcut.TargetPath = $uiPython
-    $uiShortcut.Arguments = "`"$InstallDir\prototypes\stablecraft_ui.py`" --config `"$InstallDir\config.toml`""
-    $uiShortcut.WorkingDirectory = $InstallDir
-    $uiShortcut.IconLocation = "$PhotoCraft,0"
-    $uiShortcut.Description = "StableCraft — édition IA pour PhotoCraft"
-    $uiShortcut.Save()
-
-    $launchShortcut = $shell.CreateShortcut((Join-Path $startMenu "PhotoCraft + StableCraft.lnk"))
-    $launchShortcut.TargetPath = $launcher
-    $launchShortcut.WorkingDirectory = $InstallDir
-    $launchShortcut.IconLocation = "$PhotoCraft,0"
-    $launchShortcut.Description = "Lancer PhotoCraft avec le control channel et StableCraft"
-    $launchShortcut.Save()
+    $mainShortcut = $shell.CreateShortcut((Join-Path $startMenu "StableCraft.lnk"))
+    $mainShortcut.TargetPath = $stablecraftBat
+    $mainShortcut.WorkingDirectory = $InstallDir
+    $mainShortcut.IconLocation = "$PhotoCraft,0"
+    $mainShortcut.Description = "Lancer ComfyUI, PhotoCraft et StableCraft"
+    $mainShortcut.Save()
 
     $uninstallShortcut = $shell.CreateShortcut((Join-Path $startMenu "Désinstaller StableCraft.lnk"))
     $uninstallShortcut.TargetPath = "powershell.exe"
@@ -314,8 +315,8 @@ if (-not $NoShortcuts) {
 
     if (-not $NoDesktopShortcut) {
         $desktop = [Environment]::GetFolderPath("Desktop")
-        $desktopShortcut = $shell.CreateShortcut((Join-Path $desktop "PhotoCraft + StableCraft.lnk"))
-        $desktopShortcut.TargetPath = $launcher
+        $desktopShortcut = $shell.CreateShortcut((Join-Path $desktop "StableCraft.lnk"))
+        $desktopShortcut.TargetPath = $stablecraftBat
         $desktopShortcut.WorkingDirectory = $InstallDir
         $desktopShortcut.IconLocation = "$PhotoCraft,0"
         $desktopShortcut.Save()
@@ -335,8 +336,8 @@ Write-Host "PhotoCraft        : $PhotoCraft"
 Write-Host "Python ComfyUI    : $ComfyPython"
 Write-Host "Endpoint ComfyUI  : $ComfyEndpoint"
 Write-Host "Config            : $configTarget"
-Write-Host "Lanceur           : $launcher"
+Write-Host "Lanceur           : $stablecraftBat"
 Write-Host ""
 Write-Host "Aucun modèle n'a été téléchargé." -ForegroundColor Yellow
 Write-Host "Les modèles doivent être visibles par ComfyUI (voir docs/MODELS.md)." -ForegroundColor Yellow
-Write-Host "Pour lancer : double-clique sur 'PhotoCraft + StableCraft'." -ForegroundColor Cyan
+Write-Host "Pour lancer : double-clique sur StableCraft.bat (ou le raccourci StableCraft)." -ForegroundColor Cyan
