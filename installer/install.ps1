@@ -169,6 +169,8 @@ Copy-Item (Join-Path $Root "compat.toml") $InstallDir -Force
 Copy-Item $ExampleConfig $InstallDir -Force
 Copy-Item (Join-Path $Root "StableCraft.bat") $InstallDir -Force
 Copy-Item (Join-Path $Root "launcher.py") $InstallDir -Force
+Copy-Item (Join-Path $Root "README.md") $InstallDir -Force
+Copy-Item (Join-Path $Root "models\README.md") (Join-Path $models "README.md") -Force
 if (Test-Path (Join-Path $Root "docs")) {
     Copy-Item (Join-Path $Root "docs") $InstallDir -Recurse -Force
 }
@@ -306,6 +308,7 @@ if (`$removeData -eq "o") {
     Remove-Item (Join-Path `$install "models.json") -Force
     Remove-Item (Join-Path `$install "compat.toml") -Force
     Remove-Item (Join-Path `$install "config.example.toml") -Force
+    Remove-Item (Join-Path `$install "README.md") -Force
     Remove-Item (Join-Path `$install "uninstall.ps1") -Force
     Write-Host "Les modèles, user\ et config.toml sont conservés dans `$install."
 }
@@ -363,5 +366,5 @@ Write-Host "Config            : $configTarget"
 Write-Host "Lanceur           : $stablecraftBat"
 Write-Host ""
 Write-Host "Aucun modèle n'a été téléchargé." -ForegroundColor Yellow
-Write-Host "Les modèles doivent être visibles par ComfyUI (voir docs/MODELS.md)." -ForegroundColor Yellow
+Write-Host "Les modèles doivent être visibles par ComfyUI (voir README.md)." -ForegroundColor Yellow
 Write-Host "Pour lancer : double-clique sur StableCraft.bat (ou le raccourci StableCraft)." -ForegroundColor Cyan

@@ -20,7 +20,8 @@ models-*/
 target/
 **/target/
 
-# Local notes
+# Local notes and detailed working docs (not part of the public repo)
+private-docs/
 *.local.md
 *.log
 .DS_Store

@@ -1,316 +1,188 @@
 # StableCraft
 
-**Le geste de Stable.art, ressuscité pour PhotoCraft, avec ComfyUI comme moteur.**
+**L'édition par lasso de Stable.art, dans PhotoCraft, avec ComfyUI.**
 
-On sélectionne une zone au lasso, on écrit ce qu'on veut changer, et le résultat arrive
-dans un nouveau calque — sans toucher aux pixels d'origine. Le tout en local, sur sa GPU,
-avec des modèles récents quantifiés en GGUF.
+StableCraft est une application compagne pour PhotoCraft : on entoure une zone au
+lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
+Tout tourne en local, sur sa propre GPU, avec ComfyUI comme moteur de génération.
 
-> **Statut** : preuve de concept validée le 23/10/2026. Le backend ComfyUI fonctionne,
-> le **control channel de PhotoCraft 0.14.0 est validé de bout en bout** (lasso →
-> composite → nouveau calque + masque featheré), et **trois profils sont branchés** :
-> FLUX.3 Klein (défaut), FLUX.2 Klein 9B et Krea 2 Edit. Chaque calque garde une
-> **galerie de générations** persistante, et on peut régénérer même après avoir perdu
-> la sélection. L'intégration est conçue comme une **application compagne installable**,
-> sans fork de PhotoCraft.
+![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
+![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-3b82f6)
+![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
 
-<p>
-<img src="docs/demo/stablecraft-ui.png" width="420" alt="UI StableCraft : statut, prompt, réglages et aperçu">
-<img src="docs/demo/photocraft-bridge.png" width="620" alt="PhotoCraft avec le calque StableCraft, son masque et le feather">
-</p>
+## Présentation
 
----
+- lasso → prompt → édition → calque PhotoCraft ;
+- calque avec **masque et feather** ;
+- **galerie persistante par calque** : régénérer, comparer, changer de génération ;
+- régénération possible même si la sélection a été perdue ;
+- **image de référence par calque** (Krea 2 et FLUX.3 Klein) ;
+- trois profils : FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 Edit ;
+- aucun poids de modèle dans le dépôt ;
+- aucun téléchargement silencieux.
 
-## Démarrage rapide
+## Fondement
 
-**Double-clique sur `StableCraft.bat`.**
+StableCraft ne modifie pas PhotoCraft et ne maintient pas de fork.
 
-Le lanceur fait tout :
+PhotoCraft est piloté par son **control channel local** : lecture de la sélection,
+sauvegarde du composite, insertion du calque, création du masque. ComfyUI est piloté en
+HTTP. Les deux applications restent indépendantes et peuvent être mises à jour
+séparément. La compatibilité est vérifiée par les commandes disponibles, pas par un
+numéro de version figé.
 
-1. vérifie les chemins (PhotoCraft, ComfyUI, Python) ;
-2. démarre ComfyUI s'il ne tourne pas, sans ouvrir le navigateur ;
-3. démarre PhotoCraft avec le control channel s'il ne tourne pas ;
-4. nettoie les `result.png` temporaires de « Ouvrir un fichier récent » ;
-5. ouvre l'UI.
+## Dépendances
 
-Si un chemin obligatoire manque, il affiche un message clair et s'arrête. Les modèles
-manquants ne bloquent pas : l'UI les signale et désactive Générer.
+### Matériel
 
-`config.toml` est **optionnel** : le lanceur détecte les chemins courants. Tu n'as rien
-à modifier pour démarrer. Si tu veux changer un chemin, le fichier est commenté ; les
-sections `[photocraft]` et `[comfyui]` ne sont pas des dossiers, juste des blocs de
-configuration.
+- Windows 10/11 **x64**.
+- GPU **NVIDIA avec CUDA**.
+- **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
+- Prévoir environ **45 Go de disque** pour les trois profils, hors doublons.
+- En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
 
-Guide détaillé : [`docs/USAGE.md`](docs/USAGE.md).
+### Logiciel
 
----
+- **PhotoCraft 0.14.0** (portable ou installé).
+- **ComfyUI portable** avec `python_embeded\python.exe` (Pillow + requests inclus).
+- **Python 3.11+ avec Tkinter** pour l'interface.
+- Pour Krea 2 : le nœud custom
+  [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
+- `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
 
-## La décision : pas de fork
+### Modèles
 
-PhotoCraft est activement maintenu ; maintenir un fork serait pénible. Ses plugins
-officiels sont des **filtres WebAssembly sandboxés** : pas de réseau, pas d'UI, pas
-d'accès aux calques. Un panneau IA ne peut donc pas être un plugin v1.
+Les poids ne sont **pas** fournis. Ils doivent être visibles par ComfyUI.
 
-StableCraft sera donc une **application compagne** qui :
+| Profil | UNet | Text encoder | VAE | Steps / CFG |
+|---|---|---|---|---|
+| **FLUX.3 Klein Edit** (défaut) | `flux-3-image-klein-Q8_0.gguf` | `Qwen-3-VL-4B-Scaled-FP8-v2.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
+| **FLUX.2 Klein 9B Edit** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
+| **Krea 2 Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `Qwen-3-VL-4B-Scaled-FP8-v2.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 
-- s'installe à côté d'une installation PhotoCraft existante ;
-- se connecte à son **control channel** local (l'API d'automatisation officielle) ;
-- parle à **ComfyUI** en HTTP ;
-- lit la sélection, sauvegarde composite + masque, génère, puis insère le résultat
-  comme nouveau calque masqué.
+Notes :
 
-PhotoCraft n'est pas modifié et se met à jour normalement. La compatibilité sera
-vérifiée **par capacités** (`engine.commands`) et non par un simple numéro de version :
-si une commande change, StableCraft le dit clairement.
+- le GGUF `Qwen3VL-4B-Instruct-Q4_K_M.gguf` testé n'est pas compatible avec FLUX.3
+  ni Krea 2 ; StableCraft utilise le FP8 safetensors ;
+- `Qwen3-8B-Q4_K_M.gguf` fonctionne pour FLUX.2 ;
+- les licences des modèles s'appliquent (FLUX Kommunity, Krea Community, etc.),
+  séparément de la licence MIT du code.
 
-Voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) pour le détail, les limites et le
-plan de sortie (PR upstream d'un panneau natif plus tard, si le projet prend).
+## Installation
 
----
-
-## Ce qui est déjà prouvé
-
-Machine de test : **RTX 3080 Ti 12 Go**, 32 Go RAM, ComfyUI 0.42.1 sur le port `12452`.
-
-| Test | Résultat |
-|---|---|
-| Édition globale **FLUX.3 Klein Q8** | ✅ robe bleue + fond coucher de soleil, personnage/pose conservés, ~34 s |
-| **Lasso → crop contexte → édition → recomposition masquée** | ✅ robe verte, fond intact, contour fondu |
-| **FLUX.2 Klein 9B Q8** sur le même crop | ✅ plus texturé, mais réinterprète davantage la silhouette |
-| **Krea 2 Edit Q4** (`krea2_turbo_edit`) | ✅ robe verte très propre, fond/personnage préservés, silhouette modifiée |
-| **PhotoCraft 0.14.0 control channel** | ✅ lasso → `app.save` → ComfyUI → `layer.copyToDocument` → masque + feather |
-| **Galerie par calque** | ✅ régénération sur le même calque, input figé sur `base.png`, application d'une ancienne génération, restauration après redémarrage |
-| **Régénération sans sélection** | ✅ utilise la sélection et le masque stockés dans la session |
-| **Aucun calque actif** | ✅ crée un calque temporaire pour l'insertion, puis le supprime |
-| **Sorties ComfyUI** | ✅ `PreviewImage` dans `temp`, téléchargement puis suppression ; le dossier `output` n'est plus pollué |
-| **Notices PhotoCraft** | ✅ plus de popup « layers flattened » : le composite est enregistré depuis un duplicata fusionné, sans warning |
-| **Fichiers récents** | ✅ les `result.png`/`mask.png` techniques sont retirés de « Ouvrir un fichier récent » |
-| **Navigateur ComfyUI** | ✅ lancement avec `--disable-auto-launch` |
-| **Image de référence** | ✅ par calque, Krea 2 et FLUX.3, system prompt uniquement si l'image est chargée |
-| Encodage texte | ⚠️ le GGUF `Qwen3VL-4B-Instruct-Q4_K_M` testé n'est **pas** compatible avec FLUX.3 ni Krea 2 ; StableCraft utilise le FP8 safetensors. Le GGUF `Qwen3-8B-Q4_K_M` de FLUX.2 fonctionne. |
-
-Images dans [`docs/demo/`](docs/demo) :
-
-- `photocraft-bridge.png` : PhotoCraft avec le calque StableCraft, son masque et le feather 10 px
-- `photocraft-flux3-blue.png` : résultat du bridge (robe bleue)
-- `stablecraft-ui.png` : l'UI Tkinter du MVP
-- `lasso-before.png` → `lasso-after-flux3.png`
-- `comparison-original-flux3-flux2.png`
-- `krea2-edit.png`
-
-Recherche détaillée sur les modèles, variantes « Edit », réglages CFG/steps, encodeurs
-et budgets VRAM : [`docs/MODELS.md`](docs/MODELS.md).
-
----
-
-## Galerie par calque
-
-Chaque nouvelle sélection crée une **session** et un calque nommé
-`StableCraft [id] — prompt`. Les générations suivantes sur la même sélection :
-
-- restent dans le **même calque** ;
-- utilisent toujours le `base.png` figé au moment du lasso, jamais le composite avec
-  les générations précédentes ;
-- s'ajoutent à une **galerie** de vignettes.
-
-Cliquer sur un ancien calque `StableCraft [id]` recharge sa galerie. Cliquer sur une
-vignette applique cette génération au calque, sans relancer ComfyUI. Si la sélection a
-été perdue, **Régénérer** reste possible : la sélection et le masque sont relus depuis
-la session.
-
-Un **nouveau lasso** vide automatiquement la galerie précédente et repasse le bouton à
-**Générer** ; la génération suivante crée un nouveau calque, sans toucher à l'ancien.
-Le champ **Seed** n'est plus réécrit avec le seed réel : il garde la valeur saisie
-(`-1` par défaut), et le seed utilisé est affiché sous la galerie. Un seed fixe identique
-à une génération existante est bloqué pour éviter un doublon.
-
-Les sessions sont stockées dans `user/sessions/<id>/` (voir
-[`docs/USAGE.md`](docs/USAGE.md#où-sont-les-fichiers)).
-
----
-
-## Image de référence par calque
-
-Chaque calque/session peut avoir sa propre **image de référence** :
-
-- coche **Image de référence** dans l'UI ;
-- clique sur la vignette pour choisir un fichier, ou dépose une image dessus ;
-- l'image est copiée dans `user/sessions/<id>/reference.png` ;
-- elle est rechargée quand tu reviens sur ce calque, et disparaît de l'UI quand tu
-  changes de calque ;
-- une nouvelle sélection repart sans référence.
-
-La référence est utilisée par **Krea 2 Edit** et **FLUX.3 Klein** (pas FLUX.2 9B).
-Le modèle reçoit deux images : la scène (le crop du lasso) et la référence. Un system
-prompt n'est ajouté **que si une image est réellement chargée**, pour éviter de modifier
-le comportement sans référence.
-
-Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
-pratiques et des exemples « scène / référence ».
-
----
-
-## Modèles recommandés
-
-| Profil | Poids locaux | Steps / CFG | Usage |
-|---|---|---:|---|
-| **FLUX.3 Klein Edit** (défaut) | 11,6 Go | 16 / 1.0 | lasso, meilleure fidélité, 12 Go |
-| FLUX.2 Klein 9B Edit | 14,3 Go | 4 / 1.0 | qualité/texture, 12 Go avec offload |
-| Krea 2 Edit | 12,6 Go | 8 / 1.0 | identité/style, nœuds `krea2edit` |
-| FLUX.2 Klein 4B (non branché) | ~5–10 Go | 4 / 1.0 | 8 Go VRAM, à valider |
-| Qwen-Image-Edit 2509 | ~17 Go | 8–50 | trop lourd pour 12 Go, pas local |
-
-Les poids ne sont **pas** redistribués. Chaque utilisateur installe ses fichiers dans
-ComfyUI ou dans le dossier dédié de StableCraft. Les licences des modèles s'appliquent
-(FLUX Kommunity, Krea Community, etc.).
-
----
-
-## Configuration et modèles
-
-- [`config.example.toml`](config.example.toml) : toutes les options, tous les chemins
-  commentés. **Aucun chemin de modèle n'est obligatoire.**
-- Les modèles sont détectés via ComfyUI (`/object_info`). Si un profil est activé et
-  qu'un fichier manque, StableCraft propose un téléchargement **avec consentement**
-  (taille, chemin, licence, URL). Jamais de téléchargement silencieux.
-- Dossier par défaut : `<dossier StableCraft>/models`. Rien n'est stocké dans AppData.
-  L'installateur peut ajouter ce dossier à `extra_model_paths.yaml` de ComfyUI, ou
-  l'utilisateur peut pointer ses propres chemins.
-- Données locales (sessions, token, journaux) : `<dossier StableCraft>/user`. Les deux
-  chemins sont configurables dans `config.toml`.
-- ComfyUI est lancé sans navigateur (`--disable-auto-launch`) ; `[comfyui]
-  disable_browser = false` rétablit l'ouverture automatique.
-- Un utilisateur qui ne se sert que de FLUX.3 n'a rien à configurer pour les autres.
-
----
-
-## MVP, c'est quoi ?
-
-**MVP = Minimum Viable Product** : la plus petite version qui rend le service principal,
-pas la version finale.
-
-Le MVP StableCraft :
-
-1. s'installe et détecte PhotoCraft + ComfyUI ;
-2. connecte le control channel et vérifie les commandes ;
-3. propose **FLUX.3 par défaut**, avec **FLUX.2 9B** et **Krea 2 Edit** au choix ;
-4. fait lasso → prompt → preview → nouveau calque masqué ;
-5. garde une galerie par calque, régénère sans sélection et permet de changer de
-   génération ;
-6. accepte une image de référence propre au calque (Krea 2 et FLUX.3) ;
-7. gère l'annulation et les erreurs lisibles ;
-8. ne télécharge aucun modèle sans accord.
-
-Hors MVP : FLUX.2 4B, Qwen-Image-Edit, batch, outpaint, model manager complet,
-panneau natif, macOS/Linux.
-
----
-
-## Développement (pour les curieux)
-
-**Le chemin normal est `StableCraft.bat`.** Les commandes ci-dessous servent à
-déboguer ou à tester les briques séparément.
-
-### 1. Backend seul, sans PhotoCraft
-
-[`prototypes/stablecraft_proto.py`](prototypes/stablecraft_proto.py) reproduit le flux
-sur une image de test avec un lasso synthétique : crop + contexte, ComfyUI, recomposition
-masquée, `before.png` / `after.png`.
-
-```powershell
-F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\stablecraft_proto.py
-```
-
-### 2. Bridge complet avec PhotoCraft (validé)
-
-[`prototypes/bridge_cli.py`](prototypes/bridge_cli.py) fait le vrai flux :
-
-1. lit la sélection active via `document.inspect` ;
-2. sauvegarde le composite avec `app.save` ;
-3. crop avec contexte et alignement 16 px ;
-4. génère avec FLUX.3 Klein dans ComfyUI ;
-5. ouvre le résultat et le copie dans le document avec `layer.copyToDocument` ;
-6. crée le masque de calque depuis la sélection (`layer.layerMask.revealSelection`) ;
-7. applique le feather (`layer.layerMask.edit`) et restaure la sélection.
-
-Lance PhotoCraft avec le control channel :
-
-```powershell
-photocraft.exe --control 7878 `
-  --control-token-file C:\...\StableCraft\user\control.token `
-  --automation-read-root C:\...\StableCraft\user `
-  --automation-write-root C:\...\StableCraft\user
-```
-
-Fais un lasso dans PhotoCraft, puis :
-
-```powershell
-F:\ComfyUI_windows_portable\python_embeded\python.exe prototypes\bridge_cli.py `
-  --config config.toml `
-  --prompt "Change the dress to royal blue, keep the pose and background" `
-  --save-preview
-```
-
-Options utiles : `--dry-run` (géométrie seulement), `--no-apply` (génère sans insérer),
-`--padding`, `--feather`, `--steps`, `--seed`.
-
-Le bridge tourne avec le Python embarqué de ComfyUI (Pillow + requests déjà présents).
-Avec un Python système 3.11+ : `pip install -r prototypes/requirements.txt`.
-
-Détail important : PhotoCraft peut fermer une connexion de contrôle restée inactive
-pendant le sampling ComfyUI. Le bridge se reconnecte avant la phase d'application.
-
-### 3. UI Tkinter (MVP)
-
-[`prototypes/stablecraft_ui.py`](prototypes/stablecraft_ui.py) est l'UI du MVP :
-statut PhotoCraft/ComfyUI, document et sélection, prompt, profil, réglages,
-Générer/Régénérer, galerie par calque, progression, aperçu et journal.
-
-- **Zéro téléchargement** : uniquement la stdlib + Tkinter.
-- Le bridge tourne dans le Python embarqué de ComfyUI (config `[comfyui] python`).
-- L'UI se connecte directement au control channel pour le statut et la sélection.
-
-```powershell
-python prototypes\stablecraft_ui.py --config config.toml
-```
-
-Le bouton Générer vérifie la connexion, la sélection et le profil, puis lance le bridge.
-En cas d'erreur (modèle manquant, ComfyUI down, sélection vide), le message est dans le
-journal et dans la barre de statut.
-
-### 4. Installateur
-
-[`installer/install.ps1`](installer/install.ps1) installe StableCraft à côté de
-PhotoCraft : détection des chemins, config, dossier `user/`, dossier `models/`, et un
-seul raccourci **StableCraft** vers `StableCraft.bat`. Aucun modèle n'est téléchargé.
+### Option 1 — installateur Windows
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
-Voir [`installer/README.md`](installer/README.md) pour les options et les prérequis.
+L'installateur détecte PhotoCraft et ComfyUI, copie StableCraft dans
+`%USERPROFILE%\StableCraft`, crée les dossiers `user\` et `models\`, et ajoute un
+raccourci **StableCraft**. Aucun modèle n'est téléchargé.
 
-Workflows API validés : [`workflows/`](workflows).
+### Option 2 — depuis le dépôt
 
----
+```powershell
+Copy-Item config.example.toml config.toml
+.\StableCraft.bat
+```
 
-## Prochaines étapes
+Le lanceur a besoin de `config.toml` ; le plus simple est de copier l'exemple. Les
+chemins peuvent rester vides si l'auto-détection suffit. Les chemins importants :
 
-1. **Bundle PyInstaller + Inno Setup** : supprimer la dépendance au Python système et
-   produire un vrai installeur `.exe`.
-2. **Model manager** : détection via ComfyUI, profils, téléchargements avec consentement.
-3. **Batch / outpaint / FLUX.2 4B**, tests CMYK/Lab/16 bits et documents 4K.
-4. **MVP public**, puis PR upstream éventuelle pour un panneau natif.
+```toml
+[photocraft]
+executable = "D:/.../photocraft.exe"
 
-**Guide pas à pas : [`docs/USAGE.md`](docs/USAGE.md).**
+[comfyui]
+root = "F:/ComfyUI_windows_portable"
+python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
+```
 
-Voir aussi [`docs/BRIEF.md`](docs/BRIEF.md) (recherche Stable.art/PhotoCraft),
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (compagnon + installateur),
-[`docs/MODELS.md`](docs/MODELS.md) (modèles et réglages) et
-[`docs/TESTLOG.md`](docs/TESTLOG.md) (journal de validation).
+Au lancement, `StableCraft.bat` :
+
+1. vérifie les chemins ;
+2. démarre ComfyUI si nécessaire, **sans ouvrir le navigateur** ;
+3. démarre PhotoCraft avec le control channel si nécessaire ;
+4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
+5. ouvre l'interface.
+
+Si un chemin obligatoire manque, un message clair s'affiche. Les modèles manquants ne
+bloquent pas : l'UI les signale et désactive la génération.
+
+## Utilisation
+
+1. Ouvre une image dans PhotoCraft.
+2. Fais un **lasso** autour de la zone à modifier.
+3. Dans StableCraft : choisis le profil, écris le prompt, clique **Générer**.
+4. Le résultat est ajouté comme **calque StableCraft** avec un masque.
+5. La galerie du calque apparaît sous le prompt.
+
+### Régénérer et galerie
+
+- Même sélection → **Régénérer** met à jour le **même calque** et ajoute une vignette.
+- Chaque génération repart du `base.png` figé au moment du lasso, jamais du composite
+  avec les générations précédentes.
+- Clique sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
+- Sélection perdue → sélectionne le calque `StableCraft [id]`, puis **Régénérer**.
+- Nouvelle sélection → nouvelle galerie et nouveau calque.
+
+### Image de référence
+
+- coche **Utiliser une image de référence** ;
+- clique sur la vignette ou dépose une image ;
+- la référence est propre au calque et se recharge quand tu reviens dessus ;
+- compatible **Krea 2 Edit** et **FLUX.3 Klein** ;
+- le modèle reçoit **image 1 = scène** et **image 2 = référence** ;
+- décris dans le prompt ce que tu prends de l'image 2.
+
+Exemple :
+
+> Add the black leather glove from the reference image to the man's right hand.
+> Keep the hand pose, arm, skin tone, lighting and background unchanged.
+
+Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
+pratiques et des exemples.
+
+### Aperçu
+
+- **Document** : le composite PhotoCraft après application.
+- **Crop** : le résultat généré à la taille du crop, avant masque.
+
+## Stockage
+
+Rien n'est stocké dans AppData.
+
+```text
+<dossier StableCraft>/
+  user/
+    control.token
+    sessions/<id>/       # base, masque, référence, galerie
+    logs/
+  models/                # modèles locaux, aucun poids versionné
+```
+
+Les chemins sont configurables dans `config.toml` (`[app]`, `[photocraft]`,
+`[comfyui]`, `[models]`).
+
+## Crédits
+
+- **Stable.art** — inspiration pour l'expérience lasso + prompt.
+- **PhotoCraft** — application hôte et control channel :
+  [storytold/photocraft](https://github.com/storytold/photocraft).
+- **ComfyUI** — moteur de génération :
+  [comfyanonymous/ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+- **FLUX.3 Klein / FLUX.2 Klein** — Black Forest Labs.
+- **Krea 2** — Krea.
+- **Qwen** — équipe Qwen, Alibaba.
+- **ComfyUI-GGUF** — [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF).
+- **comfyui-krea2edit** — [lbouaraba/comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit).
+
+StableCraft n'est affilié ni à Stable.art, ni à PhotoCraft, ni à ComfyUI, ni aux
+fournisseurs de modèles.
 
 ## Licence
 
-StableCraft est sous licence **MIT** (voir [`LICENSE`](LICENSE)). Les modèles, ComfyUI
-et PhotoCraft ont leurs propres licences ; aucun poids de modèle n'est distribué dans
-ce dépôt.
+Le code de StableCraft est sous licence **MIT** (voir [`LICENSE`](LICENSE)).
+Les modèles, ComfyUI et PhotoCraft conservent leurs licences respectives. Aucun poids
+de modèle n'est distribué dans ce dépôt.
