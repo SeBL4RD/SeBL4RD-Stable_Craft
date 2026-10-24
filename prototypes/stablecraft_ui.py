@@ -955,6 +955,33 @@ class StableCraftApp(tk.Tk):
         self.steps_var.set(str(generation.get("steps", 16)))
         self.cfg_var.set(str(generation.get("cfg", 1.0)))
 
+    def _set_result_preview(self, index: int | None) -> None:
+        path: Path | None = None
+        if self.session_data and self.session_id and index is not None:
+            generations = self.session_data.get("generations", [])
+            if 0 <= index < len(generations):
+                relative = generations[index].get("result")
+                if relative:
+                    candidate = (
+                        self.session_store.directory(str(self.session_id))
+                        / str(relative)
+                    )
+                    if candidate.exists():
+                        path = candidate
+        self.preview_paths["result"] = str(path) if path else None
+        if self.preview_mode.get() == "result":
+            self._load_preview(self.preview_paths["result"])
+
+    def _set_document_preview(self) -> None:
+        path: Path | None = None
+        if self.session_data and self.session_id:
+            candidate = self.session_store.directory(str(self.session_id)) / "after.png"
+            if candidate.exists():
+                path = candidate
+        self.preview_paths["document"] = str(path) if path else None
+        if self.preview_mode.get() == "document":
+            self._load_preview(self.preview_paths["document"])
+
     def _populate_gallery(self) -> None:
         for child in self.gallery_inner.winfo_children():
             child.destroy()
@@ -966,6 +993,8 @@ class StableCraftApp(tk.Tk):
             self.gallery_hint.config(
                 text="Clique sur un calque StableCraft pour retrouver ses générations."
             )
+            self._set_document_preview()
+            self._set_result_preview(None)
             return
 
         generations = self.session_data.get("generations", [])
@@ -975,8 +1004,12 @@ class StableCraftApp(tk.Tk):
         )
         if not generations:
             self.gallery_hint.config(text="Aucune génération dans cette session.")
+            self._set_document_preview()
+            self._set_result_preview(None)
             return
 
+        self._set_document_preview()
+        self._set_result_preview(current if current >= 0 else None)
         session_dir = self.session_store.directory(str(self.session_id))
         for index, generation in enumerate(generations):
             thumb_rel = generation.get("thumb") or generation.get("result")
@@ -1034,6 +1067,9 @@ class StableCraftApp(tk.Tk):
         generations = self.session_data.get("generations", [])
         if not 0 <= index < len(generations):
             return
+        # The Crop view follows the clicked gallery item, not the last one
+        # produced during a generation.
+        self._set_result_preview(index)
         python, error = self._comfy_python()
         if error:
             messagebox.showerror("Python ComfyUI introuvable", error)
