@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
@@ -46,6 +46,7 @@ YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
 SUPPORTED_PROFILES = {"flux3_klein", "flux2_klein_9b", "krea2_edit"}
+REFERENCE_PROFILES = {"krea2_edit", "flux3_klein"}
 
 
 DEFAULTS: dict[str, Any] = {
@@ -152,6 +153,17 @@ class StableCraftApp(tk.Tk):
         self.gallery_buttons: dict[int, tk.Button] = {}
         self.pending_session_id: str | None = None
         self.pending_generation: int | None = None
+        self.reference_path: Path | None = None
+        self.reference_name: str | None = None
+        self.reference_thumb_image: tk.PhotoImage | None = None
+        self.reference_is_pending = False
+        self.pending_reference_selection: list[int] | None = None
+        self.guide_window: tk.Toplevel | None = None
+        self._drop_proc_ref: Any = None
+        self._old_wndproc: Any = None
+        self._drop_hwnd: int | None = None
+        self._win_user32: Any = None
+        self._win_shell32: Any = None
         self.profile_key = initial_profile or str(self.cfg["app"].get("default_profile", "flux3_klein"))
         self.models_ok = True
         self._closing = False
@@ -172,6 +184,7 @@ class StableCraftApp(tk.Tk):
         self._load_preview(None)
 
         self.after(100, self._poll_queue)
+        self.after(250, self._enable_windows_drop)
         threading.Thread(target=self._refresh_loop, daemon=True).start()
         self._check_models()
 
@@ -181,6 +194,11 @@ class StableCraftApp(tk.Tk):
             path = Path(str(configured))
             return path if path.is_absolute() else (ROOT / path)
         return ROOT / "user" / "sessions"
+
+    def _pending_root(self) -> Path:
+        root = self.session_store.root.parent / "pending"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     # ------------------------------------------------------------------
     # Look
@@ -251,10 +269,34 @@ class StableCraftApp(tk.Tk):
             highlightcolor=ACCENT,
         )
 
-    def _section(self, parent: tk.Misc, title: str) -> tk.Frame:
+    def _section(
+        self,
+        parent: tk.Misc,
+        title: str,
+        action_text: str | None = None,
+        action: Any = None,
+    ) -> tk.Frame:
         frame = tk.Frame(parent, bg=BG)
         frame.pack(fill="x", pady=(8, 0))
-        tk.Label(frame, text=title, bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        header = tk.Frame(frame, bg=BG)
+        header.pack(fill="x")
+        tk.Label(
+            header, text=title, bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")
+        ).pack(side="left")
+        if action_text and action:
+            tk.Button(
+                header,
+                text=action_text,
+                command=action,
+                bg=BG,
+                fg=MUTED,
+                activebackground=BG,
+                activeforeground=FG,
+                relief="flat",
+                bd=0,
+                font=("Segoe UI", 8),
+                cursor="hand2",
+            ).pack(side="right")
         return frame
 
     # ------------------------------------------------------------------
@@ -310,7 +352,9 @@ class StableCraftApp(tk.Tk):
         self.models_status = tk.Label(status, text="Modèles : vérification…", bg=PANEL, fg=YELLOW, anchor="w", font=("Segoe UI", 9))
         self.models_status.pack(fill="x")
 
-        prompt_frame = self._section(main, "PROMPT")
+        prompt_frame = self._section(
+            main, "PROMPT", "Guide", self._show_prompt_guide
+        )
         self.prompt_text = self._text(prompt_frame, 4)
         self.prompt_text.pack(fill="x", pady=(4, 0))
         self.prompt_text.insert("1.0", "Change the dress to royal blue, keep the pose and background unchanged.")
@@ -333,6 +377,86 @@ class StableCraftApp(tk.Tk):
         self.neg_text = self._text(prompt_frame, 2)
         # hidden until the checkbox is on
         self._neg_visible = False
+
+        ref_frame = self._section(main, "IMAGE DE RÉFÉRENCE")
+        self.ref_var = tk.BooleanVar(value=False)
+        self.ref_check = tk.Checkbutton(
+            ref_frame,
+            text="Utiliser une image de référence",
+            variable=self.ref_var,
+            command=self._toggle_reference,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 9),
+        )
+        self.ref_check.pack(anchor="w", pady=(4, 0))
+        self.ref_profile_hint = tk.Label(
+            ref_frame,
+            text="",
+            bg=BG,
+            fg=YELLOW,
+            anchor="w",
+            font=("Segoe UI", 8),
+            wraplength=420,
+        )
+        self.ref_profile_hint.pack(fill="x")
+        self.ref_panel = tk.Frame(ref_frame, bg=BG)
+        self.ref_canvas = tk.Canvas(
+            self.ref_panel,
+            width=112,
+            height=112,
+            bg="#111114",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            cursor="hand2",
+        )
+        self.ref_canvas.pack(side="left")
+        self.ref_canvas.bind("<Button-1>", lambda _event: self._choose_reference())
+        ref_side = tk.Frame(self.ref_panel, bg=BG)
+        ref_side.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.ref_name = tk.Label(
+            ref_side,
+            text="Aucune image",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=290,
+            font=("Segoe UI", 8, "bold"),
+        )
+        self.ref_name.pack(fill="x")
+        self.ref_hint = tk.Label(
+            ref_side,
+            text="Clique ou dépose une image ici.",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=290,
+            font=("Segoe UI", 8),
+        )
+        self.ref_hint.pack(fill="x", pady=(2, 4))
+        self.ref_remove = tk.Button(
+            ref_side,
+            text="Retirer",
+            command=self._remove_reference,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=2,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+            state="disabled",
+        )
+        self.ref_remove.pack(anchor="w")
+        self._draw_reference_tile()
 
         prof_frame = self._section(main, "PROFIL")
         self.profile_var = tk.StringVar()
@@ -591,6 +715,7 @@ class StableCraftApp(tk.Tk):
         if key not in SUPPORTED_PROFILES:
             detail += " · bientôt disponible"
         self.profile_detail.config(text=detail)
+        self._update_reference_for_profile()
         self._update_generate_state()
         self._check_models()
 
@@ -622,6 +747,7 @@ class StableCraftApp(tk.Tk):
 
     def _form_values(self) -> dict[str, Any] | None:
         try:
+            reference = self._reference_active_path()
             return {
                 "seed": int(self.seed_var.get().strip()),
                 "steps": int(self.steps_var.get()),
@@ -633,6 +759,7 @@ class StableCraftApp(tk.Tk):
                 "negative": (
                     self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
                 ),
+                "reference": reference.name if reference else None,
             }
         except (TypeError, ValueError):
             return None
@@ -652,6 +779,8 @@ class StableCraftApp(tk.Tk):
                     and int(generation.get("steps", -1)) == values["steps"]
                     and abs(float(generation.get("cfg", -1)) - values["cfg"]) < 1e-6
                     and int(generation.get("padding", -1)) == values["padding"]
+                    and str(generation.get("reference") or "")
+                    == str(values.get("reference") or "")
                 )
             except (TypeError, ValueError):
                 continue
@@ -844,6 +973,13 @@ class StableCraftApp(tk.Tk):
             else None
         )
         self._sync_session_from_doc(doc)
+        if self.reference_is_pending and self.current_selection:
+            if self.pending_reference_selection is None:
+                self.pending_reference_selection = list(self.current_selection)
+            elif not self._same_selection(
+                self.pending_reference_selection, self.current_selection
+            ):
+                self._clear_pending_reference()
         if doc:
             self.doc_status.config(
                 text=f"Document : {doc.get('name', '?')} · {doc.get('width')}×{doc.get('height')} · {doc.get('mode')}/{doc.get('depth')} bits",
@@ -879,6 +1015,582 @@ class StableCraftApp(tk.Tk):
             self.models_ok = True
             self.models_status.config(text="Modèles : OK", fg=GREEN)
         self._update_generate_state()
+
+    # ------------------------------------------------------------------
+    # Reference image
+    # ------------------------------------------------------------------
+
+    def _reference_supported(self) -> bool:
+        return self.profile_key in REFERENCE_PROFILES
+
+    def _update_reference_for_profile(self) -> None:
+        supported = self._reference_supported()
+        self.ref_check.config(
+            state="normal" if supported and not self.running else "disabled"
+        )
+        if supported:
+            self.ref_profile_hint.config(text="")
+            if self.ref_var.get():
+                self._show_reference_panel()
+        else:
+            self.ref_profile_hint.config(
+                text="Disponible sur Krea 2 Edit et FLUX.3 Klein."
+            )
+            self._hide_reference_panel()
+        self._update_reference_hint()
+
+    def _show_reference_panel(self) -> None:
+        if not self.ref_panel.winfo_manager():
+            self.ref_panel.pack(fill="x", pady=(4, 0))
+
+    def _hide_reference_panel(self) -> None:
+        if self.ref_panel.winfo_manager():
+            self.ref_panel.pack_forget()
+
+    def _toggle_reference(self) -> None:
+        if self.running:
+            return
+        if not self._reference_supported():
+            self.ref_var.set(False)
+            self.ref_profile_hint.config(
+                text="Disponible sur Krea 2 Edit et FLUX.3 Klein."
+            )
+            return
+        enabled = bool(self.ref_var.get())
+        if enabled:
+            self._show_reference_panel()
+        else:
+            self._hide_reference_panel()
+        self._set_session_reference_enabled(enabled)
+        self._update_reference_hint()
+
+    def _set_session_reference_enabled(self, enabled: bool) -> None:
+        if not self.session_id or not self.session_data:
+            return
+        reference = self.session_data.get("reference")
+        if isinstance(reference, dict):
+            reference["enabled"] = enabled
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Référence : {short_error(exc)}")
+
+    def _update_reference_hint(self) -> None:
+        if not self._reference_supported():
+            return
+        if self.reference_path and self.reference_path.exists():
+            self.ref_hint.config(
+                text=(
+                    "Image 2 = référence. Décris dans le prompt ce que tu veux "
+                    "en reprendre."
+                )
+            )
+        else:
+            self.ref_hint.config(text="Clique ou dépose une image ici.")
+
+    def _draw_reference_tile(self) -> None:
+        self.ref_canvas.delete("all")
+        if self.reference_thumb_image is not None:
+            self.ref_canvas.create_image(56, 56, image=self.reference_thumb_image)
+        else:
+            self.ref_canvas.create_text(
+                56,
+                48,
+                text="+ Image",
+                fill=MUTED,
+                font=("Segoe UI", 10, "bold"),
+            )
+            self.ref_canvas.create_text(
+                56,
+                70,
+                text="Clique ou dépose",
+                fill=MUTED,
+                font=("Segoe UI", 7),
+            )
+        self.ref_name.config(text=self.reference_name or "Aucune image")
+        self.ref_remove.config(
+            state="normal" if self.reference_path else "disabled"
+        )
+        self._update_reference_hint()
+
+    def _display_reference(
+        self,
+        image_path: Path,
+        thumb_path: Path,
+        name: str,
+        enabled: bool,
+        *,
+        pending: bool,
+    ) -> None:
+        self.reference_path = image_path
+        self.reference_name = name
+        self.reference_is_pending = pending
+        if not pending:
+            self.pending_reference_selection = None
+        self.reference_thumb_image = None
+        source = thumb_path if thumb_path.exists() else image_path
+        try:
+            image = tk.PhotoImage(file=str(source))
+            factor = max(
+                1, math.ceil(max(image.width() / 104, image.height() / 104))
+            )
+            if factor > 1:
+                image = image.subsample(factor, factor)
+            self.reference_thumb_image = image
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"Référence : aperçu indisponible ({short_error(exc)})")
+        self.ref_var.set(enabled)
+        self._draw_reference_tile()
+        if enabled and self._reference_supported():
+            self._show_reference_panel()
+        else:
+            self._hide_reference_panel()
+
+    def _load_reference_for_session(self) -> None:
+        reference = self.session_data.get("reference") if self.session_data else None
+        if isinstance(reference, dict):
+            directory = self.session_store.directory(str(self.session_id))
+            image_path = directory / str(reference.get("image", "reference.png"))
+            thumb_path = directory / str(
+                reference.get("thumb", "reference_thumb.png")
+            )
+            if image_path.exists():
+                name = str(reference.get("name") or "Image de référence")
+                if name == "reference.png":
+                    name = "Image de référence"
+                self._display_reference(
+                    image_path,
+                    thumb_path,
+                    name,
+                    bool(reference.get("enabled", True)),
+                    pending=False,
+                )
+                return
+        self._clear_reference_ui()
+
+    def _clear_reference_ui(self) -> None:
+        self.reference_path = None
+        self.reference_name = None
+        self.reference_thumb_image = None
+        self.reference_is_pending = False
+        self.pending_reference_selection = None
+        self.ref_var.set(False)
+        self._hide_reference_panel()
+        self._draw_reference_tile()
+
+    def _pending_files(self) -> tuple[Path, Path]:
+        root = self._pending_root()
+        return root / "reference.png", root / "reference_thumb.png"
+
+    def _clear_pending_reference(self) -> None:
+        if self.reference_is_pending:
+            for path in self._pending_files():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        if not self.session_id:
+            self._clear_reference_ui()
+
+    def _choose_reference(self) -> None:
+        if self.running:
+            return
+        if not self._reference_supported():
+            messagebox.showinfo(
+                "Image de référence",
+                "Disponible sur Krea 2 Edit et FLUX.3 Klein.",
+            )
+            return
+        selected = filedialog.askopenfilename(
+            title="Choisir une image de référence",
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"),
+                ("Tous les fichiers", "*.*"),
+            ],
+        )
+        if selected:
+            self._set_reference_from_source(Path(selected))
+
+    def _set_reference_from_source(self, source: Path) -> None:
+        if self.running:
+            return
+        if not self._reference_supported():
+            messagebox.showinfo(
+                "Image de référence",
+                "Disponible sur Krea 2 Edit et FLUX.3 Klein.",
+            )
+            return
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror("Python ComfyUI introuvable", error)
+            return
+        script = ROOT / "prototypes" / "reference_image.py"
+        if self.session_id and self.session_data:
+            directory = self.session_store.directory(str(self.session_id))
+            pending = False
+        else:
+            directory = self._pending_root()
+            pending = True
+        image_path = directory / "reference.png"
+        thumb_path = directory / "reference_thumb.png"
+        command = [
+            python,
+            str(script),
+            "--source",
+            str(source),
+            "--image",
+            str(image_path),
+            "--thumb",
+            str(thumb_path),
+        ]
+        flags = 0x08000000 if os.name == "nt" else 0
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=flags,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Image de référence", short_error(exc))
+            return
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            messagebox.showerror(
+                "Image de référence",
+                f"Impossible de préparer l'image.\n\n{details[:800]}",
+            )
+            return
+
+        info: dict[str, Any] = {}
+        try:
+            info = json.loads(result.stdout.strip().splitlines()[-1])
+        except Exception:  # noqa: BLE001
+            pass
+
+        if not pending and self.session_data:
+            self.session_data["reference"] = {
+                "image": "reference.png",
+                "thumb": "reference_thumb.png",
+                "name": source.name,
+                "enabled": True,
+                "width": info.get("width"),
+                "height": info.get("height"),
+            }
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Référence : {short_error(exc)}")
+
+        self._display_reference(
+            image_path,
+            thumb_path,
+            source.name,
+            True,
+            pending=pending,
+        )
+        if pending:
+            self.pending_reference_selection = (
+                list(self.current_selection) if self.current_selection else None
+            )
+        self._show_reference_panel()
+        self._log(f"Image de référence : {source}")
+
+    def _remove_reference(self) -> None:
+        if self.running:
+            return
+        if self.session_id and self.session_data:
+            reference = self.session_data.get("reference")
+            if isinstance(reference, dict):
+                directory = self.session_store.directory(str(self.session_id))
+                for key in ("image", "thumb"):
+                    name = reference.get(key)
+                    if name:
+                        try:
+                            (directory / str(name)).unlink()
+                        except OSError:
+                            pass
+            self.session_data["reference"] = None
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Référence : {short_error(exc)}")
+        else:
+            for path in self._pending_files():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        self._clear_reference_ui()
+        self._log("Image de référence retirée.")
+
+    def _reference_active_path(self) -> Path | None:
+        if not self._reference_supported() or not self.ref_var.get():
+            return None
+        if self.reference_path and self.reference_path.exists():
+            return self.reference_path
+        return None
+
+    # ------------------------------------------------------------------
+    # Prompt guide
+    # ------------------------------------------------------------------
+
+    def _show_prompt_guide(self) -> None:
+        if self.guide_window is not None and self.guide_window.winfo_exists():
+            self.guide_window.deiconify()
+            self.guide_window.lift()
+            self.guide_window.focus_force()
+            return
+
+        window = tk.Toplevel(self)
+        self.guide_window = window
+        window.title("Guide de prompt — StableCraft")
+        width, height = 660, 720
+        x = self.winfo_rootx() + self.winfo_width() + 12
+        y = self.winfo_rooty() + 40
+        x = max(0, min(x, self.winfo_screenwidth() - width - 20))
+        y = max(0, min(y, self.winfo_screenheight() - height - 40))
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        window.minsize(520, 520)
+        window.configure(bg=BG)
+
+        footer = tk.Frame(window, bg=BG)
+        footer.pack(fill="x", side="bottom", padx=12, pady=8)
+        tk.Button(
+            footer,
+            text="Fermer",
+            command=window.destroy,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=4,
+            cursor="hand2",
+        ).pack(side="right")
+
+        text = tk.Text(
+            window,
+            wrap="word",
+            bg=PANEL,
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            bd=0,
+            padx=16,
+            pady=12,
+            font=("Segoe UI", 9),
+        )
+        scroll = ttk.Scrollbar(window, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+
+        text.tag_configure(
+            "h1", font=("Segoe UI", 14, "bold"), foreground=FG, spacing1=6, spacing3=8
+        )
+        text.tag_configure(
+            "h2", font=("Segoe UI", 10, "bold"), foreground=ACCENT, spacing1=12, spacing3=4
+        )
+        text.tag_configure("body", foreground=FG, spacing3=4)
+        text.tag_configure(
+            "code",
+            font=("Consolas", 9),
+            background="#141418",
+            foreground="#d1d5db",
+            lmargin1=12,
+            lmargin2=12,
+            spacing1=3,
+            spacing3=6,
+        )
+        text.tag_configure("warn", foreground=YELLOW, spacing3=4)
+
+        def add(value: str, tag: str = "body") -> None:
+            text.insert("end", value + "\n", tag)
+
+        add("Guide de prompt", "h1")
+        add(
+            "StableCraft envoie au modèle le crop de ta scène (sélection + contexte), "
+            "puis applique le résultat dans le lasso. Le prompt décrit donc le résultat "
+            "attendu dans la scène, pas une action abstraite.",
+            "body",
+        )
+
+        add("1. La bonne attitude, sans référence", "h2")
+        add("• Écris en anglais : ces modèles répondent mieux aux prompts anglais.", "body")
+        add("• Décris l'état final : couleur, matière, objet, position.", "body")
+        add("• Dis explicitement ce qui doit rester inchangé : pose, visage, peau, fond, lumière.", "body")
+        add("• Sois concret plutôt que poétique. Évite les négations : à CFG 1, le negative prompt agit peu.", "body")
+        add("• Sélectionne l'objet entier, avec un peu de contexte autour.", "body")
+        add(
+            "Change the dress fabric to deep red. Keep the exact silhouette, skin, "
+            "pose, lighting and background unchanged.",
+            "code",
+        )
+
+        add("2. Avec une image de référence", "h2")
+        add("Image 1 = la scène, c'est-à-dire ton image PhotoCraft.", "body")
+        add("Image 2 = l'image de référence que tu as ajoutée.", "body")
+        add(
+            "La référence n'est active que si la case est cochée et qu'une image est chargée. "
+            "Elle n'est jamais collée : elle sert d'inspiration au modèle.",
+            "warn",
+        )
+        add("Dis ce que tu prends de l'image 2, et où tu l'appliques dans l'image 1.", "body")
+        add(
+            "Add the black leather glove from the reference image to the man's right "
+            "hand. Keep the hand pose, arm, skin tone, lighting and background unchanged.",
+            "code",
+        )
+        add(
+            "Use the reference image for the fabric pattern only. Keep the garment "
+            "shape, folds, lighting and the rest of the scene unchanged.",
+            "code",
+        )
+        add(
+            "Replace the surfboard's design with the pattern from the reference image. "
+            "Keep the board shape, feet, water, splash and lighting unchanged.",
+            "code",
+        )
+
+        add("3. Ce qui marche le mieux", "h2")
+        add("• Un objet seul, détouré ou sur un fond simple, est plus facile à transférer.", "body")
+        add("• Une référence avec beaucoup de fond peut être confondue avec la scène.", "body")
+        add("• Pour un vêtement, demande la couleur/matière ; pour un accessoire, décris sa position.", "body")
+        add("• Krea 2 Edit et FLUX.3 Klein acceptent la référence. FLUX.2 Klein 9B ne la propose pas.", "body")
+        add("• Si le résultat copie trop la référence, précise « only » / « keep unchanged » dans le prompt.", "body")
+
+        add("4. Rappel", "h2")
+        add(
+            "La référence est propre au calque StableCraft courant. Si tu changes de calque, "
+            "l'UI recharge la référence de ce calque ; une nouvelle sélection repart sans référence.",
+            "body",
+        )
+        text.configure(state="disabled")
+
+    # ------------------------------------------------------------------
+    # Windows drag & drop
+    # ------------------------------------------------------------------
+
+    def _enable_windows_drop(self) -> None:
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            shell32 = ctypes.windll.shell32
+
+            hwnd = int(self.winfo_id())
+            parent = int(user32.GetParent(hwnd))
+            if parent:
+                hwnd = parent
+            self._drop_hwnd = hwnd
+            self._win_user32 = user32
+            self._win_shell32 = shell32
+
+            shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+            shell32.DragAcceptFiles(hwnd, True)
+            shell32.DragQueryFileW.argtypes = [
+                wintypes.HANDLE,
+                wintypes.UINT,
+                wintypes.LPWSTR,
+                wintypes.UINT,
+            ]
+            shell32.DragQueryFileW.restype = wintypes.UINT
+            shell32.DragFinish.argtypes = [wintypes.HANDLE]
+
+            user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+            user32.SetWindowLongPtrW.argtypes = [
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_void_p,
+            ]
+            user32.CallWindowProcW.restype = ctypes.c_ssize_t
+            user32.CallWindowProcW.argtypes = [
+                ctypes.c_void_p,
+                wintypes.HWND,
+                ctypes.c_uint,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+            ]
+
+            wndproc_type = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t,
+                wintypes.HWND,
+                ctypes.c_uint,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+            )
+
+            def handler(hwnd_value: int, message: int, wparam: int, lparam: int) -> int:
+                if message == 0x0233:  # WM_DROPFILES
+                    try:
+                        count = shell32.DragQueryFileW(
+                            wintypes.HANDLE(wparam), 0xFFFFFFFF, None, 0
+                        )
+                        if count:
+                            buffer = ctypes.create_unicode_buffer(32768)
+                            if shell32.DragQueryFileW(
+                                wintypes.HANDLE(wparam),
+                                0,
+                                buffer,
+                                len(buffer),
+                            ):
+                                dropped = buffer.value
+                                if (
+                                    not self._closing
+                                    and dropped.lower().endswith(
+                                        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+                                    )
+                                ):
+                                    self.after(
+                                        0,
+                                        lambda value=dropped: self._set_reference_from_source(
+                                            Path(value)
+                                        ),
+                                    )
+                    finally:
+                        shell32.DragFinish(wintypes.HANDLE(wparam))
+                    return 0
+                return user32.CallWindowProcW(
+                    self._old_wndproc,
+                    hwnd_value,
+                    message,
+                    wparam,
+                    lparam,
+                )
+
+            callback = wndproc_type(handler)
+            old = user32.SetWindowLongPtrW(
+                hwnd, -4, ctypes.cast(callback, ctypes.c_void_p)
+            )
+            if not old:
+                raise OSError("SetWindowLongPtrW a échoué")
+            self._drop_proc_ref = callback
+            self._old_wndproc = old
+            self._log("Drag & drop Windows activé.")
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"Drag & drop indisponible : {short_error(exc)}")
+
+    def _disable_windows_drop(self) -> None:
+        if self._drop_hwnd is None or self._win_user32 is None:
+            return
+        try:
+            if self._old_wndproc:
+                self._win_user32.SetWindowLongPtrW(
+                    self._drop_hwnd, -4, self._old_wndproc
+                )
+            if self._win_shell32 is not None:
+                self._win_shell32.DragAcceptFiles(self._drop_hwnd, False)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Sessions / gallery
@@ -923,6 +1635,7 @@ class StableCraftApp(tk.Tk):
     def _load_session(self, session_id: str | None, force: bool = False) -> None:
         if session_id == self.session_id and not force:
             return
+        previous = self.session_id
         self.session_id = session_id
         self.session_data = None
         if session_id:
@@ -932,10 +1645,29 @@ class StableCraftApp(tk.Tk):
                 self._log(f"Session {session_id} : {short_error(exc)}")
         self._populate_gallery()
         if self.session_data:
+            generations = self.session_data.get("generations", [])
+            current = int(self.session_data.get("current", -1))
+            if 0 <= current < len(generations):
+                session_profile = str(generations[current].get("profile", ""))
+                if (
+                    session_profile in SUPPORTED_PROFILES
+                    and session_profile != self.profile_key
+                ):
+                    self._load_profile(session_profile)
             # `_restore_session_fields` deliberately leaves the seed field alone:
             # the seed used by a generation is shown in the gallery hint, and the
             # user's field must stay on -1 unless they typed a value themselves.
             self._restore_session_fields(self.session_data)
+
+        if session_id:
+            self._clear_pending_reference()
+            self._load_reference_for_session()
+        elif previous is not None:
+            self._clear_pending_reference()
+            self._clear_reference_ui()
+        else:
+            self._draw_reference_tile()
+        self._update_reference_for_profile()
         self._update_generate_state()
 
     def _restore_session_fields(self, sdata: dict[str, Any]) -> None:
@@ -1124,6 +1856,14 @@ class StableCraftApp(tk.Tk):
                 "Mets le seed à -1 ou change le prompt pour régénérer.",
             )
             return
+        if self.ref_var.get() and self._reference_supported():
+            if self._reference_active_path() is None:
+                messagebox.showwarning(
+                    "Référence vide",
+                    "Ajoute une image de référence ou décoche la case "
+                    "« Utiliser une image de référence ».",
+                )
+                return
         prompt = self.prompt_text.get("1.0", "end").strip()
         if not prompt:
             messagebox.showwarning("Prompt vide", "Écris ce que tu veux changer.")
@@ -1163,6 +1903,12 @@ class StableCraftApp(tk.Tk):
             command += ["--session", self.session_id]
         else:
             command += ["--session-mode"]
+        if self.reference_is_pending:
+            reference = self._reference_active_path()
+            if reference is not None:
+                command += ["--reference", str(reference)]
+                if self.reference_name:
+                    command += ["--reference-name", self.reference_name]
         if negative:
             command += ["--negative", negative]
         self._start_bridge(
@@ -1208,6 +1954,7 @@ class StableCraftApp(tk.Tk):
         self._log("$ " + " ".join(Path(part).name if i == 0 else part for i, part in enumerate(command)))
         self.proc_reader = threading.Thread(target=self._read_process, daemon=True)
         self._update_generate_state()
+        self._update_reference_for_profile()
         self.proc_reader.start()
 
     def _read_process(self) -> None:
@@ -1244,6 +1991,7 @@ class StableCraftApp(tk.Tk):
         session_id = self.pending_session_id
         self.pending_session_id = None
         self.pending_generation = None
+        self._update_reference_for_profile()
         if session_id:
             # Reload even after an apply error: the generated image is already
             # on disk and must remain selectable in the gallery.
@@ -1333,6 +2081,7 @@ class StableCraftApp(tk.Tk):
     def _on_close(self) -> None:
         self._closing = True
         self.stop_event.set()
+        self._disable_windows_drop()
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.terminate()

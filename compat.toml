@@ -6,7 +6,7 @@ stablecraft = "0.1.x"
 photocraft = "0.14.0"
 os = "windows-x64"
 status = "tested"
-notes = "Control channel, lasso, image.duplicate mergedOnly, app.save/open, prefs.get/set (recent files cleanup), select.saveSelection/loadSelection/deselect/deselectLayers, channel.duplicate, layer.copyToDocument/delete, layerMask.revealSelection/edit."
+notes = "Control channel, lasso, image.duplicate mergedOnly, app.save/open, prefs.get/set (recent files cleanup), select.saveSelection/loadSelection/deselect/deselectLayers, channel.duplicate, layer.copyToDocument/delete, layerMask.revealSelection/edit. Reference images: Krea2 source_image_b/image_b (two-ref) and FLUX3 ReferenceMultiLatent images.image1."
 
 # [[tested]]
 # stablecraft = "0.1.x"

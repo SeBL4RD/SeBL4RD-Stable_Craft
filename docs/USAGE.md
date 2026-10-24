@@ -115,6 +115,48 @@ Si tu renommes un calque et retires son identifiant `[id]`, StableCraft ne peut 
 retrouver sa galerie. Les calques créés avant cette version n'ont pas d'identifiant et
 n'ont donc pas de galerie rétroactive.
 
+### Image de référence
+
+Sous le prompt :
+
+1. coche **Utiliser une image de référence** ;
+2. clique sur la vignette pour ouvrir l'explorateur, ou dépose une image dessus ;
+3. l'image est normalisée en PNG et stockée avec le calque ;
+4. décris dans le prompt **ce que tu prends de la référence** et **où tu l'appliques**.
+
+La référence est **propre au calque StableCraft courant** :
+
+- elle est rechargée quand tu sélectionnes ce calque ;
+- elle n'apparaît pas sur un autre calque ;
+- une nouvelle sélection repart sans référence ;
+- si tu changes de calque avant la première génération, la référence en attente est
+  oubliée.
+
+Profils compatibles : **Krea 2 Edit** et **FLUX.3 Klein**. FLUX.2 9B n'utilise pas la
+référence.
+
+Quand une référence est chargée, le modèle reçoit deux images :
+
+- **image 1 = scène** : ton image PhotoCraft (le crop du lasso) ;
+- **image 2 = référence** : l'image ajoutée.
+
+Un system prompt n'est ajouté que dans ce cas. Sans image chargée, le workflow reste
+strictement celui d'avant.
+
+Exemples :
+
+> Add the black leather glove from the reference image to the man's right hand.
+> Keep the hand pose, arm, skin tone, lighting and background unchanged.
+
+> Use the reference image for the fabric pattern only. Keep the garment shape,
+> folds, lighting and the rest of the scene unchanged.
+
+> Replace the surfboard's design with the pattern from the reference image.
+> Keep the board shape, feet, water, splash and lighting unchanged.
+
+Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec ces
+explications et d'autres exemples.
+
 ## Réglages conseillés
 
 | Profil | Steps | CFG | Remarque |
@@ -183,6 +225,8 @@ Rien n'est écrit dans AppData.
   - `user\sessions\<id>\session.json` : sélection, réglages, document, galerie ;
   - `user\sessions\<id>\base.png` : composite figé au moment du lasso ;
   - `user\sessions\<id>\mask.png` : masque de sélection ;
+  - `user\sessions\<id>\reference.png` + `reference_thumb.png` : image de référence
+    du calque, si elle existe ;
   - `user\sessions\<id>\generations\<n>\result.png` + `thumb.png` ;
   - `user\logs\launcher.log` et `user\logs\ui.log`.
 - **Modèles téléchargés** : `models\` (vide par défaut, voir `models\README.md`).
@@ -218,6 +262,9 @@ d'interface.
 | `PhotoCraft : connecté (aucun document)` | aucune image ouverte | ouvre une image |
 | `Sélection : aucune` | pas de lasso actif | fais une sélection, ou clique un calque `StableCraft [id]` puis Régénérer (sélection stockée) |
 | `Régénérer` grisé, « existe déjà » | seed fixe identique à une génération | mets le seed à `-1` ou change le prompt |
+| Case « Image de référence » grisée | profil FLUX.2 sélectionné | passe sur Krea 2 ou FLUX.3 Klein |
+| La référence n'a aucun effet | case décochée, vignette vide, ou prompt ne dit pas quoi reprendre | coche la case, charge l'image et décris « use the reference image for… » |
+| La référence copie son fond | image de référence trop large | utilise un crop propre de l'objet sur un fond simple |
 | `ComfyUI : déconnecté` | ComfyUI arrêté ou mauvais port | lance `run_nvidia_gpu.bat` ; vérifie `endpoint` |
 | `Modèles manquants : X` | fichier invisible par ComfyUI | vérifie `config.toml` et `extra_model_paths.yaml` |
 | `ComfyUI error in KSampler` | mauvais encodeur/loader | FLUX.3/Krea2 : Qwen3-VL FP8 ; FLUX.2 : Qwen3-8B GGUF |

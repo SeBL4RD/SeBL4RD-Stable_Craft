@@ -375,6 +375,8 @@ pour permettre un portage PySide6/Rust plus tard sans réécrire la logique.
       session.json
       base.png        # composite figé au moment du lasso
       mask.png
+      reference.png   # image de référence propre au calque
+      reference_thumb.png
       generations/<n>/result.png, thumb.png
     logs/
   models/             # téléchargements consentis, vide par défaut
@@ -391,6 +393,21 @@ Pour capturer `base.png` / `after.png`, StableCraft duplique le document en vers
 fusionnée (`image.duplicate mergedOnly`), enregistre ce duplicata en PNG, puis le ferme.
 Un document à un seul calque n'affiche pas l'avertissement « layers flattened » de
 PhotoCraft : aucune notice ne s'affiche en bas à droite.
+
+### Image de référence
+
+La référence est stockée par session (`reference.png`) et jamais composée directement.
+Elle est envoyée comme **deuxième image** :
+
+- Krea 2 : `source_image` = scène, `source_image_b` = référence ;
+  `Krea2EditGroundedEncode` reçoit `image` + `image_b`, avec un system prompt qui nomme
+  image 1 (scène) et image 2 (référence) ;
+- FLUX.3 : `ReferenceMultiLatent` reçoit `images.image0` (scène) et `images.image1`
+  (référence), avec un préfixe de prompt explicite.
+
+Le system prompt, le second latent et le préfixe ne sont ajoutés que si une image de
+référence est réellement chargée. Sans référence, le workflow est inchangé. FLUX.2 9B
+n'utilise pas la référence.
 
 ### Mise à jour
 

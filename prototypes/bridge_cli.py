@@ -41,9 +41,24 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
+from reference_image import normalize_reference  # noqa: E402
 from session_store import SessionStore, session_layer_name  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+
+REFERENCE_PROFILES = {"krea2_edit", "flux3_klein"}
+REFERENCE_INSTRUCTION = (
+    "Image 1 is the scene to edit. Image 2 is the reference image. "
+    "Use image 2 only for the requested detail, and keep image 1's scene, "
+    "pose, lighting and identity unchanged.\n\n"
+)
+REFERENCE_SYSTEM_PROMPT = (
+    "Image 1 is the scene to edit. Image 2 is the reference image. "
+    "Describe both images by detailing the color, shape, size, texture, "
+    "quantity, text and spatial relationships of the objects and background. "
+    "Use image 2 only for the requested detail, and keep image 1's scene, "
+    "pose, lighting and identity unchanged."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,16 +255,18 @@ def build_workflow(
     prefix: str,
     ref_boost: float = 4.0,
     grounding_px: int = 768,
+    reference_image: str | None = None,
 ) -> dict[str, Any]:
     if profile == "flux3_klein":
-        return {
+        text = f"{REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
+        workflow = {
             "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
             "2": {
                 "class_type": "CLIPLoader",
                 "inputs": {"clip_name": text_encoder, "type": "flux3"},
             },
             "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": text}},
             "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
             "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
             "7": {
@@ -284,8 +301,20 @@ def build_workflow(
                 "inputs": {"images": ["9", 0]},
             },
         }
+        if reference_image:
+            workflow["11"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": reference_image},
+            }
+            workflow["7"]["inputs"]["images.image1"] = ["11", 0]
+        return workflow
 
     if profile == "flux2_klein_9b":
+        if reference_image:
+            raise ComfyError(
+                "L'image de référence est disponible pour Krea 2 et FLUX.3 Klein, "
+                "pas pour FLUX.2 Klein 9B."
+            )
         loader = clip_loader_for(text_encoder)
         return {
             "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
@@ -339,7 +368,7 @@ def build_workflow(
         }
 
     if profile == "krea2_edit":
-        return {
+        workflow = {
             "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
             "2": {
                 "class_type": "CLIPLoader",
@@ -403,6 +432,27 @@ def build_workflow(
                 "inputs": {"images": ["11", 0]},
             },
         }
+        if reference_image:
+            workflow["13"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": reference_image},
+            }
+            workflow["7"]["inputs"].update(
+                {
+                    "source_image_b": ["13", 0],
+                    "ref_position": "beside (right of target)",
+                    "ref_position_a": "aligned (trained)",
+                    "ref_boost_a": 1.0,
+                }
+            )
+            for node in ("8", "9"):
+                workflow[node]["inputs"].update(
+                    {
+                        "image_b": ["13", 0],
+                        "system_prompt": REFERENCE_SYSTEM_PROMPT,
+                    }
+                )
+        return workflow
 
     raise ComfyError(f"unknown profile {profile!r}")
 
@@ -446,6 +496,42 @@ def sessions_root(ctx: dict[str, Any]) -> Path:
     if configured:
         return as_path(str(configured))
     return default_user_dir() / "sessions"
+
+
+def store_reference(
+    store: SessionStore,
+    sdata: dict[str, Any],
+    source: Path,
+    display_name: str | None = None,
+) -> Path:
+    source = as_path(str(source))
+    if not source.exists():
+        raise ControlError(f"image de référence introuvable : {source}")
+    directory = store.directory(str(sdata["id"]))
+    image_path = directory / "reference.png"
+    thumb_path = directory / "reference_thumb.png"
+    info = normalize_reference(source, image_path, thumb_path)
+    sdata["reference"] = {
+        "image": "reference.png",
+        "thumb": "reference_thumb.png",
+        "name": display_name or source.name,
+        "enabled": True,
+        "width": info.get("width"),
+        "height": info.get("height"),
+    }
+    store.save(sdata)
+    return image_path
+
+
+def session_reference_path(
+    store: SessionStore, sdata: dict[str, Any]
+) -> Path | None:
+    reference = sdata.get("reference")
+    if not isinstance(reference, dict) or not reference.get("enabled", True):
+        return None
+    relative = reference.get("image") or "reference.png"
+    path = store.directory(str(sdata["id"])) / str(relative)
+    return path if path.exists() else None
 
 
 def rel_to_root(ctx: dict[str, Any], path: Path) -> str:
@@ -757,6 +843,7 @@ def comfy_generate(
     prompt: str,
     negative: str,
     seed: int,
+    reference_path: Path | None = None,
 ) -> Image.Image:
     comfy.require("UnetLoaderGGUF", "unet_name", ctx["unet"])
     comfy.require(clip_loader_for(ctx["text_encoder"]), "clip_name", ctx["text_encoder"])
@@ -765,9 +852,18 @@ def comfy_generate(
         comfy.require_node("Krea2EditModelPatch")
         comfy.require_node("Krea2EditGroundedEncode")
         comfy.require_node("EmptySD3LatentImage")
+    if reference_path is not None and ctx["profile_name"] not in REFERENCE_PROFILES:
+        raise ComfyError(
+            f"L'image de référence n'est pas disponible pour le profil {ctx['profile_name']}."
+        )
 
     upload_name = f"stablecraft_{time.time_ns()}.png"
     uploaded = comfy.upload(image_path, upload_name)
+    reference_name = None
+    if reference_path is not None:
+        reference_name = comfy.upload(
+            reference_path, f"stablecraft_ref_{time.time_ns()}.png"
+        )
     workflow = build_workflow(
         ctx["profile_name"],
         image_name=uploaded,
@@ -784,6 +880,7 @@ def comfy_generate(
         prefix="StableCraft",
         ref_boost=ctx["ref_boost"],
         grounding_px=ctx["grounding_px"],
+        reference_image=reference_name,
     )
     prompt_id = comfy.queue(workflow)
     print(f"ComfyUI:   queued {prompt_id} (seed {seed}, {ctx['steps']} steps, cfg {ctx['cfg_scale']})")
@@ -836,6 +933,26 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         prompt = (args.prompt or "").strip()
         if not prompt:
             raise SystemExit("--prompt est requis pour une génération")
+
+        reference_path: Path | None = None
+        if args.reference:
+            if ctx["profile_name"] not in REFERENCE_PROFILES:
+                raise SystemExit(
+                    "L'image de référence est disponible pour Krea 2 et FLUX.3 Klein, "
+                    "pas pour ce profil."
+                )
+            reference_path = store_reference(
+                store,
+                sdata,
+                as_path(args.reference),
+                display_name=args.reference_name,
+            )
+            print(f"Reference: {reference_path}")
+        elif ctx["profile_name"] in REFERENCE_PROFILES:
+            reference_path = session_reference_path(store, sdata)
+            if reference_path is not None:
+                print(f"Reference: {reference_path}")
+
         orig_index = int(orig_doc["index"])
         base = Image.open(base_abs).convert("RGB")
         x0, y0, cw, ch = compute_crop(selection, base.width, base.height, ctx["padding"])
@@ -853,7 +970,17 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
 
         seed = args.seed if args.seed is not None and args.seed >= 0 else random.randrange(0, 2**63 - 1)
         started = time.time()
-        result = comfy_generate(ctx, comfy, crop_path, cw, ch, prompt, args.negative, seed)
+        result = comfy_generate(
+            ctx,
+            comfy,
+            crop_path,
+            cw,
+            ch,
+            prompt,
+            args.negative,
+            seed,
+            reference_path=reference_path,
+        )
         elapsed = time.time() - started
 
         index = len(sdata["generations"])
@@ -887,6 +1014,9 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "crop_size": [cw, ch],
             "result": f"generations/{index}/result.png",
             "thumb": f"generations/{index}/thumb.png",
+            "reference": (
+                sdata.get("reference", {}).get("name") if reference_path else None
+            ),
             "elapsed": round(elapsed, 1),
         }
         store.add_generation(sdata, generation)
@@ -1002,6 +1132,17 @@ def main() -> None:
     ap.add_argument("--apply", default=None, help="apply an existing generation of a session id")
     ap.add_argument("--generation", type=int, default=None, help="generation index for --apply")
     ap.add_argument("--sessions-dir", type=Path, default=None, help="override the sessions root")
+    ap.add_argument(
+        "--reference",
+        type=Path,
+        default=None,
+        help="reference image for the current session (Krea 2 and FLUX.3)",
+    )
+    ap.add_argument(
+        "--reference-name",
+        default=None,
+        help="original filename to record with --reference",
+    )
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -1032,6 +1173,11 @@ def main() -> None:
     unet = file_name(pcfg.get("unet"), manifest["files"]["unet"]["filename"])
     text_encoder = file_name(pcfg.get("text_encoder"), manifest["files"]["text_encoder"]["filename"])
     vae = file_name(pcfg.get("vae"), manifest["files"]["vae"]["filename"])
+
+    if args.reference and not (args.session_mode or args.session):
+        raise SystemExit(
+            "--reference nécessite --session-mode (nouvelle session) ou --session <id>."
+        )
 
     if args.session_mode or args.session or args.apply:
         ctx = {

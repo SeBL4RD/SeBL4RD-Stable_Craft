@@ -86,6 +86,7 @@ Machine de test : **RTX 3080 Ti 12 Go**, 32 Go RAM, ComfyUI 0.42.1 sur le port `
 | **Notices PhotoCraft** | ✅ plus de popup « layers flattened » : le composite est enregistré depuis un duplicata fusionné, sans warning |
 | **Fichiers récents** | ✅ les `result.png`/`mask.png` techniques sont retirés de « Ouvrir un fichier récent » |
 | **Navigateur ComfyUI** | ✅ lancement avec `--disable-auto-launch` |
+| **Image de référence** | ✅ par calque, Krea 2 et FLUX.3, system prompt uniquement si l'image est chargée |
 | Encodage texte | ⚠️ le GGUF `Qwen3VL-4B-Instruct-Q4_K_M` testé n'est **pas** compatible avec FLUX.3 ni Krea 2 ; StableCraft utilise le FP8 safetensors. Le GGUF `Qwen3-8B-Q4_K_M` de FLUX.2 fonctionne. |
 
 Images dans [`docs/demo/`](docs/demo) :
@@ -125,6 +126,27 @@ Le champ **Seed** n'est plus réécrit avec le seed réel : il garde la valeur s
 
 Les sessions sont stockées dans `user/sessions/<id>/` (voir
 [`docs/USAGE.md`](docs/USAGE.md#où-sont-les-fichiers)).
+
+---
+
+## Image de référence par calque
+
+Chaque calque/session peut avoir sa propre **image de référence** :
+
+- coche **Image de référence** dans l'UI ;
+- clique sur la vignette pour choisir un fichier, ou dépose une image dessus ;
+- l'image est copiée dans `user/sessions/<id>/reference.png` ;
+- elle est rechargée quand tu reviens sur ce calque, et disparaît de l'UI quand tu
+  changes de calque ;
+- une nouvelle sélection repart sans référence.
+
+La référence est utilisée par **Krea 2 Edit** et **FLUX.3 Klein** (pas FLUX.2 9B).
+Le modèle reçoit deux images : la scène (le crop du lasso) et la référence. Un system
+prompt n'est ajouté **que si une image est réellement chargée**, pour éviter de modifier
+le comportement sans référence.
+
+Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
+pratiques et des exemples « scène / référence ».
 
 ---
 
@@ -175,8 +197,9 @@ Le MVP StableCraft :
 4. fait lasso → prompt → preview → nouveau calque masqué ;
 5. garde une galerie par calque, régénère sans sélection et permet de changer de
    génération ;
-6. gère l'annulation et les erreurs lisibles ;
-7. ne télécharge aucun modèle sans accord.
+6. accepte une image de référence propre au calque (Krea 2 et FLUX.3) ;
+7. gère l'annulation et les erreurs lisibles ;
+8. ne télécharge aucun modèle sans accord.
 
 Hors MVP : FLUX.2 4B, Qwen-Image-Edit, batch, outpaint, model manager complet,
 panneau natif, macOS/Linux.

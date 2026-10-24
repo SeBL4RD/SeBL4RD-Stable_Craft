@@ -44,6 +44,26 @@
 | Enregistrement du composite | ✅ `image.duplicate mergedOnly` → PNG sans avertissement « layers flattened » |
 | Documents temporaires de capture | ✅ duplicata fermé, document d'origine réactivé |
 
+### Image de référence (Krea 2 et FLUX.3)
+
+| Test | Résultat |
+|---|---|
+| Krea 2, scène + référence verte, prompt sans nommer la couleur | ✅ robe verte, fond/pose conservés |
+| Krea 2, même session, référence rouge remplacée | ✅ robe rouge, référence mise à jour |
+| FLUX.3, scène + référence rouge, prompt sans nommer la couleur | ✅ robe rouge, silhouette conservée |
+| `build_workflow` sans référence | ✅ aucun `image_b`, aucun `system_prompt`, aucun second latent |
+| `build_workflow` avec référence Krea 2 | ✅ `source_image_b`, `image_b`, system prompt scène/référence |
+| `build_workflow` avec référence FLUX.3 | ✅ `images.image1` + préfixe de prompt |
+| Stockage session | ✅ `reference.png`, `reference_thumb.png`, métadonnées dans `session.json` |
+| UI, changement de calque | ✅ référence du calque rechargée, pas celle du précédent |
+| UI, nouvelle sélection | ✅ référence effacée |
+| UI, référence pending avant première génération | ✅ copiée dans la session, fichiers pending supprimés |
+| UI, retrait de la référence | ✅ fichiers supprimés et `session.json` nettoyé |
+| Profil FLUX.2 | ✅ case référence désactivée, aucun envoi au modèle |
+| Restauration du profil d'une génération | ✅ une session Krea 2 recharge Krea 2 + 8 steps |
+| Bouton Guide | ✅ fenêtre non bloquante (`grab_current()` vide) |
+| Drag & drop Windows | ✅ mécanisme installé et `WM_DROPFILES` reçu ; clic explorateur fonctionnel. Drop réel depuis l'Explorateur à confirmer visuellement. |
+
 ### Aperçu, fichiers récents et navigateur
 
 | Test | Résultat |
