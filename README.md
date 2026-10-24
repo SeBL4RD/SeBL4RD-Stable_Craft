@@ -4,7 +4,7 @@
 
 StableCraft est une application compagne pour PhotoCraft : on entoure une zone au
 lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
-Tout tourne en local, sur sa propre GPU, avec ComfyUI comme moteur de génération.
+Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de génération.
 
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-3b82f6)
@@ -23,7 +23,7 @@ Tout tourne en local, sur sa propre GPU, avec ComfyUI comme moteur de générati
 
 ## Fondement
 
-StableCraft ne modifie pas PhotoCraft et ne maintient pas de fork.
+StableCraft ne modifie pas PhotoCraft et n'est pas un fork.
 
 PhotoCraft est piloté par son **control channel local** : lecture de la sélection,
 sauvegarde du composite, insertion du calque, création du masque. ComfyUI est piloté en
@@ -36,16 +36,15 @@ numéro de version figé.
 ### Matériel
 
 - Windows 10/11 **x64**.
-- GPU **NVIDIA avec CUDA**.
+- GPU **NVIDIA** seulement, pour le moment.
 - **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
-- Prévoir environ **45 Go de disque** pour les trois profils, hors doublons.
 - En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
 
 ### Logiciel
 
-- **PhotoCraft 0.14.0** (portable ou installé).
-- **ComfyUI portable** avec `python_embeded\python.exe` (Pillow + requests inclus).
-- **Python 3.11+ avec Tkinter** pour l'interface.
+- **PhotoCraft 0.14.0** ou supérieur (portable ou installé).
+- **ComfyUI portable** (avec `python_embeded\python.exe`).
+- **Python 3.11+**.
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
