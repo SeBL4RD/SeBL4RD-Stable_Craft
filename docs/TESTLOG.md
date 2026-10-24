@@ -44,6 +44,20 @@
 | Enregistrement du composite | ✅ `image.duplicate mergedOnly` → PNG sans avertissement « layers flattened » |
 | Documents temporaires de capture | ✅ duplicata fermé, document d'origine réactivé |
 
+### Aperçu, fichiers récents et navigateur
+
+| Test | Résultat |
+|---|---|
+| Galerie d'une session à 11 générations | ✅ l'aperçu « Crop » pointe sur la génération courante |
+| Clic sur la génération #2 | ✅ `preview_paths["result"]` passe sur `generations/1/result.png` |
+| Vue « Document » | ✅ utilise `after.png` de la session |
+| `StableCraft.bat` avec ComfyUI arrêté | ✅ ComfyUI démarre avec `--disable-auto-launch` |
+| Ligne de commande ComfyUI | ✅ `... --port 12452 --disable-auto-launch` |
+| « Ouvrir un fichier récent » avant lancement | ❌ 19 entrées `sessions/.../result.png` |
+| Après lancement | ✅ 1 seule entrée : le PSD de l'utilisateur |
+| Nettoyage après génération/application | ✅ le bridge retire aussi les entrées `sessions/...` |
+| `tasklist` au lancement | ✅ décodage OEM, plus de traceback Unicode |
+
 ### Aucun calque actif
 
 Reproduction avec `select.deselectLayers` sur le PSD de la session `ded39a33` :

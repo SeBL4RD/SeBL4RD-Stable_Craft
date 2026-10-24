@@ -6,7 +6,7 @@ stablecraft = "0.1.x"
 photocraft = "0.14.0"
 os = "windows-x64"
 status = "tested"
-notes = "Control channel, lasso, image.duplicate mergedOnly, app.save/open, select.saveSelection/loadSelection/deselect/deselectLayers, channel.duplicate, layer.copyToDocument/delete, layerMask.revealSelection/edit."
+notes = "Control channel, lasso, image.duplicate mergedOnly, app.save/open, prefs.get/set (recent files cleanup), select.saveSelection/loadSelection/deselect/deselectLayers, channel.duplicate, layer.copyToDocument/delete, layerMask.revealSelection/edit."
 
 # [[tested]]
 # stablecraft = "0.1.x"

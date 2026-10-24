@@ -461,6 +461,39 @@ def connect_control(ctx: dict[str, Any]) -> ControlClient:
     return ControlClient(ctx["host"], ctx["port"], read_token(ctx["token_path"]))
 
 
+def is_stablecraft_recent(path: object) -> bool:
+    normalized = str(path).replace("\\", "/")
+    if normalized.startswith("sessions/"):
+        return (
+            "/generations/" in normalized
+            or normalized.endswith(("/mask.png", "/base.png", "/after.png"))
+        )
+    return "/sessions/" in normalized and "/generations/" in normalized
+
+
+def clean_recent_files(control: ControlClient) -> None:
+    """Drop StableCraft temp documents from PhotoCraft's recent-files list.
+
+    `app.open` is how the bridge brings `result.png` and `mask.png` into
+    PhotoCraft, and PhotoCraft records every open in File > Open Recent. Those
+    entries are implementation details, not documents the user wants there.
+    """
+    try:
+        recent = control.execute("prefs.get", {"path": "fileHandling.recentFiles"})
+        if not isinstance(recent, list):
+            return
+        kept = [entry for entry in recent if not is_stablecraft_recent(entry)]
+        if len(kept) != len(recent):
+            control.execute(
+                "prefs.set",
+                {"path": "fileHandling.recentFiles", "value": kept},
+            )
+    except ControlError:
+        # Older PhotoCraft builds may not expose the preference through
+        # automation; the gallery keeps working without this cleanup.
+        pass
+
+
 def save_composite(
     control: ControlClient,
     automation_root: Path,
@@ -774,6 +807,7 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
     args = ctx["args"]
     store = SessionStore(sessions_root(ctx))
     control = connect_control(ctx)
+    clean_recent_files(control)
     comfy = ComfyClient(
         ctx["comfy_endpoint"], timeout=args.timeout, temp_dir=comfy_temp_dir(ctx["cfg"])
     )
@@ -890,6 +924,7 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         comfy.interrupt()
         raise SystemExit(1)
     finally:
+        clean_recent_files(control)
         control.close_socket()
 
 
@@ -917,6 +952,7 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
     sdata["layer_name"] = session_layer_name(str(sdata["id"]), generation.get("prompt", ""))
 
     control = connect_control(ctx)
+    clean_recent_files(control)
     try:
         orig_doc = current_document(control, sdata)
         orig_index = int(orig_doc["index"])
@@ -935,6 +971,7 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
             print(f"Preview:   {preview}")
         print("Done.")
     finally:
+        clean_recent_files(control)
         control.close_socket()
 
 
@@ -1035,6 +1072,7 @@ def main() -> None:
     print("Profile:   ", profile_name, f"({unet}, {text_encoder}, {vae})")
 
     control = ControlClient(host, port, read_token(token_path))
+    clean_recent_files(control)
     comfy = ComfyClient(
         comfy_endpoint, timeout=args.timeout, temp_dir=comfy_temp_dir(cfg)
     )
@@ -1146,6 +1184,7 @@ def main() -> None:
         # Reconnect before the apply phase, then find the original document again.
         control.close_socket()
         control = ControlClient(host, port, read_token(token_path))
+        clean_recent_files(control)
         ui = control.request("ui.inspect")
         docs = ui["session"]["documents"]
         candidates = [
@@ -1217,6 +1256,7 @@ def main() -> None:
     finally:
         if result_doc_index is not None:
             control.close_quietly(result_doc_index)
+        clean_recent_files(control)
         control.close_socket()
 
 

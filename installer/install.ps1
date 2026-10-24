@@ -233,6 +233,7 @@ root = "$comfyRootToml"
 start_command = "$startToml"
 python = "$comfyToml"
 # temp_dir = ""
+# disable_browser = true
 # models_dir = ""
 
 [models]

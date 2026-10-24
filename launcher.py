@@ -200,6 +200,57 @@ def find_comfyui(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, Path | 
     return start, python, root, None
 
 
+def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
+    """Return a batch that starts ComfyUI without opening the browser.
+
+    ComfyUI's `--windows-standalone-build` forces `--auto-launch`; only the
+    `--disable-auto-launch` argument cancels it. The user's launcher batch does
+    not forward arguments, so make a temporary copy with the flag added.
+    """
+    enabled = bool(cfg.get("comfyui", {}).get("disable_browser", True))
+    if not enabled or start_command.suffix.lower() not in {".bat", ".cmd"}:
+        return start_command
+    try:
+        text = start_command.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return start_command
+    if "--disable-auto-launch" in text:
+        return start_command
+
+    lines = text.splitlines(keepends=True)
+    changed = False
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if "main.py" not in lowered or "disable-auto-launch" in lowered:
+            continue
+        newline = ""
+        content = line
+        if content.endswith("\r\n"):
+            content, newline = content[:-2], "\r\n"
+        elif content.endswith("\n") or content.endswith("\r"):
+            content, newline = content[:-1], content[-1]
+        lines[index] = f"{content} --disable-auto-launch{newline}"
+        changed = True
+    if not changed:
+        return start_command
+
+    # Keep %~dp0-relative launchers beside the original; the common ComfyUI
+    # batch uses paths relative to its working directory, so user/runtime is safe.
+    if "%~dp0" in text:
+        wrapper = start_command.with_name(
+            f"{start_command.stem}.stablecraft-no-browser{start_command.suffix}"
+        )
+    else:
+        runtime = USER_DIR / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        wrapper = runtime / f"comfyui-no-browser{start_command.suffix}"
+    try:
+        wrapper.write_text("".join(lines), encoding="utf-8")
+    except OSError:
+        return start_command
+    return wrapper
+
+
 def find_ui_python(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, str | None]:
     configured = str(cfg.get("app", {}).get("python_ui", "") or "")
     base_python = as_path(configured) if configured else Path(sys.executable)
@@ -245,6 +296,43 @@ def migrate_legacy_sessions(target: Path, log_prefix: str = "") -> int:
     return copied
 
 
+def is_stablecraft_recent(path: object) -> bool:
+    normalized = str(path).replace("\\", "/")
+    if normalized.startswith("sessions/"):
+        return (
+            "/generations/" in normalized
+            or normalized.endswith(("/mask.png", "/base.png", "/after.png"))
+        )
+    return "/sessions/" in normalized and "/generations/" in normalized
+
+
+def clean_photocraft_recent(host: str, port: int, token_path: Path) -> None:
+    """Remove StableCraft's temporary result/mask files from Open Recent."""
+    try:
+        sys.path.insert(0, str(ROOT / "prototypes"))
+        from control_client import ControlClient, read_token
+    except Exception:  # noqa: BLE001
+        return
+    client = None
+    try:
+        client = ControlClient(host, port, read_token(token_path), timeout=10.0)
+        recent = client.execute("prefs.get", {"path": "fileHandling.recentFiles"})
+        if not isinstance(recent, list):
+            return
+        kept = [entry for entry in recent if not is_stablecraft_recent(entry)]
+        if len(kept) != len(recent):
+            client.execute(
+                "prefs.set",
+                {"path": "fileHandling.recentFiles", "value": kept},
+            )
+            log(f"{len(recent) - len(kept)} entrée(s) StableCraft retirée(s) des fichiers récents.")
+    except Exception as exc:  # noqa: BLE001
+        log(f"Nettoyage des fichiers récents ignoré : {exc}")
+    finally:
+        if client is not None:
+            client.close_socket()
+
+
 def photocraft_running_without_control(port: int) -> bool:
     if os.name != "nt":
         return False
@@ -255,6 +343,8 @@ def photocraft_running_without_control(port: int) -> bool:
             ["tasklist", "/FI", "IMAGENAME eq photocraft.exe"],
             capture_output=True,
             text=True,
+            encoding="oem",
+            errors="replace",
             timeout=10,
             creationflags=CREATE_NO_WINDOW,
         )
@@ -323,10 +413,13 @@ def main() -> int:
                 "Démarre-le ou corrige [comfyui] endpoint dans config.toml.",
             )
             return 1
+        launch_command = comfyui_launch_command(start_command, cfg)
+        if launch_command != start_command:
+            log("ComfyUI sera lancé sans ouverture du navigateur.")
         log(f"ComfyUI n'écoute pas sur {comfy_host}:{comfy_port}; démarrage…")
         try:
             subprocess.Popen(
-                ["cmd", "/c", str(start_command)],
+                ["cmd", "/c", str(launch_command)],
                 cwd=str(start_command.parent),
                 creationflags=CREATE_NEW_CONSOLE,
             )
@@ -401,6 +494,8 @@ def main() -> int:
             return 1
     else:
         log("PhotoCraft control channel déjà actif.")
+
+    clean_photocraft_recent(host, port, token)
 
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"

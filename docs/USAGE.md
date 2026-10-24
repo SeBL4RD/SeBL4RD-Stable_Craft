@@ -9,9 +9,10 @@ Guide pas à pas pour tester StableCraft en conditions réelles.
 Il fait tout :
 
 1. vérifie les chemins (PhotoCraft, ComfyUI, Python UI) ;
-2. démarre ComfyUI s'il ne tourne pas ;
+2. démarre ComfyUI s'il ne tourne pas, **sans ouvrir le navigateur** ;
 3. démarre PhotoCraft avec le control channel s'il ne tourne pas ;
-4. ouvre l'UI.
+4. nettoie les fichiers temporaires StableCraft de « Ouvrir un fichier récent » ;
+5. ouvre l'UI.
 
 ### Si un chemin manque
 
@@ -122,8 +123,10 @@ n'ont donc pas de galerie rétroactive.
 | FLUX.2 Klein 9B | 4 | 1.0 | plus texturé, plus lourd |
 | Krea 2 Edit | 8 | 1.0 | identité/style, peut changer la silhouette |
 
-- **Contexte** : 96 px par défaut. Pour un petit objet, monte à 128–192 px pour donner
-  plus de scène au modèle.
+- **Contexte** : marge autour du lasso incluse dans le crop envoyé au modèle, mais pas
+  dans le masque final. 96 px par défaut. Pour un petit objet ou un membre (jambe, main,
+  visage), monte à 128–192 px pour donner plus de scène et d'attache anatomique au
+  modèle. Au bord de l'image, cette marge est tronquée.
 - **Feather** : 10 px par défaut. Descends à 4–6 px pour un bord net ; monte à 15–20 px
   pour un fondu doux.
 - **Seed** : `-1` = aléatoire et valeur par défaut. Le champ n'est pas remplacé par le
@@ -183,6 +186,8 @@ Rien n'est écrit dans AppData.
   - `user\sessions\<id>\generations\<n>\result.png` + `thumb.png` ;
   - `user\logs\launcher.log` et `user\logs\ui.log`.
 - **Modèles téléchargés** : `models\` (vide par défaut, voir `models\README.md`).
+- **Lanceur ComfyUI sans navigateur** : `user\runtime\comfyui-no-browser.bat`,
+  régénéré au démarrage à partir de `run_nvidia_gpu.bat`.
 - **Journal UI** : panneau JOURNAL en bas (scrollbar).
 - **Docs** : `docs/MODELS.md` (modèles, réglages, VRAM), `docs/TESTLOG.md`
   (validation), `docs/ARCHITECTURE.md` (design).
@@ -208,6 +213,8 @@ d'interface.
 |---|---|---|
 | `PhotoCraft : déconnecté` | PhotoCraft lancé sans `--control`, mauvais port/token | relance avec la commande du §2 ; vérifie `control_token_file` |
 | « PhotoCraft à redémarrer » | PhotoCraft tourne encore avec l'ancien `automation_root` | ferme complètement PhotoCraft, puis relance `StableCraft.bat` |
+| `result.png` en masse dans « Ouvrir un fichier récent » | anciennes ouvertures techniques du bridge | nettoyé au prochain lancement de `StableCraft.bat` et après chaque génération |
+| ComfyUI ouvre une page web au démarrage | `--auto-launch` forcé par `--windows-standalone-build` | StableCraft ajoute `--disable-auto-launch` ; mets `[comfyui] disable_browser = false` pour retrouver l'ancien comportement |
 | `PhotoCraft : connecté (aucun document)` | aucune image ouverte | ouvre une image |
 | `Sélection : aucune` | pas de lasso actif | fais une sélection, ou clique un calque `StableCraft [id]` puis Régénérer (sélection stockée) |
 | `Régénérer` grisé, « existe déjà » | seed fixe identique à une génération | mets le seed à `-1` ou change le prompt |

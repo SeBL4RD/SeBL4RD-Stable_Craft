@@ -46,6 +46,8 @@ python = ""
 # supprimées après téléchargement, pour ne pas polluer le dossier output.
 # Vide = <root>/ComfyUI/temp
 # temp_dir = ""
+# Ne pas ouvrir l'UI web de ComfyUI dans le navigateur au démarrage.
+# disable_browser = true
 # Optionnel, pour l'affichage et la validation.
 # models_dir = ""
 

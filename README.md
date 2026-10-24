@@ -28,9 +28,10 @@ avec des modèles récents quantifiés en GGUF.
 Le lanceur fait tout :
 
 1. vérifie les chemins (PhotoCraft, ComfyUI, Python) ;
-2. démarre ComfyUI s'il ne tourne pas ;
+2. démarre ComfyUI s'il ne tourne pas, sans ouvrir le navigateur ;
 3. démarre PhotoCraft avec le control channel s'il ne tourne pas ;
-4. ouvre l'UI.
+4. nettoie les `result.png` temporaires de « Ouvrir un fichier récent » ;
+5. ouvre l'UI.
 
 Si un chemin obligatoire manque, il affiche un message clair et s'arrête. Les modèles
 manquants ne bloquent pas : l'UI les signale et désactive Générer.
@@ -83,6 +84,8 @@ Machine de test : **RTX 3080 Ti 12 Go**, 32 Go RAM, ComfyUI 0.42.1 sur le port `
 | **Aucun calque actif** | ✅ crée un calque temporaire pour l'insertion, puis le supprime |
 | **Sorties ComfyUI** | ✅ `PreviewImage` dans `temp`, téléchargement puis suppression ; le dossier `output` n'est plus pollué |
 | **Notices PhotoCraft** | ✅ plus de popup « layers flattened » : le composite est enregistré depuis un duplicata fusionné, sans warning |
+| **Fichiers récents** | ✅ les `result.png`/`mask.png` techniques sont retirés de « Ouvrir un fichier récent » |
+| **Navigateur ComfyUI** | ✅ lancement avec `--disable-auto-launch` |
 | Encodage texte | ⚠️ le GGUF `Qwen3VL-4B-Instruct-Q4_K_M` testé n'est **pas** compatible avec FLUX.3 ni Krea 2 ; StableCraft utilise le FP8 safetensors. Le GGUF `Qwen3-8B-Q4_K_M` de FLUX.2 fonctionne. |
 
 Images dans [`docs/demo/`](docs/demo) :
@@ -153,6 +156,8 @@ ComfyUI ou dans le dossier dédié de StableCraft. Les licences des modèles s'a
   l'utilisateur peut pointer ses propres chemins.
 - Données locales (sessions, token, journaux) : `<dossier StableCraft>/user`. Les deux
   chemins sont configurables dans `config.toml`.
+- ComfyUI est lancé sans navigateur (`--disable-auto-launch`) ; `[comfyui]
+  disable_browser = false` rétablit l'ouverture automatique.
 - Un utilisateur qui ne se sert que de FLUX.3 n'a rien à configurer pour les autres.
 
 ---
