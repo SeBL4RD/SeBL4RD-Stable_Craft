@@ -37,7 +37,7 @@ Installation avec chemins explicites :
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
-  -InstallDir "C:\Users\Seb\AppData\Local\Programs\StableCraft" `
+  -InstallDir "C:\Users\Seb\StableCraft" `
   -PhotoCraft "D:\Programmes\photocraft-0.14.0-windows-x64-portable\photocraft.exe" `
   -ComfyPython "F:\ComfyUI_windows_portable\python_embeded\python.exe" `
   -ConfigFile ".\config.toml"
@@ -47,7 +47,7 @@ Options :
 
 | Option | Rôle |
 |---|---|
-| `-InstallDir` | dossier d'installation (défaut `%LOCALAPPDATA%\Programs\StableCraft`) |
+| `-InstallDir` | dossier d'installation (défaut `%USERPROFILE%\StableCraft`, hors AppData) |
 | `-PhotoCraft` | chemin de `photocraft.exe` (auto-détection sinon) |
 | `-ComfyPython` | chemin du `python_embeded\python.exe` de ComfyUI |
 | `-ComfyEndpoint` | endpoint ComfyUI (défaut `http://127.0.0.1:12452`) |
@@ -60,7 +60,8 @@ Options :
 1. Détecte PhotoCraft et le Python de ComfyUI.
 2. Copie l'UI, le bridge, `StableCraft.bat`, `launcher.py`, la config et les docs.
 3. Écrit `config.toml` avec `photocraft.executable`, `comfyui.root`,
-   `comfyui.start_command`, le Python de ComfyUI, le token et le dossier temporaire.
+   `comfyui.start_command`, le Python de ComfyUI, `user/` (token + sessions) et
+   `models/`.
 4. Crée **un seul raccourci** : `StableCraft` (menu Démarrer et bureau).
 5. Ne télécharge aucun modèle.
 
@@ -78,7 +79,8 @@ StableCraft.bat. »
 ## Désinstallation
 
 Menu Démarrer → **Désinstaller StableCraft**. Le script demande s'il faut supprimer
-aussi `models/` et `config.toml` ; réponds `N` pour les conserver.
+aussi `models/`, `user/` et `config.toml` ; réponds `N` pour les conserver. Les
+sessions et générations sont dans `user/`.
 
 ## Limites du MVP
 

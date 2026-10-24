@@ -1,5 +1,87 @@
 # Journal de validation
 
+## 2026-10-24 — Galerie persistante, stockage user/, sorties ComfyUI
+
+### Environnement
+
+- PhotoCraft 0.14.0 relancé avec `automation_root = <projet>/user` ;
+- ComfyUI 0.42.1, port `12452` ;
+- FLUX.3 Klein Q8, 16 steps, CFG 1.
+
+### Stockage et migration
+
+| Test | Résultat |
+|---|---|
+| Migration `.runtime/automation/stablecraft/sessions` → `user/sessions` | ✅ 5 sessions copiées, anciens dossiers conservés |
+| Token `user/control.token` | ✅ créé par PhotoCraft |
+| Sessions `user/sessions/<id>/` | ✅ `session.json`, `base.png`, `mask.png`, `generations/` |
+| Dossier `models/` | ✅ créé à la racine, rien dans AppData |
+
+### Galerie et régénération
+
+| Test | Résultat |
+|---|---|
+| Nouvelle session `0e0f7126` sur `test.png` | ✅ calque 8, génération 0 verte |
+| Régénération même sélection | ✅ même calque, génération 1 violette, pas de 3e calque |
+| Régénération sans sélection | ✅ `--session 0e0f7126`, base et masque relus, calque 40 |
+| UI sans sélection, seed `-1` | ✅ bouton « Régénérer » actif, génération 2 orange, même calque 44 |
+| Seed fixe identique à une génération | ✅ bouton grisé + message « existe déjà (#2) » |
+| Seed `-1` | ✅ bouton réactivé |
+| Galerie après changement de calque | ✅ 1 puis 2 vignettes, prompt/seed restaurés |
+| Application d'une ancienne génération | ✅ calque remplacé, aucun nouveau calque, ComfyUI non relancé |
+| `session.json` après génération | ✅ `current` et `generations` cohérents |
+
+### Nouvelle sélection, seed et notices
+
+| Test | Résultat |
+|---|---|
+| Champ seed après génération | ✅ garde la valeur saisie (`-1` pendant le test), le seed réel n'est plus réécrit dans le champ |
+| Seed réel | ✅ visible dans la ligne sous la galerie |
+| Nouveau lasso pendant qu'un calque StableCraft est actif | ✅ galerie vidée automatiquement, bouton repassé à « Générer » |
+| Nouvelle génération après ce lasso | ✅ nouvelle session `89ca9ca4`, nouveau calque 57, ancien calque 45 intact |
+| Régénération sur la même sélection | ✅ session `89ca9ca4`, même calque 64, galerie 2, 3 calques au total |
+| `ui.inspect.notices` après base + preview | ✅ `[]` |
+| Enregistrement du composite | ✅ `image.duplicate mergedOnly` → PNG sans avertissement « layers flattened » |
+| Documents temporaires de capture | ✅ duplicata fermé, document d'origine réactivé |
+
+### Aucun calque actif
+
+Reproduction avec `select.deselectLayers` sur le PSD de la session `ded39a33` :
+
+- `document.inspect` → `activeLayer: null` ;
+- `bridge_cli.py --apply ded39a33 --generation 0` → ✅ calque `StableCraft [ded39a33]` créé ;
+- calque temporaire supprimé : 17 calques avant/après, aucun `StableCraft (temporaire)` ;
+- masque appliqué, preview `after.png` écrite.
+
+### Sorties ComfyUI
+
+| Test | Résultat |
+|---|---|
+| Workflows passés de `SaveImage` à `PreviewImage` | ✅ sortie de type `temp` |
+| Téléchargement `/view?type=temp` | ✅ image récupérée |
+| Suppression du fichier temp après téléchargement | ✅ dossier `ComfyUI/temp` vide |
+| Dossier `E:\Images_AI\Comfy_UI_2026` | ✅ 2161 fichiers avant et après, aucune image StableCraft |
+| Session `user/sessions/0e0f7126` | ✅ `crop.png`, `result.png`, `thumb.png` conservés |
+
+### Installateur et lanceur
+
+| Test | Résultat |
+|---|---|
+| `install.ps1 -ConfigFile config.toml -InstallDir .runtime/install_user_test` | ✅ `user/sessions`, `models/`, token et automation root réécrits |
+| `install.ps1 -InstallDir .runtime/install_user_test2` (config générée) | ✅ `sessions_dir`, `user`, `models` présents |
+| `StableCraft.bat` à chaud | ✅ exit 0, ComfyUI/PhotoCraft réutilisés, une UI lancée |
+| Migration relancée au démarrage | ✅ aucune copie en double |
+| `user/logs/launcher.log` | ✅ journal dans `user/`, plus dans `.runtime/` |
+
+### Encodeurs
+
+Le GGUF `Qwen3VL-4B-Instruct-Q4_K_M.gguf` reste incompatible avec les encodeurs attendus
+par FLUX.3 et Krea 2 (erreurs `mat1 and mat2` / `12x2560`). StableCraft utilise donc le
+FP8 `Qwen-3-VL-4B-Scaled-FP8-v2.safetensors`. Le GGUF `Qwen3-8B-Q4_K_M.gguf` de FLUX.2
+fonctionne normalement.
+
+---
+
 ## 2026-10-23 — PhotoCraft 0.14.0 + ComfyUI 0.42.1
 
 ### Environnement

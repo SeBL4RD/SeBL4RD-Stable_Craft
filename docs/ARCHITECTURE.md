@@ -198,10 +198,9 @@ pas forcément la version ; la détection de commandes reste la source de vérit
 - Si un profil est choisi et qu'un fichier manque, StableCraft propose un
   téléchargement **avec consentement** : taille, chemin de destination, licence,
   URL. Jamais de téléchargement silencieux.
-- Les modèles sont stockés par défaut dans un dossier dédié :
-  `%LOCALAPPDATA%\StableCraft\models` (Windows),
-  `~/.local/share/StableCraft/models` (Linux),
-  `~/Library/Application Support/StableCraft/models` (macOS).
+- Les modèles sont stockés par défaut dans `<dossier StableCraft>/models`, à côté de
+  `user/`. Rien n'est écrit dans AppData. Le chemin reste configurable via
+  `[models] store_dir`.
 - Pour que ComfyUI voie ce dossier, l'installateur peut :
   1. écrire une section `stablecraft` dans `extra_model_paths.yaml` (avec sauvegarde) ;
   2. ou créer des junctions/symlinks depuis les dossiers `models/` de ComfyUI ;
@@ -336,9 +335,11 @@ pour permettre un portage PySide6/Rust plus tard sans réécrire la logique.
   seed, batch.
 - Progression : étape ComfyUI (upload, sampling, decode), temps écoulé, bouton
   Annuler.
-- Vignettes : clic pour prévisualiser, bouton « Appliquer » (nouveau calque),
-  « Remplacer » (dernier calque StableCraft), « Supprimer ».
-- Historique des générations (prompt, seed, profil) dans un fichier local.
+- Galerie par calque : chaque session garde ses générations ; clic sur une vignette
+  applique cette génération au calque, sans relancer ComfyUI.
+- Régénération sur la même sélection : même calque, `base.png` figé, seed identique
+  bloqué pour éviter les doublons.
+- Historique des générations (prompt, seed, profil) dans `session.json`.
 - Messages d'erreur actionnables : ComfyUI down, modèle manquant, nœud custom
   manquant, sélection vide, document non RGB.
 
@@ -363,6 +364,33 @@ pour permettre un portage PySide6/Rust plus tard sans réécrire la logique.
    puis l'UI. Si un chemin obligatoire manque, message clair et arrêt.
 7. Propose d'ajouter le dossier de modèles à ComfyUI (`extra_model_paths.yaml`).
 8. Ne télécharge aucun modèle à l'installation.
+
+### Données locales et sorties ComfyUI
+
+```
+<dossier StableCraft>/
+  user/
+    control.token
+    sessions/<id>/
+      session.json
+      base.png        # composite figé au moment du lasso
+      mask.png
+      generations/<n>/result.png, thumb.png
+    logs/
+  models/             # téléchargements consentis, vide par défaut
+```
+
+`user/` est le `automation_root` de PhotoCraft : les échanges de fichiers restent dans
+ce bac à sable. Rien n'est écrit dans AppData.
+
+Les workflows utilisent `PreviewImage` (et non `SaveImage`) : ComfyUI écrit l'image
+dans son dossier `temp`, StableCraft la télécharge puis la supprime. Le dossier
+`output` de ComfyUI n'est pas touché.
+
+Pour capturer `base.png` / `after.png`, StableCraft duplique le document en version
+fusionnée (`image.duplicate mergedOnly`), enregistre ce duplicata en PNG, puis le ferme.
+Un document à un seul calque n'affiche pas l'avertissement « layers flattened » de
+PhotoCraft : aucune notice ne s'affiche en bas à droite.
 
 ### Mise à jour
 

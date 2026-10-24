@@ -94,8 +94,8 @@ def build_workflow(image_name: str, prompt: str, seed: int) -> dict:
         },
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
         "10": {
-            "class_type": "SaveImage",
-            "inputs": {"images": ["9", 0], "filename_prefix": "StableCraft_demo"},
+            "class_type": "PreviewImage",
+            "inputs": {"images": ["9", 0]},
         },
     }
 

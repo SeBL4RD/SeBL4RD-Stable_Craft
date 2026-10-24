@@ -54,7 +54,7 @@
     "inputs": { "samples": ["8", 0], "vae": ["3", 0] }
   },
   "10": {
-    "class_type": "SaveImage",
-    "inputs": { "images": ["9", 0], "filename_prefix": "StableCraft" }
+    "class_type": "PreviewImage",
+    "inputs": { "images": ["9", 0] }
   }
 }

@@ -19,17 +19,21 @@ ComfyUI ne voit pas ce dossier automatiquement. Deux options :
 
    ```yaml
    stablecraft:
-     base_path: C:/Users/<user>/AppData/Local/StableCraft/models
+     base_path: C:/DEV/StableCraft/models
      unet: unet
      text_encoders: text_encoders
      vae: vae
      loras: loras
    ```
 
+   Remplace `C:/DEV/StableCraft/models` par le chemin réel de ce dossier (ou la valeur
+   de `[models] store_dir` dans `config.toml`).
+
 2. Ou créer des junctions/symlinks depuis les dossiers `models/` de ComfyUI.
 
 Si tes modèles sont déjà dans ComfyUI, tu n'as rien à faire : laisse les chemins
-commentés dans `config.toml`, StableCraft utilise ce que ComfyUI voit déjà.
+commentés dans `config.toml`, StableCraft utilise ce que ComfyUI voit déjà. Rien n'est
+stocké dans AppData.
 
 Aucun modèle n'est téléchargé sans consentement. Voir `docs/MODELS.md` pour les
 fichiers, tailles, encodeurs et licences.

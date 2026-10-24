@@ -3,9 +3,9 @@
     Installe StableCraft à côté d'une installation PhotoCraft existante.
 
 .DESCRIPTION
-    - copie l'UI et le bridge dans %LOCALAPPDATA%\Programs\StableCraft ;
+    - copie l'UI et le bridge dans %USERPROFILE%\StableCraft ;
     - détecte PhotoCraft et le Python embarqué de ComfyUI ;
-    - écrit config.toml (token, dossier temporaire, endpoint, Python) ;
+    - écrit config.toml (user/, models/, endpoint, Python) ;
     - crée un lanceur unique StableCraft.bat et des raccourcis ;
     - ne télécharge aucun modèle.
 
@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\StableCraft"),
+    [string]$InstallDir = (Join-Path $env:USERPROFILE "StableCraft"),
     [string]$PhotoCraft = "",
     [string]$ComfyPython = "",
     [string]$ComfyEndpoint = "http://127.0.0.1:12452",
@@ -143,10 +143,23 @@ if ($LASTEXITCODE -ne 0) {
 Write-Step "Installation dans $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $InstallDir = (Resolve-Path $InstallDir).Path
-$tmp = Join-Path $InstallDir "tmp"
+$userDir = Join-Path $InstallDir "user"
+$sessions = Join-Path $userDir "sessions"
 $models = Join-Path $InstallDir "models"
-$token = Join-Path $InstallDir "control.token"
-New-Item -ItemType Directory -Force -Path $tmp, $models | Out-Null
+$token = Join-Path $userDir "control.token"
+New-Item -ItemType Directory -Force -Path $userDir, $sessions, $models | Out-Null
+
+# Reprend les sessions de l'ancienne installation (dossier tmp/) sans les supprimer.
+$legacySessions = Join-Path $InstallDir "tmp\stablecraft\sessions"
+if (Test-Path $legacySessions) {
+    Get-ChildItem $legacySessions -Directory | ForEach-Object {
+        $destination = Join-Path $sessions $_.Name
+        if (-not (Test-Path $destination)) {
+            Copy-Item $_.FullName $destination -Recurse -Force
+        }
+    }
+    Write-Host "Sessions existantes copiées vers user\sessions." -ForegroundColor Green
+}
 
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "prototypes") | Out-Null
 Copy-Item (Join-Path $UiSource "*.py") (Join-Path $InstallDir "prototypes") -Force
@@ -168,7 +181,8 @@ Write-Host "Fichiers copiés." -ForegroundColor Green
 Write-Step "Écriture de config.toml"
 $configTarget = Join-Path $InstallDir "config.toml"
 $tokenToml = Convert-ToTomlPath $token
-$tmpToml = Convert-ToTomlPath $tmp
+$userToml = Convert-ToTomlPath $userDir
+$sessionsToml = Convert-ToTomlPath $sessions
 $modelsToml = Convert-ToTomlPath $models
 $comfyToml = Convert-ToTomlPath $ComfyPython
 $photoToml = Convert-ToTomlPath $PhotoCraft
@@ -183,10 +197,15 @@ if ($ConfigFile -and (Test-Path $ConfigFile)) {
     $text = $text -replace '(?m)^\s*root\s*=.*$', "root = `"$comfyRootToml`""
     $text = $text -replace '(?m)^\s*start_command\s*=.*$', "start_command = `"$startToml`""
     $text = $text -replace '(?m)^\s*control_token_file\s*=.*$', "control_token_file = `"$tokenToml`""
-    $text = $text -replace '(?m)^\s*automation_root\s*=.*$', "automation_root = `"$tmpToml`""
+    $text = $text -replace '(?m)^\s*automation_root\s*=.*$', "automation_root = `"$userToml`""
     $text = $text -replace '(?m)^\s*python\s*=.*$', "python = `"$comfyToml`""
     $text = $text -replace '(?m)^\s*endpoint\s*=.*$', "endpoint = `"$ComfyEndpoint`""
     $text = $text -replace '(?m)^\s*store_dir\s*=.*$', "store_dir = `"$modelsToml`""
+    if ($text -match '(?m)^\s*sessions_dir\s*=') {
+        $text = $text -replace '(?m)^\s*sessions_dir\s*=.*$', "sessions_dir = `"$sessionsToml`""
+    } else {
+        $text = $text -replace '(?m)^(default_profile\s*=.*)$', ('$1' + "`r`nsessions_dir = `"$sessionsToml`"")
+    }
     Write-Utf8NoBom $configTarget $text
     Write-Host "Config importée depuis $ConfigFile (chemins d'installation réécrits)." -ForegroundColor Green
 } else {
@@ -199,19 +218,21 @@ if ($ConfigFile -and (Test-Path $ConfigFile)) {
 language = "fr"
 theme = "dark"
 default_profile = "flux3_klein"
+sessions_dir = "$sessionsToml"
 
 [photocraft]
 executable = "$photoToml"
 control_host = "127.0.0.1"
 control_port = 7878
 control_token_file = "$tokenToml"
-automation_root = "$tmpToml"
+automation_root = "$userToml"
 
 [comfyui]
 endpoint = "$ComfyEndpoint"
 root = "$comfyRootToml"
 start_command = "$startToml"
 python = "$comfyToml"
+# temp_dir = ""
 # models_dir = ""
 
 [models]
@@ -272,7 +293,7 @@ $uninstallText = @"
 Remove-Item `$startMenu -Recurse -Force
 Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "StableCraft.lnk") -Force
 Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "PhotoCraft + StableCraft.lnk") -Force
-`$removeData = Read-Host "Supprimer aussi les modèles et la configuration ? (o/N)"
+`$removeData = Read-Host "Supprimer aussi les modèles, user\ et la configuration ? (o/N)"
 if (`$removeData -eq "o") {
     Remove-Item `$install -Recurse -Force
 } else {
@@ -285,7 +306,7 @@ if (`$removeData -eq "o") {
     Remove-Item (Join-Path `$install "compat.toml") -Force
     Remove-Item (Join-Path `$install "config.example.toml") -Force
     Remove-Item (Join-Path `$install "uninstall.ps1") -Force
-    Write-Host "Les modèles et config.toml sont conservés dans `$install."
+    Write-Host "Les modèles, user\ et config.toml sont conservés dans `$install."
 }
 "@
 Write-Utf8Bom $uninstaller $uninstallText
@@ -332,6 +353,8 @@ if (-not $NoShortcuts) {
 
 Write-Step "Terminé"
 Write-Host "StableCraft       : $InstallDir"
+Write-Host "Données           : $userDir"
+Write-Host "Modèles           : $models"
 Write-Host "PhotoCraft        : $PhotoCraft"
 Write-Host "Python ComfyUI    : $ComfyPython"
 Write-Host "Endpoint ComfyUI  : $ComfyEndpoint"

@@ -29,6 +29,7 @@ from tkinter import messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
+from session_store import SessionStore, parse_session_id  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,16 +49,22 @@ SUPPORTED_PROFILES = {"flux3_klein", "flux2_klein_9b", "krea2_edit"}
 
 
 DEFAULTS: dict[str, Any] = {
-    "app": {"default_profile": "flux3_klein"},
+    "app": {
+        "default_profile": "flux3_klein",
+        "sessions_dir": str(ROOT / "user" / "sessions"),
+    },
     "photocraft": {
         "control_host": "127.0.0.1",
         "control_port": 7878,
-        "control_token_file": str(ROOT / ".runtime" / "control.token"),
-        "automation_root": str(ROOT / ".runtime" / "automation"),
+        "control_token_file": str(ROOT / "user" / "control.token"),
+        "automation_root": str(ROOT / "user"),
     },
     "comfyui": {
         "endpoint": "http://127.0.0.1:12452",
         "python": "",
+    },
+    "models": {
+        "store_dir": str(ROOT / "models"),
     },
     "profiles": {
         "flux3_klein": {
@@ -83,11 +90,14 @@ def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
 def load_config(path: Path) -> dict[str, Any]:
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     cfg = deep_merge(DEFAULTS, data)
+    app = cfg.setdefault("app", {})
     photocraft = cfg.setdefault("photocraft", {})
     if not photocraft.get("control_token_file"):
-        photocraft["control_token_file"] = str(ROOT / ".runtime" / "control.token")
+        photocraft["control_token_file"] = str(ROOT / "user" / "control.token")
     if not photocraft.get("automation_root"):
-        photocraft["automation_root"] = str(ROOT / ".runtime" / "automation")
+        photocraft["automation_root"] = str(ROOT / "user")
+    if not app.get("sessions_dir"):
+        app["sessions_dir"] = str(ROOT / "user" / "sessions")
     comfyui = cfg.setdefault("comfyui", {})
     if not comfyui.get("python"):
         comfyui["python"] = os.environ.get("STABLECRAFT_COMFY_PYTHON", "")
@@ -134,6 +144,14 @@ class StableCraftApp(tk.Tk):
         self.last_error: str | None = None
         self.preview_paths: dict[str, str | None] = {"result": None, "document": None}
         self.preview_image: tk.PhotoImage | None = None
+        self.session_store = SessionStore(self._sessions_root())
+        self.session_id: str | None = None
+        self.session_data: dict[str, Any] | None = None
+        self.current_selection: list[int] | None = None
+        self.gallery_images: list[tk.PhotoImage] = []
+        self.gallery_buttons: dict[int, tk.Button] = {}
+        self.pending_session_id: str | None = None
+        self.pending_generation: int | None = None
         self.profile_key = initial_profile or str(self.cfg["app"].get("default_profile", "flux3_klein"))
         self.models_ok = True
         self._closing = False
@@ -156,6 +174,13 @@ class StableCraftApp(tk.Tk):
         self.after(100, self._poll_queue)
         threading.Thread(target=self._refresh_loop, daemon=True).start()
         self._check_models()
+
+    def _sessions_root(self) -> Path:
+        configured = self.cfg.get("app", {}).get("sessions_dir")
+        if configured:
+            path = Path(str(configured))
+            return path if path.is_absolute() else (ROOT / path)
+        return ROOT / "user" / "sessions"
 
     # ------------------------------------------------------------------
     # Look
@@ -401,11 +426,56 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.cancel_btn.pack(side="left", padx=(8, 0))
+        self.action_hint = tk.Label(
+            main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
+        )
+        self.action_hint.pack(fill="x", pady=(3, 0))
 
         self.progress = ttk.Progressbar(main, mode="indeterminate")
         self.progress.pack(fill="x", pady=(10, 0))
         self.progress_label = tk.Label(main, text="Prêt.", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
         self.progress_label.pack(fill="x", pady=(2, 0))
+
+        gallery_frame = self._section(main, "GALERIE")
+        self.gallery_title = tk.Label(
+            gallery_frame,
+            text="Aucune galerie",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 9),
+        )
+        self.gallery_title.pack(fill="x")
+        self.gallery_canvas = tk.Canvas(
+            gallery_frame,
+            height=124,
+            bg="#111114",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        self.gallery_inner = tk.Frame(self.gallery_canvas, bg="#111114")
+        self.gallery_window = self.gallery_canvas.create_window(
+            (0, 0), window=self.gallery_inner, anchor="nw"
+        )
+        self.gallery_scroll = ttk.Scrollbar(
+            gallery_frame, orient="horizontal", command=self.gallery_canvas.xview
+        )
+        self.gallery_canvas.configure(xscrollcommand=self.gallery_scroll.set)
+        self.gallery_canvas.pack(fill="x", pady=(4, 0))
+        self.gallery_scroll.pack(fill="x")
+        self.gallery_inner.bind(
+            "<Configure>",
+            lambda _event: self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all")),
+        )
+        self.gallery_hint = tk.Label(
+            gallery_frame,
+            text="Clique sur un calque StableCraft pour retrouver ses générations.",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 8),
+        )
+        self.gallery_hint.pack(fill="x", pady=(2, 0))
 
         preview_frame = self._section(main, "APERÇU")
         preview_tools = tk.Frame(preview_frame, bg=BG)
@@ -524,19 +594,108 @@ class StableCraftApp(tk.Tk):
         self._update_generate_state()
         self._check_models()
 
+    @staticmethod
+    def _same_selection(
+        left: list[int] | None, right: list[int] | None, tolerance: int = 2
+    ) -> bool:
+        if not left or not right or len(left) != len(right):
+            return False
+        try:
+            return all(
+                abs(int(a) - int(b)) <= tolerance
+                for a, b in zip(left, right)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def _reusable_session(self) -> bool:
+        return bool(
+            self.session_id
+            and self.session_data
+            and (
+                not self.current_selection
+                or self._same_selection(
+                    self.current_selection, self.session_data.get("selection")
+                )
+            )
+        )
+
+    def _form_values(self) -> dict[str, Any] | None:
+        try:
+            return {
+                "seed": int(self.seed_var.get().strip()),
+                "steps": int(self.steps_var.get()),
+                "cfg": float(self.cfg_var.get().replace(",", ".")),
+                "padding": int(self.padding_var.get()),
+                "feather": int(self.feather_var.get()),
+                "profile": self.profile_key,
+                "prompt": self.prompt_text.get("1.0", "end").strip(),
+                "negative": (
+                    self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
+                ),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _duplicate_generation(self) -> int | None:
+        """Return the gallery index that already has these exact settings."""
+        values = self._form_values()
+        if values is None or values["seed"] < 0 or not self.session_data:
+            return None
+        for index, generation in enumerate(self.session_data.get("generations", [])):
+            try:
+                same = (
+                    int(generation.get("seed", -1)) == values["seed"]
+                    and str(generation.get("profile", "")) == values["profile"]
+                    and str(generation.get("prompt", "")).strip() == values["prompt"]
+                    and str(generation.get("negative", "")).strip() == values["negative"]
+                    and int(generation.get("steps", -1)) == values["steps"]
+                    and abs(float(generation.get("cfg", -1)) - values["cfg"]) < 1e-6
+                    and int(generation.get("padding", -1)) == values["padding"]
+                )
+            except (TypeError, ValueError):
+                continue
+            if same:
+                return index
+        return None
+
     def _update_generate_state(self) -> None:
+        values = self._form_values()
+        duplicate = self._duplicate_generation()
+        reuse = self._reusable_session()
+        has_input = self.has_selection or reuse
         enabled = (
             not self.running
             and self.profile_key in SUPPORTED_PROFILES
             and self.pc_ok
             and self.comfy_ok
             and self.models_ok
-            and self.has_selection
+            and has_input
+            and values is not None
+            and duplicate is None
         )
         self.generate_btn.config(
+            text="Régénérer" if reuse else "Générer",
             state="normal" if enabled else "disabled",
             bg=ACCENT if enabled else PANEL_2,
         )
+        if duplicate is not None:
+            self.action_hint.config(
+                text=(
+                    f"Cette combinaison existe déjà (#{duplicate + 1}). "
+                    "Mets le seed à -1 ou change le prompt."
+                )
+            )
+        elif values is None:
+            self.action_hint.config(text="Vérifie les réglages (seed, steps, CFG…).")
+        elif not has_input:
+            self.action_hint.config(
+                text="Fais un lasso, ou sélectionne un calque StableCraft pour régénérer."
+            )
+        else:
+            self.action_hint.config(text="")
+        for button in self.gallery_buttons.values():
+            button.config(state="disabled" if self.running else "normal")
 
     def _on_profile_change(self, _event: object = None) -> None:
         label = self.profile_var.get()
@@ -662,6 +821,10 @@ class StableCraftApp(tk.Tk):
                     self.preview_paths["result"] = str(item[1])
                     if self.preview_mode.get() == "result":
                         self._load_preview(str(item[1]))
+                elif kind == "session_line":
+                    self.pending_session_id = str(item[1])
+                elif kind == "generation_line":
+                    self.pending_generation = int(item[1])
                 elif kind == "error":
                     self.last_error = str(item[1])
                 elif kind == "done":
@@ -675,6 +838,12 @@ class StableCraftApp(tk.Tk):
         self.pc_status.config(text=pc["text"], fg=GREEN if pc["ok"] else RED)
         self.comfy_status.config(text=comfy["text"], fg=GREEN if comfy["ok"] else RED)
         doc = pc.get("doc")
+        self.current_selection = (
+            list(doc["selectionBounds"])
+            if doc and doc.get("hasSelection") and doc.get("selectionBounds")
+            else None
+        )
+        self._sync_session_from_doc(doc)
         if doc:
             self.doc_status.config(
                 text=f"Document : {doc.get('name', '?')} · {doc.get('width')}×{doc.get('height')} · {doc.get('mode')}/{doc.get('depth')} bits",
@@ -683,6 +852,8 @@ class StableCraftApp(tk.Tk):
             if doc.get("hasSelection"):
                 x, y, w, h = doc.get("selectionBounds") or [0, 0, 0, 0]
                 self.sel_status.config(text=f"Sélection : {w}×{h} à ({x},{y})", fg=GREEN)
+            elif self.session_id:
+                self.sel_status.config(text="Sélection : aucune — galerie disponible", fg=YELLOW)
             else:
                 self.sel_status.config(text="Sélection : aucune — fais un lasso", fg=YELLOW)
         else:
@@ -710,6 +881,188 @@ class StableCraftApp(tk.Tk):
         self._update_generate_state()
 
     # ------------------------------------------------------------------
+    # Sessions / gallery
+    # ------------------------------------------------------------------
+
+    def _find_layer(self, layers: list[dict[str, Any]], layer_id: int) -> dict[str, Any] | None:
+        for layer in layers:
+            if layer.get("id") == layer_id:
+                return layer
+            found = self._find_layer(layer.get("children", []), layer_id)
+            if found:
+                return found
+        return None
+
+    def _sync_session_from_doc(self, doc: dict[str, Any] | None) -> None:
+        if self.running:
+            return
+        sid: str | None = None
+        if doc:
+            layer = self._find_layer(doc.get("layers", []), doc.get("activeLayer"))
+            if layer:
+                sid = parse_session_id(str(layer.get("name", "")))
+        if sid and self.current_selection:
+            data = (
+                self.session_data
+                if sid == self.session_id and self.session_data
+                else None
+            )
+            if data is None:
+                try:
+                    data = self.session_store.load(sid)
+                except Exception:  # noqa: BLE001
+                    data = None
+            stored = data.get("selection") if data else None
+            if stored and not self._same_selection(stored, self.current_selection):
+                # A new lasso means a new session/layer: leave the old gallery
+                # behind even while its layer is still the active one.
+                sid = None
+        if sid != self.session_id:
+            self._load_session(sid)
+
+    def _load_session(self, session_id: str | None, force: bool = False) -> None:
+        if session_id == self.session_id and not force:
+            return
+        self.session_id = session_id
+        self.session_data = None
+        if session_id:
+            try:
+                self.session_data = self.session_store.load(session_id)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Session {session_id} : {short_error(exc)}")
+        self._populate_gallery()
+        if self.session_data:
+            # `_restore_session_fields` deliberately leaves the seed field alone:
+            # the seed used by a generation is shown in the gallery hint, and the
+            # user's field must stay on -1 unless they typed a value themselves.
+            self._restore_session_fields(self.session_data)
+        self._update_generate_state()
+
+    def _restore_session_fields(self, sdata: dict[str, Any]) -> None:
+        generations = sdata.get("generations", [])
+        index = int(sdata.get("current", -1))
+        if not (0 <= index < len(generations)):
+            return
+        generation = generations[index]
+        self.prompt_text.delete("1.0", "end")
+        self.prompt_text.insert("1.0", str(generation.get("prompt", "")))
+        self.neg_text.delete("1.0", "end")
+        self.neg_text.insert("1.0", str(generation.get("negative", "")))
+        self.neg_var.set(bool(generation.get("negative")))
+        self._toggle_negative()
+        self.padding_var.set(str(generation.get("padding", 96)))
+        self.feather_var.set(str(generation.get("feather", 10)))
+        self.steps_var.set(str(generation.get("steps", 16)))
+        self.cfg_var.set(str(generation.get("cfg", 1.0)))
+
+    def _populate_gallery(self) -> None:
+        for child in self.gallery_inner.winfo_children():
+            child.destroy()
+        self.gallery_images.clear()
+        self.gallery_buttons.clear()
+
+        if not self.session_data:
+            self.gallery_title.config(text="Aucune galerie")
+            self.gallery_hint.config(
+                text="Clique sur un calque StableCraft pour retrouver ses générations."
+            )
+            return
+
+        generations = self.session_data.get("generations", [])
+        current = int(self.session_data.get("current", -1))
+        self.gallery_title.config(
+            text=f"Galerie — StableCraft [{self.session_id}] · {len(generations)} génération(s)"
+        )
+        if not generations:
+            self.gallery_hint.config(text="Aucune génération dans cette session.")
+            return
+
+        session_dir = self.session_store.directory(str(self.session_id))
+        for index, generation in enumerate(generations):
+            thumb_rel = generation.get("thumb") or generation.get("result")
+            path = session_dir / str(thumb_rel) if thumb_rel else None
+            if not path or not path.exists():
+                path = session_dir / str(generation.get("result", ""))
+            try:
+                image = tk.PhotoImage(file=str(path))
+            except Exception:  # noqa: BLE001
+                continue
+            factor = max(1, math.ceil(max(image.width() / 104, image.height() / 104)))
+            if factor > 1:
+                image = image.subsample(factor, factor)
+            self.gallery_images.append(image)
+            selected = index == current
+            button = tk.Button(
+                self.gallery_inner,
+                image=image,
+                text=f"#{index + 1}",
+                compound="top",
+                bg=ACCENT if selected else PANEL_2,
+                fg="white" if selected else FG,
+                activebackground=ACCENT_ACTIVE,
+                activeforeground="white",
+                relief="flat",
+                bd=0,
+                padx=4,
+                pady=3,
+                font=("Segoe UI", 8),
+                state="disabled" if self.running else "normal",
+                command=lambda idx=index: self._apply_generation(idx),
+            )
+            button.pack(side="left", padx=3, pady=3)
+            self.gallery_buttons[index] = button
+
+        if 0 <= current < len(generations):
+            generation = generations[current]
+            prompt = " ".join(str(generation.get("prompt", "")).split())
+            if len(prompt) > 72:
+                prompt = prompt[:71] + "…"
+            self.gallery_hint.config(
+                text=(
+                    f"#{current + 1} · {generation.get('profile', '?')} · "
+                    f"seed {generation.get('seed', '?')} · {prompt}"
+                )
+            )
+        else:
+            self.gallery_hint.config(text="Clique sur une vignette pour appliquer cette génération.")
+        self.gallery_canvas.update_idletasks()
+        self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
+
+    def _apply_generation(self, index: int) -> None:
+        if self.running or not self.session_id or not self.session_data:
+            return
+        generations = self.session_data.get("generations", [])
+        if not 0 <= index < len(generations):
+            return
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror("Python ComfyUI introuvable", error)
+            return
+        bridge = ROOT / "prototypes" / "bridge_cli.py"
+        command = [
+            python,
+            str(bridge),
+            "--config",
+            str(self.config_path),
+            "--apply",
+            self.session_id,
+            "--generation",
+            str(index),
+            "--save-preview",
+        ]
+        self._start_bridge(command, f"Application de la génération #{index + 1}…")
+
+    def _comfy_python(self) -> tuple[str | None, str | None]:
+        python = os.environ.get("STABLECRAFT_COMFY_PYTHON") or str(
+            self.cfg["comfyui"].get("python") or ""
+        )
+        if not python or not Path(python).exists():
+            return None, (
+                "Renseigne [comfyui] python dans config.toml avec le python_embeded de ComfyUI."
+            )
+        return python, None
+
+    # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
 
@@ -719,23 +1072,37 @@ class StableCraftApp(tk.Tk):
         if self.profile_key not in SUPPORTED_PROFILES:
             messagebox.showinfo("Bientôt", "Ce profil sera ajouté plus tard.")
             return
+        reuse = self._reusable_session()
+        if not self.has_selection and not reuse:
+            messagebox.showwarning(
+                "Sélection vide",
+                "Fais un lasso autour de la zone à modifier, ou sélectionne un "
+                "calque StableCraft pour régénérer avec sa sélection d'origine.",
+            )
+            return
+        duplicate = self._duplicate_generation()
+        if duplicate is not None:
+            messagebox.showinfo(
+                "Déjà généré",
+                f"Cette combinaison existe déjà dans la galerie (#{duplicate + 1}).\n\n"
+                "Mets le seed à -1 ou change le prompt pour régénérer.",
+            )
+            return
         prompt = self.prompt_text.get("1.0", "end").strip()
         if not prompt:
             messagebox.showwarning("Prompt vide", "Écris ce que tu veux changer.")
             return
         negative = self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
-        python = os.environ.get("STABLECRAFT_COMFY_PYTHON") or str(self.cfg["comfyui"].get("python") or "")
-        if not python or not Path(python).exists():
-            messagebox.showerror(
-                "Python ComfyUI introuvable",
-                "Renseigne [comfyui] python dans config.toml avec le python_embeded de ComfyUI.",
-            )
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror("Python ComfyUI introuvable", error)
             return
         bridge = ROOT / "prototypes" / "bridge_cli.py"
         if not bridge.exists():
             messagebox.showerror("Bridge introuvable", str(bridge))
             return
-        cmd = [
+
+        command = [
             python,
             str(bridge),
             "--config",
@@ -756,17 +1123,30 @@ class StableCraftApp(tk.Tk):
             self.seed_var.get(),
             "--save-preview",
         ]
+        if reuse:
+            command += ["--session", self.session_id]
+        else:
+            command += ["--session-mode"]
         if negative:
-            cmd += ["--negative", negative]
+            command += ["--negative", negative]
+        self._start_bridge(
+            command,
+            "Régénération en cours…" if reuse else "Génération en cours…",
+        )
 
+    def _start_bridge(self, command: list[str], label: str) -> None:
+        if self.running:
+            return
+        bridge = ROOT / "prototypes" / "bridge_cli.py"
+        if not bridge.exists():
+            messagebox.showerror("Bridge introuvable", str(bridge))
+            return
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
-        flags = 0
-        if os.name == "nt":
-            flags = 0x08000000  # CREATE_NO_WINDOW
+        flags = 0x08000000 if os.name == "nt" else 0
         try:
             self.proc = subprocess.Popen(
-                cmd,
+                command,
                 cwd=str(ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -783,13 +1163,15 @@ class StableCraftApp(tk.Tk):
 
         self.running = True
         self.last_error = None
+        self.pending_session_id = None
+        self.pending_generation = None
         self.progress.start(12)
-        self.progress_label.config(text="Génération en cours…", fg=YELLOW)
-        self._update_generate_state()
+        self.progress_label.config(text=label, fg=YELLOW)
         self.cancel_btn.config(state="normal")
         self._log("")
-        self._log("$ " + " ".join(Path(part).name if i == 0 else part for i, part in enumerate(cmd)))
+        self._log("$ " + " ".join(Path(part).name if i == 0 else part for i, part in enumerate(command)))
         self.proc_reader = threading.Thread(target=self._read_process, daemon=True)
+        self._update_generate_state()
         self.proc_reader.start()
 
     def _read_process(self) -> None:
@@ -807,6 +1189,13 @@ class StableCraftApp(tk.Tk):
             elif line.startswith("Result:"):
                 path = line.split(":", 1)[1].strip().split(" (")[0].strip()
                 self.queue.put(("result", path))
+            elif line.startswith("SESSION:"):
+                self.queue.put(("session_line", line.split(":", 1)[1].strip()))
+            elif line.startswith("GENERATION:"):
+                try:
+                    self.queue.put(("generation_line", int(line.split(":", 1)[1].strip())))
+                except ValueError:
+                    pass
             elif line.startswith("ERROR:"):
                 self.queue.put(("error", line))
         code = proc.wait()
@@ -816,9 +1205,17 @@ class StableCraftApp(tk.Tk):
         self.running = False
         self.progress.stop()
         self.cancel_btn.config(state="disabled")
-        self._update_generate_state()
+        session_id = self.pending_session_id
+        self.pending_session_id = None
+        self.pending_generation = None
+        if session_id:
+            # Reload even after an apply error: the generated image is already
+            # on disk and must remain selectable in the gallery.
+            self._load_session(session_id, force=True)
+        else:
+            self._update_generate_state()
         if code == 0 and not self.last_error:
-            self.progress_label.config(text="Terminé — nouveau calque dans PhotoCraft.", fg=GREEN)
+            self.progress_label.config(text="Terminé — calque StableCraft prêt.", fg=GREEN)
         elif self.last_error:
             self.progress_label.config(text="Erreur — voir le journal.", fg=RED)
         else:
@@ -920,13 +1317,14 @@ def main() -> None:
     ap.add_argument("--profile", default=None, help="flux3_klein, flux2_klein_9b, or krea2_edit")
     ap.add_argument("--smoke-test", action="store_true", help="open, connect, then close after 3s")
     ap.add_argument("--smoke-generate", action="store_true", help="run one generation, then close")
+    ap.add_argument("--smoke-apply", type=int, default=None, help="apply a gallery generation, then close")
     args = ap.parse_args()
 
     app = StableCraftApp(args.config, initial_profile=args.profile)
     if args.smoke_test:
         app.after(3000, app._on_close)
     if args.smoke_generate:
-        app.after(1500, app._generate)
+        app.after(3500, app._generate)
 
         def wait_done() -> None:
             if app.running:
@@ -935,6 +1333,22 @@ def main() -> None:
                 app.after(5000, app._on_close)
 
         app.after(5000, wait_done)
+    if args.smoke_apply is not None:
+        def start_apply() -> None:
+            if app.session_data:
+                app._apply_generation(args.smoke_apply)
+            else:
+                app.after(500, start_apply)
+
+        app.after(1500, start_apply)
+
+        def wait_apply() -> None:
+            if app.running:
+                app.after(1000, wait_apply)
+            else:
+                app.after(3000, app._on_close)
+
+        app.after(5000, wait_apply)
     app.mainloop()
     if args.smoke_test or args.smoke_generate:
         print("SMOKE OK")

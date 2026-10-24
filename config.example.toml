@@ -7,11 +7,18 @@
 # Les chemins de modèles sont OPTIONNELS. Si tu ne les renseignes pas,
 # StableCraft utilise ce que ComfyUI voit déjà. Aucun modèle n'est téléchargé
 # automatiquement.
+#
+# Données locales : <dossier StableCraft>/user (sessions, token, journaux)
+# Modèles téléchargés : <dossier StableCraft>/models
+# Rien n'est écrit dans AppData.
 
 [app]
 language = "fr"
 theme = "dark"
 default_profile = "flux3_klein"
+# Vide = <dossier StableCraft>/user/sessions
+# Doit rester sous photocraft.automation_root.
+# sessions_dir = ""
 # Python qui lance l'UI (Tkinter). Vide = le Python qui exécute StableCraft.bat.
 # python_ui = "C:/Users/Seb/AppData/Local/Programs/Python/Python311/pythonw.exe"
 
@@ -20,9 +27,9 @@ default_profile = "flux3_klein"
 executable = ""
 control_host = "127.0.0.1"
 control_port = 7878
-# Vide = <dossier StableCraft>/.runtime/control.token
+# Vide = <dossier StableCraft>/user/control.token
 control_token_file = ""
-# Vide = <dossier StableCraft>/.runtime/automation
+# Vide = <dossier StableCraft>/user
 # Doit être le même dossier que --automation-write-root de PhotoCraft.
 automation_root = ""
 
@@ -35,12 +42,16 @@ root = ""
 start_command = ""
 # Python embarqué de ComfyUI (Pillow + requests). Vide = <root>/python_embeded/python.exe
 python = ""
+# Dossier temporaire de ComfyUI. Les images StableCraft y sont écrites puis
+# supprimées après téléchargement, pour ne pas polluer le dossier output.
+# Vide = <root>/ComfyUI/temp
+# temp_dir = ""
 # Optionnel, pour l'affichage et la validation.
 # models_dir = ""
 
 [models]
 # Dossier dédié pour les téléchargements.
-# Vide = %LOCALAPPDATA%/StableCraft/models (Windows)
+# Vide = <dossier StableCraft>/models
 store_dir = ""
 allow_downloads = true
 require_sha256 = true

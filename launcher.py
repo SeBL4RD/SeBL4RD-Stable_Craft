@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,9 +27,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.toml"
-RUNTIME = ROOT / ".runtime"
-LOG_PATH = RUNTIME / "launcher.log"
-UI_LOG_PATH = RUNTIME / "ui.log"
+USER_DIR = ROOT / "user"
+MODELS_DIR = ROOT / "models"
+LOG_DIR = USER_DIR / "logs"
+LOG_PATH = LOG_DIR / "launcher.log"
+UI_LOG_PATH = LOG_DIR / "ui.log"
+LEGACY_SESSIONS = ROOT / ".runtime" / "automation" / "stablecraft" / "sessions"
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 CREATE_NEW_CONSOLE = 0x00000010 if os.name == "nt" else 0
@@ -38,7 +42,7 @@ def log(message: str) -> None:
     line = f"[{time.strftime('%H:%M:%S')}] {message}"
     print(line)
     try:
-        RUNTIME.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
@@ -219,6 +223,28 @@ def find_ui_python(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, str |
     return base_python, (pythonw if pythonw.exists() else base_python), None
 
 
+def migrate_legacy_sessions(target: Path, log_prefix: str = "") -> int:
+    """Copy old .runtime sessions into the configured sessions folder."""
+    if not LEGACY_SESSIONS.exists():
+        return 0
+    target.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for source in LEGACY_SESSIONS.iterdir():
+        if not source.is_dir() or not (source / "session.json").exists():
+            continue
+        destination = target / source.name
+        if destination.exists():
+            continue
+        try:
+            shutil.copytree(source, destination)
+            copied += 1
+        except OSError as exc:
+            log(f"{log_prefix}Migration de {source.name} impossible : {exc}")
+    if copied:
+        log(f"{log_prefix}{copied} session(s) migrée(s) vers {target}")
+    return copied
+
+
 def photocraft_running_without_control(port: int) -> bool:
     if os.name != "nt":
         return False
@@ -237,13 +263,29 @@ def photocraft_running_without_control(port: int) -> bool:
         return False
 
 
+def configured_sessions_dir(cfg: dict[str, Any]) -> Path:
+    configured = str(cfg.get("app", {}).get("sessions_dir", "") or "")
+    return as_path(configured) if configured else USER_DIR / "sessions"
+
+
+def configured_models_dir(cfg: dict[str, Any]) -> Path:
+    configured = str(cfg.get("models", {}).get("store_dir", "") or "")
+    return as_path(configured) if configured else MODELS_DIR
+
+
 def main() -> int:
-    RUNTIME.mkdir(parents=True, exist_ok=True)
+    USER_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     log("=== StableCraft launcher ===")
 
     cfg = load_config()
     if cfg is None:
         return 1
+
+    sessions = configured_sessions_dir(cfg)
+    sessions.mkdir(parents=True, exist_ok=True)
+    configured_models_dir(cfg).mkdir(parents=True, exist_ok=True)
+    migrate_legacy_sessions(sessions)
 
     errors: list[str] = []
 
@@ -251,7 +293,7 @@ def main() -> int:
     if error:
         errors.append(error)
 
-    start_command, comfy_python, _comfy_root, error = find_comfyui(cfg)
+    start_command, comfy_python, comfy_root, error = find_comfyui(cfg)
     if error:
         errors.append(error)
 
@@ -305,8 +347,22 @@ def main() -> int:
     photocraft_cfg = cfg.get("photocraft", {})
     host = str(photocraft_cfg.get("control_host", "127.0.0.1"))
     port = int(photocraft_cfg.get("control_port", 7878))
-    token = as_path(str(photocraft_cfg.get("control_token_file", "") or str(RUNTIME / "control.token")))
-    automation = as_path(str(photocraft_cfg.get("automation_root", "") or str(RUNTIME / "automation")))
+    token = as_path(
+        str(photocraft_cfg.get("control_token_file", "") or str(USER_DIR / "control.token"))
+    )
+    automation = as_path(
+        str(photocraft_cfg.get("automation_root", "") or str(USER_DIR))
+    )
+
+    if port_open(host, port) and not token.exists():
+        show_error(
+            "StableCraft — PhotoCraft à redémarrer",
+            "PhotoCraft tourne déjà, mais avec une ancienne configuration "
+            "(le fichier de contrôle n'est plus au même endroit).\n\n"
+            "Ferme complètement PhotoCraft, puis relance StableCraft.bat.\n\n"
+            f"Fichier attendu :\n{token}",
+        )
+        return 1
 
     if not port_open(host, port):
         if photocraft_running_without_control(port):
@@ -349,6 +405,11 @@ def main() -> int:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["STABLECRAFT_COMFY_PYTHON"] = str(comfy_python)
+    comfy_root_for_env = comfy_root or (
+        start_command.parent if start_command is not None else None
+    )
+    if comfy_root_for_env is not None:
+        env["STABLECRAFT_COMFY_ROOT"] = str(comfy_root_for_env)
 
     UI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     ui_log = UI_LOG_PATH.open("a", encoding="utf-8")

@@ -68,7 +68,7 @@
     "inputs": { "samples": ["12", 0], "vae": ["3", 0] }
   },
   "14": {
-    "class_type": "SaveImage",
-    "inputs": { "images": ["13", 0], "filename_prefix": "StableCraft" }
+    "class_type": "PreviewImage",
+    "inputs": { "images": ["13", 0] }
   }
 }

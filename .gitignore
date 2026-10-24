@@ -8,6 +8,9 @@ demo/
 config.toml
 config.local.toml
 
+# User data: sessions, token, logs (never in AppData)
+user/
+
 # Downloaded models (keep the README)
 models/*
 !models/README.md
