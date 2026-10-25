@@ -317,6 +317,32 @@ class StableCraftApp(tk.Tk):
             highlightcolor=ACCENT,
         )
 
+    def _lock_scroll_wheel(self, widget: tk.Misc) -> None:
+        """Keep the wheel for page scrolling instead of changing the value."""
+        widget.bind("<MouseWheel>", self._on_widget_wheel)
+        widget.bind("<Button-4>", self._on_widget_wheel_button)
+        widget.bind("<Button-5>", self._on_widget_wheel_button)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        widget = event.widget
+        if not isinstance(widget, tk.Misc):
+            return
+        # bind_all is global: only scroll the main window, never a Toplevel.
+        if widget.winfo_toplevel() is not self:
+            return
+        # Let text areas and list boxes handle their own wheel scrolling.
+        if isinstance(widget, (tk.Text, tk.Listbox)):
+            return
+        self.main_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def _on_widget_wheel(self, event: tk.Event) -> str:
+        self._on_mousewheel(event)
+        return "break"
+
+    def _on_widget_wheel_button(self, event: tk.Event) -> str:
+        self.main_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        return "break"
+
     def _section(
         self,
         parent: tk.Misc,
@@ -371,10 +397,7 @@ class StableCraftApp(tk.Tk):
 
         main.bind("<Configure>", on_frame_configure)
         self.main_canvas.bind("<Configure>", on_canvas_configure)
-        self.main_canvas.bind_all(
-            "<MouseWheel>",
-            lambda event: self.main_canvas.yview_scroll(int(-event.delta / 120), "units"),
-        )
+        self.main_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
         header = tk.Frame(main, bg=BG)
         header.pack(fill="x")
@@ -415,6 +438,7 @@ class StableCraftApp(tk.Tk):
         )
         self.language_combo.pack(side="left")
         self.language_combo.bind("<<ComboboxSelected>>", self._on_language_change)
+        self._lock_scroll_wheel(self.language_combo)
         tk.Label(
             header,
             text="Le lasso de Stable.art, dans PhotoCraft, avec ComfyUI.",
@@ -635,6 +659,7 @@ class StableCraftApp(tk.Tk):
         )
         self.profile_combo.pack(fill="x", pady=(4, 2))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
+        self._lock_scroll_wheel(self.profile_combo)
         self.profile_detail = tk.Label(prof_frame, text="", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
         self.profile_detail.pack(fill="x")
         self.profile_warning = tk.Label(
@@ -665,6 +690,7 @@ class StableCraftApp(tk.Tk):
         )
         self.quant_combo.pack(side="left", padx=(6, 0))
         self.quant_combo.bind("<<ComboboxSelected>>", self._on_quant_change)
+        self._lock_scroll_wheel(self.quant_combo)
         self.quant_map: dict[str, str] = {}
 
         settings = self._section(main, "RÉGLAGES")
@@ -703,6 +729,7 @@ class StableCraftApp(tk.Tk):
             else:
                 widget = ttk.Spinbox(grid, from_=lo, to=hi, increment=step, textvariable=var)
             widget.grid(row=row, column=col + 1, sticky="ew", pady=2)
+            self._lock_scroll_wheel(widget)
 
         actions = tk.Frame(main, bg=BG)
         actions.pack(fill="x", pady=(12, 0))

@@ -362,6 +362,9 @@ class ModelManager(tk.Toplevel):
                 width=18,
             )
             chooser.pack(side="left", anchor="w", pady=(3, 0))
+            # A wheel over the chooser must not silently change the file to download.
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                chooser.bind(sequence, lambda _event: "break")
 
             size_label = tk.Label(
                 frame,
