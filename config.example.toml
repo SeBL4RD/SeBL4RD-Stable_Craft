@@ -13,7 +13,8 @@
 # Rien n'est écrit dans AppData.
 
 [app]
-language = "fr"
+# "en" (default) or "fr"
+language = "en"
 theme = "dark"
 default_profile = "flux3_klein"
 # Vide = <dossier StableCraft>/user/sessions
@@ -26,7 +27,8 @@ default_profile = "flux3_klein"
 # Photocraft.exe. Vide = recherche automatique.
 executable = ""
 control_host = "127.0.0.1"
-control_port = 7878
+# 7990 évite la plage 7878 souvent exclue par Windows (Hyper-V/WSL).
+control_port = 7990
 # Vide = <dossier StableCraft>/user/control.token
 control_token_file = ""
 # Vide = <dossier StableCraft>/user
@@ -88,6 +90,25 @@ scheduler = "simple"
 context_padding = 96
 feather = 10
 
+# Base officielle + LoRA General Edit : recommandé pour l'édition générale.
+# T2I utilise la base seule, sans le LoRA.
+[profiles.krea2_general_edit]
+enabled = true
+# unet = "F:/.../krea2_turbo_fp8_scaled.safetensors"
+# lora = "F:/.../krea2_general_edit_v2.safetensors"
+# text_encoder = "F:/.../qwen3vl_4b_fp8_scaled.safetensors"
+# vae = "F:/.../qwen_image_vae.safetensors"
+steps = 8
+cfg = 1.0
+sampler = "euler"
+scheduler = "simple"
+ref_boost = 4.0
+grounding_px = 768
+lora_strength = 1.0
+context_padding = 96
+feather = 10
+
+# Fichier fusionné Identity Edit : utile pour les personnages, EDIT expérimental.
 [profiles.krea2_edit]
 enabled = true
 # unet = "F:/IA/Models IA/Checkpoints/krea2_turbo_edit-Q4_K_M.gguf"
@@ -99,5 +120,21 @@ sampler = "euler"
 scheduler = "simple"
 ref_boost = 4.0
 grounding_px = 768
+context_padding = 96
+feather = 10
+
+# Qwen Image 2.1 : T2I et Edit, jusqu'à 10 images de référence.
+# Le modèle GGUF ComfyUI-ready (Abiray) existe en Q4_K_M et Q8_0 ; le text encoder
+# officiel utilise W4A8 (qwen3vl_8b_w4a8.safetensors, 6,3 Go) ou INT8 (9,35 Go).
+# Les GGUF Unsloth n'ont pas la métadonnée d'architecture qwen_image.
+[profiles.qwen_image_21]
+enabled = true
+# unet = "F:/.../qwen_image_2.1_Q4_K_M.gguf"
+# text_encoder = "F:/.../qwen3vl_8b_w4a8.safetensors"
+# vae = "F:/.../qwen_image_2.1_vae_bf16.safetensors"
+steps = 25
+cfg = 1.0
+sampler = "euler"
+scheduler = "simple"
 context_padding = 96
 feather = 10

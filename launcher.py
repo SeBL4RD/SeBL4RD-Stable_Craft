@@ -5,16 +5,18 @@ Double-click StableCraft.bat. This script:
 1. reads config.toml;
 2. checks the required paths (PhotoCraft, ComfyUI, Python UI);
 3. starts ComfyUI if its port is closed;
-4. starts PhotoCraft with the control channel if port 7878 is closed;
+4. starts PhotoCraft with the control channel if port 7990 is closed;
 5. starts the Tkinter UI.
 
-Missing models are not blocking: the UI reports them and disables Generate.
+Missing models are not blocking: the UI reports them and Generate opens the
+model manager (Locate / Download).
 """
 
 from __future__ import annotations
 
 import ctypes
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -363,6 +365,31 @@ def configured_models_dir(cfg: dict[str, Any]) -> Path:
     return as_path(configured) if configured else MODELS_DIR
 
 
+def migrate_control_port(cfg: dict[str, Any]) -> None:
+    """Move old configs away from 7878, often in a Windows excluded range."""
+    section = cfg.setdefault("photocraft", {})
+    try:
+        port = int(section.get("control_port", 7990))
+    except (TypeError, ValueError):
+        port = 7990
+    if port != 7878:
+        return
+    section["control_port"] = 7990
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8")
+        updated = re.sub(
+            r"(?m)^(\s*control_port\s*=\s*)7878\s*$",
+            r"\g<1>7990",
+            text,
+            count=1,
+        )
+        if updated != text:
+            CONFIG_PATH.write_text(updated, encoding="utf-8")
+    except OSError:
+        pass
+    log("control_port migré de 7878 vers 7990 (plage de ports exclue par Windows).")
+
+
 def main() -> int:
     USER_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -371,6 +398,7 @@ def main() -> int:
     cfg = load_config()
     if cfg is None:
         return 1
+    migrate_control_port(cfg)
 
     sessions = configured_sessions_dir(cfg)
     sessions.mkdir(parents=True, exist_ok=True)
@@ -439,7 +467,7 @@ def main() -> int:
 
     photocraft_cfg = cfg.get("photocraft", {})
     host = str(photocraft_cfg.get("control_host", "127.0.0.1"))
-    port = int(photocraft_cfg.get("control_port", 7878))
+    port = int(photocraft_cfg.get("control_port", 7990))
     token = as_path(
         str(photocraft_cfg.get("control_token_file", "") or str(USER_DIR / "control.token"))
     )

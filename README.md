@@ -1,187 +1,267 @@
 # StableCraft
 
-**L'édition par lasso de Stable.art, dans PhotoCraft, avec ComfyUI.**
+**Stable.art's lasso editing, inside PhotoCraft, powered by ComfyUI.**
 
-StableCraft est une application compagne pour PhotoCraft : on entoure une zone au
-lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
-Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de génération.
+StableCraft is a companion app for PhotoCraft: draw a lasso around an area, describe
+the change, and the result arrives as a **new masked layer**. Everything runs locally
+on your own GPU, with ComfyUI as the generation engine.
 
-![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
-![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-3b82f6)
-![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
+![Version](https://img.shields.io/badge/version-0.2.0-3b82f6)
+![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-6b7280)
+![License](https://img.shields.io/badge/license-MIT-8b5cf6)
 
-## Présentation
+**Repository:** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
 
-- lasso → prompt → édition → calque PhotoCraft ;
-- calque avec **masque et feather** ;
-- **galerie persistante par calque** : régénérer, comparer, changer de génération ;
-- régénération possible même si la sélection a été perdue ;
-- **image de référence par calque** (Krea 2 et FLUX.3 Klein) ;
-- trois profils : FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 Edit ;
-- aucun poids de modèle dans le dépôt ;
-- aucun téléchargement silencieux.
+## Highlights
 
-## Fondement
+- lasso → prompt → edit → PhotoCraft layer;
+- layer with **mask and feather**;
+- **persistent gallery per layer**: regenerate, compare, switch generations;
+- regeneration works even after the selection is lost;
+- **two modes**: EDIT (source image) or T2I (text only), EDIT by default;
+- **per-layer reference image** (Krea 2, FLUX.3 Klein and Qwen Image 2.1);
+- five profiles: FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
+  (base + LoRA), Krea 2 Identity Edit and Qwen Image 2.1;
+- on-demand model manager (**Locate** / **Download**) and automatic check for the
+  `comfyui-krea2edit` node;
+- English/French UI, English by default;
+- no model weights in the repository;
+- no silent downloads.
 
-StableCraft ne modifie pas PhotoCraft et n'est pas un fork.
+## How it works
 
-PhotoCraft est piloté par son **control channel local** : lecture de la sélection,
-sauvegarde du composite, insertion du calque, création du masque. ComfyUI est piloté en
-HTTP. Les deux applications restent indépendantes et peuvent être mises à jour
-séparément. La compatibilité est vérifiée par les commandes disponibles, pas par un
-numéro de version figé.
+StableCraft does not modify or fork PhotoCraft.
 
-## Dépendances
+PhotoCraft is driven through its **local control channel**: reading the selection,
+saving the composite, inserting the layer and creating the mask. ComfyUI is driven over
+HTTP. Both applications stay independent and can be updated separately. Compatibility is
+checked through the commands exposed by each build, not through a fixed version number.
 
-### Matériel
+## Requirements
+
+### Hardware
 
 - Windows 10/11 **x64**.
-- GPU **NVIDIA** seulement, pour le moment.
-- **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
-- En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
+- **NVIDIA** GPU only, for now.
+- **12 GB of VRAM** tested on an RTX 3080 Ti; 32 GB of RAM.
+- Below 12 GB of VRAM is not validated today.
 
-### Logiciel
+### Software
 
-- **PhotoCraft 0.14.0** ou supérieur (portable ou installé).
-- **ComfyUI portable** (avec `python_embeded\python.exe`).
+- **PhotoCraft 0.14.0** or newer (portable or installed).
+- **ComfyUI portable** (with `python_embeded\python.exe`), recent enough:
+  `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes.
 - **Python 3.11+**.
-- Pour Krea 2 : le nœud custom
+- For Krea 2: the custom node
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
-- `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
+- `ComfyUI-GGUF` to load GGUF UNet models.
 
-### Modèles
+### Models
 
-Les poids ne sont **pas** fournis. Ils doivent être visibles par ComfyUI.
+Weights are **not** bundled. They must be visible to ComfyUI. StableCraft can locate
+or download missing files on demand, with explicit confirmation.
 
-| Profil | UNet | Text encoder | VAE | Steps / CFG |
+| Profile | UNet | Text encoder | VAE | Steps / CFG |
 |---|---|---|---|---|
-| **FLUX.3 Klein Edit** (défaut) | `flux-3-image-klein-Q8_0.gguf` | `Qwen-3-VL-4B-Scaled-FP8-v2.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
-| **FLUX.2 Klein 9B Edit** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
-| **Krea 2 Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `Qwen-3-VL-4B-Scaled-FP8-v2.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **FLUX.3 Klein** (default) | `flux-3-image-klein-Q8_0.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
+| **FLUX.2 Klein 9B** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
+| **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (or Q8_0) | `qwen3vl_8b_w4a8.safetensors` (or INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
 
-Notes :
+Notes:
 
-- le GGUF `Qwen3VL-4B-Instruct-Q4_K_M.gguf` testé n'est pas compatible avec FLUX.3
-  ni Krea 2 ; StableCraft utilise le FP8 safetensors ;
-- `Qwen3-8B-Q4_K_M.gguf` fonctionne pour FLUX.2 ;
-- les licences des modèles s'appliquent (FLUX Kommunity, Krea Community, etc.),
-  séparément de la licence MIT du code.
+- **Krea 2 EDIT is experimental**: results are inconsistent, especially on large areas.
+  The **General Edit** profile (official base + LoRA) is recommended for general editing;
+  the **Identity Edit** profile is a merged file intended for characters. In T2I, Krea 2
+  General Edit uses the base alone, without the LoRA;
+- the tested `Qwen3VL-4B-Instruct-Q4_K_M.gguf` GGUF is not compatible with FLUX.3 or
+  Krea 2; StableCraft uses the FP8 safetensors instead;
+- `Qwen3-8B-Q4_K_M.gguf` works for FLUX.2;
+- Qwen Image 2.1 uses a **dedicated VAE** (`qwen_image_2.1_vae_bf16.safetensors`) and a
+  **Qwen3-VL-8B** text encoder, both different from Krea 2. The GGUF diffusion model is
+  offered as Q4_K_M and Q8_0. The official text encoder defaults to **W4A8**
+  (`qwen3vl_8b_w4a8.safetensors`, 6.3 GB) instead of INT8 (9.35 GB): same vision
+  encoder, native ComfyUI W4A8 support, about 3 GB saved. Select **INT8** in the
+  download menu for maximum fidelity;
+- the Qwen 2.1 GGUF must contain the `qwen_image` architecture metadata expected by
+  `UnetLoaderGGUF`. The **Unsloth** files do not contain it and cannot be loaded as-is;
+  StableCraft points to
+  [`Abiray/Qwen-Image-2.1-GGUF`](https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF),
+  converted for ComfyUI-GGUF;
+- Qwen Image 2.1 uses ComfyUI's **built-in** nodes (`TextEncodeQwenImage21`,
+  `QwenImage21Cache`): no extra custom node is required;
+- Qwen Image 2.1 is under a **non-commercial research license**;
+- model licenses apply (FLUX Kommunity, Krea Community, Qwen Research, etc.),
+  separately from the MIT license of the code.
 
 ## Installation
 
-### Option 1 — installateur Windows
+### Option 1 — Windows installer (recommended)
+
+Double-click **`InstallStableCraft.bat`** at the repository root.
+
+The installer configures **the current folder**: it detects PhotoCraft and ComfyUI,
+creates `user\` and `models\`, writes `config.toml` when needed and adds a
+**StableCraft** shortcut. It does not copy anything to AppData or another folder, and
+does not download any model.
+
+Command line:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
-L'installateur détecte PhotoCraft et ComfyUI, copie StableCraft dans
-`%USERPROFILE%\StableCraft`, crée les dossiers `user\` et `models\`, et ajoute un
-raccourci **StableCraft**. Aucun modèle n'est téléchargé.
-
-### Option 2 — depuis le dépôt
+### Option 2 — manual
 
 ```powershell
 Copy-Item config.example.toml config.toml
 .\StableCraft.bat
 ```
 
-Le lanceur a besoin de `config.toml` ; le plus simple est de copier l'exemple. Les
-chemins peuvent rester vides si l'auto-détection suffit. Les chemins importants :
+The launcher needs `config.toml`; the simplest path is to copy the example. Paths can
+stay empty when auto-detection is enough. The important paths are:
 
 ```toml
 [photocraft]
 executable = "D:/.../photocraft.exe"
+control_port = 7990
 
 [comfyui]
 root = "F:/ComfyUI_windows_portable"
 python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 ```
 
-Au lancement, `StableCraft.bat` :
+The default control port is **7990**. Port 7878 is inside a Windows excluded port
+range on some machines, which makes PhotoCraft's control channel fail with an
+“access permissions” error.
 
-1. vérifie les chemins ;
-2. démarre ComfyUI si nécessaire, **sans ouvrir le navigateur** ;
-3. démarre PhotoCraft avec le control channel si nécessaire ;
-4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
-5. ouvre l'interface.
+When launched, `StableCraft.bat`:
 
-Si un chemin obligatoire manque, un message clair s'affiche. Les modèles manquants ne
-bloquent pas : l'UI les signale et désactive la génération.
+1. checks the required paths;
+2. starts ComfyUI when needed, **without opening a browser**;
+3. starts PhotoCraft with the control channel when needed;
+4. cleans temporary StableCraft files from “Open Recent”;
+5. opens the UI.
 
-## Utilisation
+A clear message is shown when a required path is missing. Missing models do not block
+installation: the UI reports them and **Generate** opens the model manager with
+**Locate** and **Download** actions.
 
-1. Ouvre une image dans PhotoCraft.
-2. Fais un **lasso** autour de la zone à modifier.
-3. Dans StableCraft : choisis le profil, écris le prompt, clique **Générer**.
-4. Le résultat est ajouté comme **calque StableCraft** avec un masque.
-5. La galerie du calque apparaît sous le prompt.
+## Usage
 
-### Régénérer et galerie
+1. Open an image in PhotoCraft.
+2. Draw a **lasso** around the area to edit.
+3. In StableCraft: choose the **mode** (EDIT by default, or T2I), the profile,
+   write the prompt, then click **Generate**.
+4. The result is added as a **StableCraft layer** with a mask.
+5. The layer gallery appears under the prompt.
 
-- Même sélection → **Régénérer** met à jour le **même calque** et ajoute une vignette.
-- Chaque génération repart du `base.png` figé au moment du lasso, jamais du composite
-  avec les générations précédentes.
-- Clique sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
-- Sélection perdue → sélectionne le calque `StableCraft [id]`, puis **Régénérer**.
-- Nouvelle sélection → nouvelle galerie et nouveau calque.
+In **T2I**, no scene image is sent: the prompt generates an image at the crop size
+(selection + context), then PhotoCraft masks it with the selection. A rectangular
+selection gives cleaner results than an irregular lasso. The session's `base.png`
+remains the original image: switching back to EDIT on the same layer always uses that
+scene, never the previous T2I image. To use the T2I image as a new scene, draw a new
+lasso.
 
-### Image de référence
+### Regenerate and gallery
 
-- coche **Utiliser une image de référence** ;
-- clique sur la vignette ou dépose une image ;
-- la référence est propre au calque et se recharge quand tu reviens dessus ;
-- compatible **Krea 2 Edit** et **FLUX.3 Klein** ;
-- le modèle reçoit **image 1 = scène** et **image 2 = référence** ;
-- décris dans le prompt ce que tu prends de l'image 2.
+- Same selection → **Regenerate** updates the **same layer** and adds a thumbnail.
+- Every generation starts from the `base.png` frozen at lasso time, never from the
+  composite with previous generations.
+- Click a thumbnail to apply that generation without running ComfyUI again.
+- Selection lost → select the `StableCraft [id]` layer, then **Regenerate**.
+- New selection → new gallery and new layer.
 
-Exemple :
+### Reference image
+
+- check **Use a reference image**;
+- click the thumbnail or drop an image;
+- the reference belongs to the layer and reloads when you return to it;
+- supported by **Krea 2**, **FLUX.3 Klein** and **Qwen Image 2.1**;
+- in **EDIT**, the model receives **image 1 = scene** and **image 2 = reference**;
+- in **T2I**, FLUX.3 Klein and Qwen Image 2.1 use the reference as image 1 to guide
+  a new image. Krea 2 uses references in EDIT;
+- describe in the prompt what you take from the reference.
+
+Example:
 
 > Add the black leather glove from the reference image to the man's right hand.
 > Keep the hand pose, arm, skin tone, lighting and background unchanged.
 
-Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
-pratiques et des exemples.
+The **Guide** button next to `PROMPT` opens a non-blocking window with best practices
+and examples.
 
-### Aperçu
+### Models and custom node
 
-- **Document** : le composite PhotoCraft après application.
-- **Crop** : le résultat généré à la taille du crop, avant masque.
+- missing files are listed with **Locate** (use an existing file) and **Download**
+  (with size, source and confirmation);
+- quantization choices are limited to **Q4_K_M**, **Q8_0** and **BF16** where the model
+  provides them;
+- downloaded files go to the project's `models/` folder and are added to ComfyUI's
+  `extra_model_paths.yaml`;
+- after a file is located or downloaded, the manager offers to restart ComfyUI
+  automatically so the file becomes visible;
+- a file already inside `models/` is moved to the expected subfolder instead of being
+  copied again;
+- the **comfyui-krea2edit** node is checked at startup and can be installed or updated
+  from the model manager.
 
-## Stockage
+### Preview
 
-Rien n'est stocké dans AppData.
+- **Document**: the PhotoCraft composite after applying the layer.
+- **Crop**: the generated result at crop size, before masking.
+
+## Storage
+
+Nothing is stored in AppData.
 
 ```text
-<dossier StableCraft>/
+<StableCraft folder>/
   user/
     control.token
-    sessions/<id>/       # base, masque, référence, galerie
+    sessions/<id>/       # base, mask, reference, gallery
     logs/
-  models/                # modèles locaux, aucun poids versionné
+    model_selection.json # selected quantization per profile
+  models/                # local models, no weights in git
 ```
 
-Les chemins sont configurables dans `config.toml` (`[app]`, `[photocraft]`,
-`[comfyui]`, `[models]`).
+Paths are configurable in `config.toml` (`[app]`, `[photocraft]`, `[comfyui]`,
+`[models]`).
 
-## Crédits
+## Language
 
-- **Stable.art** — inspiration pour l'expérience lasso + prompt.
-- **PhotoCraft** — application hôte et control channel :
+The UI supports **English and French**. English is the default for new installations.
+Use the language selector in the header; the choice is saved in
+`config.toml` (`[app] language`). Restart the UI to apply it.
+
+A French version of this README is available in [`README.fr.md`](README.fr.md).
+
+## Updates
+
+StableCraft checks the latest GitHub Release at startup. When a newer version exists,
+a clickable notice appears in the header and opens the Releases page. Files are not
+replaced at runtime: `config.toml`, `user/` and `models/` are always preserved, and
+updating remains an explicit action.
+
+## Credits
+
+- **Stable.art** — inspiration for the lasso + prompt experience.
+- **PhotoCraft** — host application and control channel:
   [storytold/photocraft](https://github.com/storytold/photocraft).
-- **ComfyUI** — moteur de génération :
+- **ComfyUI** — generation engine:
   [comfyanonymous/ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 - **FLUX.3 Klein / FLUX.2 Klein** — Black Forest Labs.
 - **Krea 2** — Krea.
-- **Qwen** — équipe Qwen, Alibaba.
+- **Qwen** — Qwen team, Alibaba.
 - **ComfyUI-GGUF** — [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF).
 - **comfyui-krea2edit** — [lbouaraba/comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit).
 
-StableCraft n'est affilié ni à Stable.art, ni à PhotoCraft, ni à ComfyUI, ni aux
-fournisseurs de modèles.
+StableCraft is not affiliated with Stable.art, PhotoCraft, ComfyUI or any model provider.
 
-## Licence
+## License
 
-Le code de StableCraft est sous licence **MIT** (voir [`LICENSE`](LICENSE)).
-Les modèles, ComfyUI et PhotoCraft conservent leurs licences respectives. Aucun poids
-de modèle n'est distribué dans ce dépôt.
+StableCraft code is released under the **MIT** license (see [`LICENSE`](LICENSE)).
+Models, ComfyUI and PhotoCraft keep their own licenses. No model weights are
+distributed in this repository.

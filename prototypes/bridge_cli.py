@@ -41,16 +41,33 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
+from models_tools import resolve_filename  # noqa: E402
 from reference_image import normalize_reference  # noqa: E402
 from session_store import SessionStore, session_layer_name  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
-REFERENCE_PROFILES = {"krea2_edit", "flux3_klein"}
+KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
+QWEN_PROFILE = "qwen_image_21"
+REFERENCE_PROFILES = {"krea2_edit", "krea2_general_edit", "flux3_klein", QWEN_PROFILE}
+T2I_REFERENCE_PROFILES = {"flux3_klein", QWEN_PROFILE}
 REFERENCE_INSTRUCTION = (
     "Image 1 is the scene to edit. Image 2 is the reference image. "
     "Use image 2 only for the requested detail, and keep image 1's scene, "
     "pose, lighting and identity unchanged.\n\n"
+)
+T2I_REFERENCE_INSTRUCTION = (
+    "Image 1 is a reference image. Use its subject, style and details only where "
+    "the prompt asks, and generate a new image for the requested scene.\n\n"
+)
+QWEN_REFERENCE_INSTRUCTION = (
+    "Image 1 is the scene to edit. Image 2 is the reference image. "
+    "Use <image2> only for the requested detail, and keep <image1>'s scene, "
+    "pose, lighting and identity unchanged.\n\n"
+)
+QWEN_T2I_REFERENCE_INSTRUCTION = (
+    "Image 1 is a reference image. Use <image1> for the subject, style and details "
+    "requested in the prompt, and generate a new image for the requested scene.\n\n"
 )
 REFERENCE_SYSTEM_PROMPT = (
     "Image 1 is the scene to edit. Image 2 is the reference image. "
@@ -77,10 +94,6 @@ def manifest_profile(profile: str) -> dict[str, Any]:
         return manifest["profiles"][profile]
     except KeyError as exc:
         raise SystemExit(f"unknown profile {profile!r}") from exc
-
-
-def file_name(path: str | None, fallback: str) -> str:
-    return Path(path).name if path else fallback
 
 
 def as_path(value: str | Path, base: Path = ROOT) -> Path:
@@ -238,10 +251,14 @@ def clip_loader_for(text_encoder: str) -> str:
     return "CLIPLoaderGGUF" if text_encoder.lower().endswith(".gguf") else "CLIPLoader"
 
 
+def unet_loader_for(unet: str) -> str:
+    return "UnetLoaderGGUF" if unet.lower().endswith(".gguf") else "UNETLoader"
+
+
 def build_workflow(
     profile: str,
     *,
-    image_name: str,
+    image_name: str | None,
     prompt: str,
     negative: str,
     unet: str,
@@ -256,51 +273,344 @@ def build_workflow(
     ref_boost: float = 4.0,
     grounding_px: int = 768,
     reference_image: str | None = None,
+    mode: str = "edit",
+    lora: str | None = None,
+    lora_strength: float = 1.0,
 ) -> dict[str, Any]:
+    if mode not in {"edit", "t2i"}:
+        raise ComfyError(f"unknown generation mode {mode!r}")
+    if mode == "edit" and not image_name:
+        raise ComfyError("le mode EDIT nécessite une image source")
+
+    def start(apply_lora: bool = False) -> tuple[dict[str, Any], list[Any]]:
+        workflow: dict[str, Any] = {
+            "1": {
+                "class_type": unet_loader_for(unet),
+                "inputs": {"unet_name": unet},
+            }
+        }
+        model: list[Any] = ["1", 0]
+        if apply_lora and lora:
+            workflow["14"] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": model,
+                    "lora_name": lora,
+                    "strength_model": lora_strength,
+                },
+            }
+            model = ["14", 0]
+        return workflow, model
+
+    # ------------------------------------------------------------------
+    # Text-to-image: no scene image, but the same crop-sized canvas. The
+    # result is still masked by PhotoCraft, so a rectangular selection is
+    # the natural way to use this mode.
+    # ------------------------------------------------------------------
+    if mode == "t2i":
+        if profile == "flux3_klein" and reference_image:
+            text = f"{T2I_REFERENCE_INSTRUCTION}{prompt}"
+            workflow, model = start()
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": "CLIPLoader",
+                        "inputs": {"clip_name": text_encoder, "type": "flux3"},
+                    },
+                    "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                    "4": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": text},
+                    },
+                    "5": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": negative},
+                    },
+                    "6": {
+                        "class_type": "LoadImage",
+                        "inputs": {"image": reference_image},
+                    },
+                    "7": {
+                        "class_type": "ReferenceMultiLatent",
+                        "inputs": {
+                            "positive": ["4", 0],
+                            "negative": ["5", 0],
+                            "vae": ["3", 0],
+                            "images.image0": ["6", 0],
+                            "resolution": "resize",
+                            "resolution.megapixels": 1.0,
+                        },
+                    },
+                    "8": {
+                        "class_type": "KSampler",
+                        "inputs": {
+                            "model": model,
+                            "seed": seed,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "sampler_name": "euler",
+                            "scheduler": "simple",
+                            "positive": ["7", 0],
+                            "negative": ["7", 1],
+                            "latent_image": ["7", 2],
+                            "denoise": 1.0,
+                        },
+                    },
+                    "9": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["8", 0], "vae": ["3", 0]},
+                    },
+                    "10": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["9", 0]},
+                    },
+                }
+            )
+            return workflow
+
+        if profile == "flux2_klein_9b" and reference_image:
+            raise ComfyError(
+                "FLUX.2 Klein 9B does not support a reference image, including T2I."
+            )
+
+        if profile in {"flux3_klein", "flux2_klein_9b"}:
+            workflow, model = start()
+            clip_type = "flux3" if profile == "flux3_klein" else "flux2"
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": clip_loader_for(text_encoder),
+                        "inputs": {"clip_name": text_encoder, "type": clip_type},
+                    },
+                    "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                    "4": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": prompt},
+                    },
+                    "5": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": negative},
+                    },
+                    "6": {
+                        "class_type": "EmptyFlux2LatentImage",
+                        "inputs": {"width": width, "height": height, "batch_size": 1},
+                    },
+                    "7": {
+                        "class_type": "KSampler",
+                        "inputs": {
+                            "model": model,
+                            "seed": seed,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "sampler_name": "euler",
+                            "scheduler": "simple",
+                            "positive": ["4", 0],
+                            "negative": ["5", 0],
+                            "latent_image": ["6", 0],
+                            "denoise": 1.0,
+                        },
+                    },
+                    "8": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+                    },
+                    "9": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["8", 0]},
+                    },
+                }
+            )
+            return workflow
+
+        if profile in KREA_PROFILES:
+            if reference_image:
+                raise ComfyError(
+                    "Krea 2 T2I does not take a reference image; use EDIT instead."
+                )
+            workflow, model = start()
+            # The identity profile is a qwen_image-architecture merge and uses
+            # the 16-channel SD3 latent. The official Krea 2 base follows the
+            # ComfyUI template and uses the generic empty latent.
+            empty_latent = (
+                "EmptySD3LatentImage"
+                if profile == "krea2_edit"
+                else "EmptyLatentImage"
+            )
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": "CLIPLoader",
+                        "inputs": {"clip_name": text_encoder, "type": "krea2"},
+                    },
+                    "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                    "4": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": prompt},
+                    },
+                    "5": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": negative},
+                    },
+                    "6": {
+                        "class_type": empty_latent,
+                        "inputs": {"width": width, "height": height, "batch_size": 1},
+                    },
+                    "7": {
+                        "class_type": "KSampler",
+                        "inputs": {
+                            "model": model,
+                            "seed": seed,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "sampler_name": "euler",
+                            "scheduler": "simple",
+                            "positive": ["4", 0],
+                            "negative": ["5", 0],
+                            "latent_image": ["6", 0],
+                            "denoise": 1.0,
+                        },
+                    },
+                    "8": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+                    },
+                    "9": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["8", 0]},
+                    },
+                }
+            )
+            return workflow
+
+        if profile == QWEN_PROFILE:
+            qwen_prompt = (
+                f"{QWEN_T2I_REFERENCE_INSTRUCTION}{prompt}"
+                if reference_image
+                else prompt
+            )
+            workflow, model = start()
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": clip_loader_for(text_encoder),
+                        "inputs": {"clip_name": text_encoder, "type": "qwen_image"},
+                    },
+                    "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                    "4": {
+                        "class_type": "TextEncodeQwenImage21",
+                        "inputs": {
+                            "clip": ["2", 0],
+                            "prompt": qwen_prompt,
+                            "negative_prompt": negative,
+                            "resolution": 1024,
+                        },
+                    },
+                    "5": {
+                        "class_type": "EmptyLatentImage",
+                        "inputs": {"width": width, "height": height, "batch_size": 1},
+                    },
+                    "6": {
+                        "class_type": "QwenImage21Cache",
+                        "inputs": {"model": model, "device": "auto", "dtype": "default"},
+                    },
+                    "7": {
+                        "class_type": "KSampler",
+                        "inputs": {
+                            "model": ["6", 0],
+                            "seed": seed,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "sampler_name": "euler",
+                            "scheduler": "simple",
+                            "positive": ["4", 0],
+                            "negative": ["4", 1],
+                            "latent_image": ["5", 0],
+                            "denoise": 1.0,
+                        },
+                    },
+                    "8": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+                    },
+                    "9": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["8", 0]},
+                    },
+                }
+            )
+            if reference_image:
+                workflow["10"] = {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": reference_image},
+                }
+                workflow["4"]["inputs"].update(
+                    {
+                        "vae": ["3", 0],
+                        "images.image_1": ["10", 0],
+                    }
+                )
+            return workflow
+
+        raise ComfyError(f"unknown profile {profile!r}")
+
+    # ------------------------------------------------------------------
+    # Instruction editing: the scene crop is the source image.
+    # ------------------------------------------------------------------
     if profile == "flux3_klein":
         text = f"{REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
-        workflow = {
-            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
-            "2": {
-                "class_type": "CLIPLoader",
-                "inputs": {"clip_name": text_encoder, "type": "flux3"},
-            },
-            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": text}},
-            "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
-            "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-            "7": {
-                "class_type": "ReferenceMultiLatent",
-                "inputs": {
-                    "positive": ["4", 0],
-                    "negative": ["5", 0],
-                    "vae": ["3", 0],
-                    "images.image0": ["6", 0],
-                    "resolution": "resize",
-                    "resolution.megapixels": 1.0,
+        workflow, model = start()
+        workflow.update(
+            {
+                "2": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {"clip_name": text_encoder, "type": "flux3"},
                 },
-            },
-            "8": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "model": ["1", 0],
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "positive": ["7", 0],
-                    "negative": ["7", 1],
-                    "latent_image": ["7", 2],
-                    "denoise": 1.0,
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                "4": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {"clip": ["2", 0], "text": text},
                 },
-            },
-            "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
-            "10": {
-                "class_type": "PreviewImage",
-                "inputs": {"images": ["9", 0]},
-            },
-        }
+                "5": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {"clip": ["2", 0], "text": negative},
+                },
+                "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+                "7": {
+                    "class_type": "ReferenceMultiLatent",
+                    "inputs": {
+                        "positive": ["4", 0],
+                        "negative": ["5", 0],
+                        "vae": ["3", 0],
+                        "images.image0": ["6", 0],
+                        "resolution": "resize",
+                        "resolution.megapixels": 1.0,
+                    },
+                },
+                "8": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": model,
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": "euler",
+                        "scheduler": "simple",
+                        "positive": ["7", 0],
+                        "negative": ["7", 1],
+                        "latent_image": ["7", 2],
+                        "denoise": 1.0,
+                    },
+                },
+                "9": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["8", 0], "vae": ["3", 0]},
+                },
+                "10": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["9", 0]},
+                },
+            }
+        )
         if reference_image:
             workflow["11"] = {
                 "class_type": "LoadImage",
@@ -312,126 +622,151 @@ def build_workflow(
     if profile == "flux2_klein_9b":
         if reference_image:
             raise ComfyError(
-                "L'image de référence est disponible pour Krea 2 et FLUX.3 Klein, "
-                "pas pour FLUX.2 Klein 9B."
+                "L'image de référence est disponible pour Krea 2, FLUX.3 Klein "
+                "et Qwen Image 2.1, pas pour FLUX.2 Klein 9B."
             )
-        loader = clip_loader_for(text_encoder)
-        return {
-            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
-            "2": {"class_type": loader, "inputs": {"clip_name": text_encoder, "type": "flux2"}},
-            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
-            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
-            "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
-            "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-            "7": {
-                "class_type": "ImageScaleToTotalPixels",
-                "inputs": {
-                    "image": ["6", 0],
-                    "upscale_method": "lanczos",
-                    "megapixels": 1.0,
-                    "resolution_steps": 1,
+        workflow, model = start()
+        workflow.update(
+            {
+                "2": {
+                    "class_type": clip_loader_for(text_encoder),
+                    "inputs": {"clip_name": text_encoder, "type": "flux2"},
                 },
-            },
-            "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}},
-            "9": {
-                "class_type": "ReferenceLatent",
-                "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]},
-            },
-            "10": {
-                "class_type": "ConditioningZeroOut",
-                "inputs": {"conditioning": ["4", 0]},
-            },
-            "11": {
-                "class_type": "ReferenceLatent",
-                "inputs": {"conditioning": ["10", 0], "latent": ["8", 0]},
-            },
-            "12": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "model": ["1", 0],
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "positive": ["9", 0],
-                    "negative": ["11", 0],
-                    "latent_image": ["8", 0],
-                    "denoise": 1.0,
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                "4": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {"clip": ["2", 0], "text": prompt},
                 },
-            },
-            "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
-            "14": {
-                "class_type": "PreviewImage",
-                "inputs": {"images": ["13", 0]},
-            },
-        }
+                "5": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {"clip": ["2", 0], "text": negative},
+                },
+                "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+                "7": {
+                    "class_type": "ImageScaleToTotalPixels",
+                    "inputs": {
+                        "image": ["6", 0],
+                        "upscale_method": "lanczos",
+                        "megapixels": 1.0,
+                        "resolution_steps": 1,
+                    },
+                },
+                "8": {
+                    "class_type": "VAEEncode",
+                    "inputs": {"pixels": ["7", 0], "vae": ["3", 0]},
+                },
+                "9": {
+                    "class_type": "ReferenceLatent",
+                    "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]},
+                },
+                "10": {
+                    "class_type": "ConditioningZeroOut",
+                    "inputs": {"conditioning": ["4", 0]},
+                },
+                "11": {
+                    "class_type": "ReferenceLatent",
+                    "inputs": {"conditioning": ["10", 0], "latent": ["8", 0]},
+                },
+                "12": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": model,
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": "euler",
+                        "scheduler": "simple",
+                        "positive": ["9", 0],
+                        "negative": ["11", 0],
+                        "latent_image": ["8", 0],
+                        "denoise": 1.0,
+                    },
+                },
+                "13": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["12", 0], "vae": ["3", 0]},
+                },
+                "14": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["13", 0]},
+                },
+            }
+        )
+        return workflow
 
-    if profile == "krea2_edit":
-        workflow = {
-            "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
-            "2": {
-                "class_type": "CLIPLoader",
-                "inputs": {"clip_name": text_encoder, "type": "krea2"},
-            },
-            "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
-            "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-            "5": {"class_type": "VAEEncode", "inputs": {"pixels": ["4", 0], "vae": ["3", 0]}},
-            "6": {
-                "class_type": "EmptySD3LatentImage",
-                "inputs": {"width": width, "height": height, "batch_size": 1},
-            },
-            "7": {
-                "class_type": "Krea2EditModelPatch",
-                "inputs": {
-                    "model": ["1", 0],
-                    "source_latent": ["5", 0],
-                    "vae": ["3", 0],
-                    "source_image": ["4", 0],
-                    "ref_boost": ref_boost,
-                    "fit_mode": "fit",
-                    "target_latent": ["6", 0],
+    if profile in KREA_PROFILES:
+        workflow, model = start(apply_lora=profile == "krea2_general_edit")
+        workflow.update(
+            {
+                "2": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {"clip_name": text_encoder, "type": "krea2"},
                 },
-            },
-            "8": {
-                "class_type": "Krea2EditGroundedEncode",
-                "inputs": {
-                    "clip": ["2", 0],
-                    "prompt": prompt,
-                    "image": ["4", 0],
-                    "grounding_px": grounding_px,
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+                "5": {
+                    "class_type": "VAEEncode",
+                    "inputs": {"pixels": ["4", 0], "vae": ["3", 0]},
                 },
-            },
-            "9": {
-                "class_type": "Krea2EditGroundedEncode",
-                "inputs": {
-                    "clip": ["2", 0],
-                    "prompt": "",
-                    "image": ["4", 0],
-                    "grounding_px": grounding_px,
+                "6": {
+                    "class_type": "EmptySD3LatentImage",
+                    "inputs": {"width": width, "height": height, "batch_size": 1},
                 },
-            },
-            "10": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "model": ["7", 0],
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "positive": ["8", 0],
-                    "negative": ["9", 0],
-                    "latent_image": ["6", 0],
-                    "denoise": 1.0,
+                "7": {
+                    "class_type": "Krea2EditModelPatch",
+                    "inputs": {
+                        "model": model,
+                        "source_latent": ["5", 0],
+                        "vae": ["3", 0],
+                        "source_image": ["4", 0],
+                        "ref_boost": ref_boost,
+                        "fit_mode": "fit",
+                        "target_latent": ["6", 0],
+                    },
                 },
-            },
-            "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
-            "12": {
-                "class_type": "PreviewImage",
-                "inputs": {"images": ["11", 0]},
-            },
-        }
+                "8": {
+                    "class_type": "Krea2EditGroundedEncode",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "prompt": prompt,
+                        "image": ["4", 0],
+                        "grounding_px": grounding_px,
+                    },
+                },
+                "9": {
+                    "class_type": "Krea2EditGroundedEncode",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "prompt": "",
+                        "image": ["4", 0],
+                        "grounding_px": grounding_px,
+                    },
+                },
+                "10": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": ["7", 0],
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": "euler",
+                        "scheduler": "simple",
+                        "positive": ["8", 0],
+                        "negative": ["9", 0],
+                        "latent_image": ["6", 0],
+                        "denoise": 1.0,
+                    },
+                },
+                "11": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["10", 0], "vae": ["3", 0]},
+                },
+                "12": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["11", 0]},
+                },
+            }
+        )
         if reference_image:
             workflow["13"] = {
                 "class_type": "LoadImage",
@@ -452,6 +787,65 @@ def build_workflow(
                         "system_prompt": REFERENCE_SYSTEM_PROMPT,
                     }
                 )
+        return workflow
+
+    if profile == QWEN_PROFILE:
+        qwen_prompt = f"{QWEN_REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
+        workflow, model = start()
+        workflow.update(
+            {
+                "2": {
+                    "class_type": clip_loader_for(text_encoder),
+                    "inputs": {"clip_name": text_encoder, "type": "qwen_image"},
+                },
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+                "5": {
+                    "class_type": "TextEncodeQwenImage21",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "prompt": qwen_prompt,
+                        "negative_prompt": negative,
+                        "vae": ["3", 0],
+                        "resolution": 1024,
+                        "images.image_1": ["4", 0],
+                    },
+                },
+                "6": {
+                    "class_type": "QwenImage21Cache",
+                    "inputs": {"model": model, "device": "auto", "dtype": "default"},
+                },
+                "7": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": ["6", 0],
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": "euler",
+                        "scheduler": "simple",
+                        "positive": ["5", 0],
+                        "negative": ["5", 1],
+                        "latent_image": ["5", 2],
+                        "denoise": 1.0,
+                    },
+                },
+                "8": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+                },
+                "9": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["8", 0]},
+                },
+            }
+        )
+        if reference_image:
+            workflow["10"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": reference_image},
+            }
+            workflow["5"]["inputs"]["images.image_2"] = ["10", 0]
         return workflow
 
     raise ComfyError(f"unknown profile {profile!r}")
@@ -819,6 +1213,7 @@ def create_session(
         "mask": "mask.png",
         "mask_channel": f"StableCraft Mask {sid}",
         "profile": ctx["profile_name"],
+        "mode": ctx["mode"],
         "settings": {
             "padding": ctx["padding"],
             "feather": ctx["feather"],
@@ -845,27 +1240,36 @@ def comfy_generate(
     seed: int,
     reference_path: Path | None = None,
 ) -> Image.Image:
-    comfy.require("UnetLoaderGGUF", "unet_name", ctx["unet"])
+    mode = ctx["mode"]
+    profile = ctx["profile_name"]
+    comfy.require(unet_loader_for(ctx["unet"]), "unet_name", ctx["unet"])
     comfy.require(clip_loader_for(ctx["text_encoder"]), "clip_name", ctx["text_encoder"])
     comfy.require("VAELoader", "vae_name", ctx["vae"])
-    if ctx["profile_name"] == "krea2_edit":
+    if mode == "edit" and profile in KREA_PROFILES:
         comfy.require_node("Krea2EditModelPatch")
         comfy.require_node("Krea2EditGroundedEncode")
+    if profile == "krea2_edit":
         comfy.require_node("EmptySD3LatentImage")
-    if reference_path is not None and ctx["profile_name"] not in REFERENCE_PROFILES:
+    if profile == QWEN_PROFILE:
+        comfy.require_node("TextEncodeQwenImage21")
+        comfy.require_node("QwenImage21Cache")
+    if mode == "edit" and ctx.get("lora"):
+        comfy.require("LoraLoaderModelOnly", "lora_name", ctx["lora"])
+    if reference_path is not None and profile not in REFERENCE_PROFILES:
         raise ComfyError(
-            f"L'image de référence n'est pas disponible pour le profil {ctx['profile_name']}."
+            f"L'image de référence n'est pas disponible pour le profil {profile}."
         )
 
-    upload_name = f"stablecraft_{time.time_ns()}.png"
-    uploaded = comfy.upload(image_path, upload_name)
+    uploaded = None
+    if mode == "edit":
+        uploaded = comfy.upload(image_path, f"stablecraft_{time.time_ns()}.png")
     reference_name = None
     if reference_path is not None:
         reference_name = comfy.upload(
             reference_path, f"stablecraft_ref_{time.time_ns()}.png"
         )
     workflow = build_workflow(
-        ctx["profile_name"],
+        profile,
         image_name=uploaded,
         prompt=prompt,
         negative=negative,
@@ -881,9 +1285,15 @@ def comfy_generate(
         ref_boost=ctx["ref_boost"],
         grounding_px=ctx["grounding_px"],
         reference_image=reference_name,
+        mode=mode,
+        lora=ctx.get("lora"),
+        lora_strength=float(ctx.get("lora_strength", 1.0)),
     )
     prompt_id = comfy.queue(workflow)
-    print(f"ComfyUI:   queued {prompt_id} (seed {seed}, {ctx['steps']} steps, cfg {ctx['cfg_scale']})")
+    print(
+        f"ComfyUI:   queued {prompt_id} (mode {mode.upper()}, seed {seed}, "
+        f"{ctx['steps']} steps, cfg {ctx['cfg_scale']})"
+    )
     entry = comfy.wait(prompt_id)
     images: list[dict[str, Any]] = []
     for node in entry.get("outputs", {}).values():
@@ -911,6 +1321,13 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
     try:
         if args.session:
             sdata = store.load(args.session)
+            if args.mode is None:
+                generations = sdata.get("generations", [])
+                current = int(sdata.get("current", -1))
+                if 0 <= current < len(generations):
+                    ctx["mode"] = str(generations[current].get("mode", "edit"))
+                else:
+                    ctx["mode"] = str(sdata.get("mode", "edit"))
             orig_doc = current_document(control, sdata)
             base_abs = store.base_path(sdata)
             if not base_abs.exists():
@@ -938,8 +1355,15 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         if args.reference:
             if ctx["profile_name"] not in REFERENCE_PROFILES:
                 raise SystemExit(
-                    "L'image de référence est disponible pour Krea 2 et FLUX.3 Klein, "
-                    "pas pour ce profil."
+                    "L'image de référence est disponible pour Krea 2, FLUX.3 Klein "
+                    "et Qwen Image 2.1, pas pour ce profil."
+                )
+            if (
+                ctx["mode"] == "t2i"
+                and ctx["profile_name"] not in T2I_REFERENCE_PROFILES
+            ):
+                raise SystemExit(
+                    "Ce profil n'utilise pas la référence en T2I ; passe en mode EDIT."
                 )
             reference_path = store_reference(
                 store,
@@ -948,7 +1372,13 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
                 display_name=args.reference_name,
             )
             print(f"Reference: {reference_path}")
-        elif ctx["profile_name"] in REFERENCE_PROFILES:
+        elif (
+            ctx["profile_name"] in REFERENCE_PROFILES
+            and (
+                ctx["mode"] == "edit"
+                or ctx["profile_name"] in T2I_REFERENCE_PROFILES
+            )
+        ):
             reference_path = session_reference_path(store, sdata)
             if reference_path is not None:
                 print(f"Reference: {reference_path}")
@@ -994,6 +1424,7 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         thumb.save(gdir / "thumb.png")
         sdata["layer_name"] = session_layer_name(sid, prompt)
         sdata["profile"] = ctx["profile_name"]
+        sdata["mode"] = ctx["mode"]
         sdata["settings"] = {
             "padding": ctx["padding"],
             "feather": ctx["feather"],
@@ -1007,6 +1438,7 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "steps": ctx["steps"],
             "cfg": ctx["cfg_scale"],
             "profile": ctx["profile_name"],
+            "mode": ctx["mode"],
             "feather": ctx["feather"],
             "padding": ctx["padding"],
             "crop": [x0, y0, cw, ch],
@@ -1091,6 +1523,7 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
             orig_index, restore_selection=False,
         )
         sdata["current"] = index
+        sdata["mode"] = str(generation.get("mode", "edit"))
         store.save(sdata)
         print(f"SESSION: {sdata['id']}")
         print(f"GENERATION: {index}")
@@ -1118,6 +1551,7 @@ def main() -> None:
     ap.add_argument("--prompt", default="")
     ap.add_argument("--negative", default="")
     ap.add_argument("--profile", default=None)
+    ap.add_argument("--mode", choices=("edit", "t2i"), default=None)
     ap.add_argument("--padding", type=int, default=None)
     ap.add_argument("--feather", type=int, default=None)
     ap.add_argument("--steps", type=int, default=None)
@@ -1136,7 +1570,7 @@ def main() -> None:
         "--reference",
         type=Path,
         default=None,
-        help="reference image for the current session (Krea 2 and FLUX.3)",
+        help="reference image for the current session (Krea 2, FLUX.3 and Qwen 2.1)",
     )
     ap.add_argument(
         "--reference-name",
@@ -1152,7 +1586,7 @@ def main() -> None:
 
     comfy_endpoint = cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452")
     host = cfg.get("photocraft", {}).get("control_host", "127.0.0.1")
-    port = int(cfg.get("photocraft", {}).get("control_port", 7878))
+    port = int(cfg.get("photocraft", {}).get("control_port", 7990))
     token_path = as_path(
         str(
             cfg.get("photocraft", {}).get("control_token_file")
@@ -1170,20 +1604,34 @@ def main() -> None:
     ref_boost = float(pcfg.get("ref_boost", manifest.get("settings", {}).get("ref_boost", 4.0)))
     grounding_px = int(pcfg.get("grounding_px", manifest.get("settings", {}).get("grounding_px", 768)))
 
-    unet = file_name(pcfg.get("unet"), manifest["files"]["unet"]["filename"])
-    text_encoder = file_name(pcfg.get("text_encoder"), manifest["files"]["text_encoder"]["filename"])
-    vae = file_name(pcfg.get("vae"), manifest["files"]["vae"]["filename"])
+    unet = resolve_filename(profile_name, "unet", pcfg, manifest)
+    text_encoder = resolve_filename(profile_name, "text_encoder", pcfg, manifest)
+    vae = resolve_filename(profile_name, "vae", pcfg, manifest)
+    lora_file = manifest["files"].get("lora")
+    lora = (
+        resolve_filename(profile_name, "lora", pcfg, manifest) if lora_file else None
+    )
+    lora_strength = float(
+        pcfg.get(
+            "lora_strength",
+            manifest.get("settings", {}).get("lora_strength", 1.0),
+        )
+    )
+    mode = args.mode or "edit"
 
     if args.reference and not (args.session_mode or args.session):
         raise SystemExit(
             "--reference nécessite --session-mode (nouvelle session) ou --session <id>."
         )
+    if args.reference and mode != "edit":
+        raise SystemExit("--reference n'est disponible qu'en mode EDIT.")
 
     if args.session_mode or args.session or args.apply:
         ctx = {
             "args": args,
             "cfg": cfg,
             "profile_name": profile_name,
+            "mode": mode,
             "pcfg": pcfg,
             "manifest": manifest,
             "comfy_endpoint": comfy_endpoint,
@@ -1200,6 +1648,8 @@ def main() -> None:
             "unet": unet,
             "text_encoder": text_encoder,
             "vae": vae,
+            "lora": lora,
+            "lora_strength": lora_strength,
         }
         if args.sessions_dir:
             cfg.setdefault("app", {})["sessions_dir"] = str(args.sessions_dir)

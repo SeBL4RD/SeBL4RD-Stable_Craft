@@ -15,12 +15,14 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
 import time
 import tomllib
 import urllib.request
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,22 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from app_meta import (  # noqa: E402
+    APP_VERSION,
+    AUTHOR,
+    LATEST_RELEASE_API,
+    RELEASES_URL,
+    REPO_URL,
+)
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
+from i18n import current_language, profile_text, set_language, tr  # noqa: E402
+from models_tools import (  # noqa: E402
+    download_options,
+    krea_node_status,
+    latest_krea_release,
+    resolve_filename,
+    set_selected_file,
+)
 from session_store import SessionStore, parse_session_id  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,18 +62,28 @@ RED = "#ef4444"
 YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
-SUPPORTED_PROFILES = {"flux3_klein", "flux2_klein_9b", "krea2_edit"}
-REFERENCE_PROFILES = {"krea2_edit", "flux3_klein"}
+KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
+QWEN_PROFILE = "qwen_image_21"
+SUPPORTED_PROFILES = {
+    "flux3_klein",
+    "flux2_klein_9b",
+    "krea2_general_edit",
+    "krea2_edit",
+    QWEN_PROFILE,
+}
+REFERENCE_PROFILES = {"krea2_edit", "krea2_general_edit", "flux3_klein", QWEN_PROFILE}
+T2I_REFERENCE_PROFILES = {"flux3_klein", QWEN_PROFILE}
 
 
 DEFAULTS: dict[str, Any] = {
     "app": {
+        "language": "en",
         "default_profile": "flux3_klein",
         "sessions_dir": str(ROOT / "user" / "sessions"),
     },
     "photocraft": {
         "control_host": "127.0.0.1",
-        "control_port": 7878,
+        "control_port": 7990,
         "control_token_file": str(ROOT / "user" / "control.token"),
         "automation_root": str(ROOT / "user"),
     },
@@ -100,6 +127,8 @@ def load_config(path: Path) -> dict[str, Any]:
     if not app.get("sessions_dir"):
         app["sessions_dir"] = str(ROOT / "user" / "sessions")
     comfyui = cfg.setdefault("comfyui", {})
+    if not comfyui.get("root"):
+        comfyui["root"] = os.environ.get("STABLECRAFT_COMFY_ROOT", "")
     if not comfyui.get("python"):
         comfyui["python"] = os.environ.get("STABLECRAFT_COMFY_PYTHON", "")
     return cfg
@@ -127,8 +156,13 @@ def short_error(exc: BaseException) -> str:
     return (text[0] if text else exc.__class__.__name__)[:90]
 
 
-def file_name(path: str | None, fallback: str) -> str:
-    return Path(path).name if path else fallback
+def version_tuple(value: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for part in str(value).lstrip("v").split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if digits:
+            parts.append(int(digits))
+    return tuple(parts)
 
 
 class StableCraftApp(tk.Tk):
@@ -136,6 +170,7 @@ class StableCraftApp(tk.Tk):
         super().__init__()
         self.config_path = config_path
         self.cfg = load_config(config_path)
+        set_language(str(self.cfg.get("app", {}).get("language", "en")))
         self.manifest = manifest()
         self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.stop_event = threading.Event()
@@ -158,21 +193,31 @@ class StableCraftApp(tk.Tk):
         self.reference_thumb_image: tk.PhotoImage | None = None
         self.reference_is_pending = False
         self.pending_reference_selection: list[int] | None = None
+        self.mode_var = tk.StringVar(value="edit")
+        self._ref_enabled_before_t2i = False
+        self._last_mode = "edit"
         self.guide_window: tk.Toplevel | None = None
         self._drop_proc_ref: Any = None
         self._old_wndproc: Any = None
         self._drop_hwnd: int | None = None
         self._win_user32: Any = None
         self._win_shell32: Any = None
+        self.update_url = RELEASES_URL
+        self.krea_status: dict[str, Any] | None = None
+        self.krea_latest: dict[str, Any] | None = None
         self.profile_key = initial_profile or str(self.cfg["app"].get("default_profile", "flux3_klein"))
         self.models_ok = True
+        self.models_checked = False
+        self.missing_models: list[dict[str, Any]] = []
+        self.models_error: str | None = None
+        self._model_manager: Any = None
         self._closing = False
 
         self.pc_ok = False
         self.comfy_ok = False
         self.has_selection = False
 
-        self.title("StableCraft — PhotoCraft × ComfyUI")
+        self.title(f"StableCraft v{APP_VERSION} — PhotoCraft × ComfyUI")
         self.geometry("500x930+20+20")
         self.minsize(460, 760)
         self.configure(bg=BG)
@@ -180,11 +225,14 @@ class StableCraftApp(tk.Tk):
 
         self._style()
         self._build()
+        self._translate_static_widgets(self)
         self._load_profile(self.profile_key)
         self._load_preview(None)
 
         self.after(100, self._poll_queue)
         self.after(250, self._enable_windows_drop)
+        self.after(1500, lambda: threading.Thread(target=self._check_update, daemon=True).start())
+        self.after(2200, lambda: threading.Thread(target=self._check_krea_node, daemon=True).start())
         threading.Thread(target=self._refresh_loop, daemon=True).start()
         self._check_models()
 
@@ -281,7 +329,7 @@ class StableCraftApp(tk.Tk):
         header = tk.Frame(frame, bg=BG)
         header.pack(fill="x")
         tk.Label(
-            header, text=title, bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")
+            header, text=tr(title), bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")
         ).pack(side="left")
         if action_text and action:
             tk.Button(
@@ -330,14 +378,81 @@ class StableCraftApp(tk.Tk):
 
         header = tk.Frame(main, bg=BG)
         header.pack(fill="x")
-        tk.Label(header, text="StableCraft", bg=BG, fg=FG, font=("Segoe UI", 20, "bold")).pack(anchor="w")
+        title_row = tk.Frame(header, bg=BG)
+        title_row.pack(anchor="w", fill="x")
+        tk.Label(
+            title_row,
+            text="StableCraft",
+            bg=BG,
+            fg=FG,
+            font=("Segoe UI", 20, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            title_row,
+            text=f"v{APP_VERSION}",
+            bg=PANEL_2,
+            fg=ACCENT,
+            padx=6,
+            pady=1,
+            font=("Segoe UI", 8, "bold"),
+        ).pack(side="left", padx=(7, 0), pady=(5, 0))
+        language_box = tk.Frame(title_row, bg=BG)
+        language_box.pack(side="right")
+        tk.Label(
+            language_box,
+            text=tr("Langue"),
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        ).pack(side="left", padx=(0, 4))
+        self.language_var = tk.StringVar(value=current_language().upper())
+        self.language_combo = ttk.Combobox(
+            language_box,
+            textvariable=self.language_var,
+            values=("EN", "FR"),
+            width=3,
+            state="readonly",
+        )
+        self.language_combo.pack(side="left")
+        self.language_combo.bind("<<ComboboxSelected>>", self._on_language_change)
         tk.Label(
             header,
             text="Le lasso de Stable.art, dans PhotoCraft, avec ComfyUI.",
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w")
+        tk.Label(
+            header,
+            text=tr("par {author} · {repo}", author=AUTHOR, repo=REPO_URL),
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 7),
+        ).pack(anchor="w", pady=(1, 4))
+        self.update_label = tk.Label(
+            header,
+            text="",
+            bg=BG,
+            fg=YELLOW,
+            anchor="w",
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.update_label.pack(fill="x")
+        self.update_label.bind("<Button-1>", self._open_release_page)
+        self.node_update_label = tk.Label(
+            header,
+            text="",
+            bg=BG,
+            fg=YELLOW,
+            anchor="w",
+            wraplength=460,
+            justify="left",
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.node_update_label.pack(fill="x")
+        self.node_update_label.bind("<Button-1>", lambda _event: self._open_model_manager())
 
         status = tk.Frame(main, bg=PANEL, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
         status.pack(fill="x", pady=(4, 0))
@@ -351,6 +466,50 @@ class StableCraftApp(tk.Tk):
         self.sel_status.pack(fill="x")
         self.models_status = tk.Label(status, text="Modèles : vérification…", bg=PANEL, fg=YELLOW, anchor="w", font=("Segoe UI", 9))
         self.models_status.pack(fill="x")
+        self.models_status.bind("<Button-1>", lambda _event: self._open_model_manager())
+
+        mode_frame = self._section(main, "MODE")
+        mode_row = tk.Frame(mode_frame, bg=BG)
+        mode_row.pack(fill="x", pady=(4, 0))
+        self.edit_radio = tk.Radiobutton(
+            mode_row,
+            text="EDIT — image source",
+            variable=self.mode_var,
+            value="edit",
+            command=self._on_mode_change,
+            bg=BG,
+            fg=FG,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.edit_radio.pack(side="left")
+        self.t2i_radio = tk.Radiobutton(
+            mode_row,
+            text="T2I — texte seul",
+            variable=self.mode_var,
+            value="t2i",
+            command=self._on_mode_change,
+            bg=BG,
+            fg=FG,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.t2i_radio.pack(side="left", padx=(12, 0))
+        self.mode_hint = tk.Label(
+            mode_frame,
+            text="",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=420,
+            font=("Segoe UI", 8),
+        )
+        self.mode_hint.pack(fill="x", pady=(2, 0))
 
         prompt_frame = self._section(
             main, "PROMPT", "Guide", self._show_prompt_guide
@@ -463,9 +622,9 @@ class StableCraftApp(tk.Tk):
         self.profile_labels: list[str] = []
         self.label_to_key: dict[str, str] = {}
         for key, profile in self.manifest["profiles"].items():
-            label = profile["label"]
+            label = profile_text(profile, "label")
             if key not in SUPPORTED_PROFILES:
-                label += " — bientôt"
+                label += tr(" — bientôt")
             self.profile_labels.append(label)
             self.label_to_key[label] = key
         self.profile_combo = ttk.Combobox(
@@ -478,6 +637,35 @@ class StableCraftApp(tk.Tk):
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
         self.profile_detail = tk.Label(prof_frame, text="", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
         self.profile_detail.pack(fill="x")
+        self.profile_warning = tk.Label(
+            prof_frame,
+            text="",
+            bg=BG,
+            fg=YELLOW,
+            anchor="w",
+            justify="left",
+            wraplength=420,
+            font=("Segoe UI", 8),
+        )
+        self.quant_frame = tk.Frame(prof_frame, bg=BG)
+        tk.Label(
+            self.quant_frame,
+            text=tr("Quantification"),
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+        self.quant_var = tk.StringVar()
+        self.quant_combo = ttk.Combobox(
+            self.quant_frame,
+            textvariable=self.quant_var,
+            values=[],
+            state="readonly",
+            width=14,
+        )
+        self.quant_combo.pack(side="left", padx=(6, 0))
+        self.quant_combo.bind("<<ComboboxSelected>>", self._on_quant_change)
+        self.quant_map: dict[str, str] = {}
 
         settings = self._section(main, "RÉGLAGES")
         grid = tk.Frame(settings, bg=BG)
@@ -550,6 +738,22 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.cancel_btn.pack(side="left", padx=(8, 0))
+        self.models_btn = tk.Button(
+            actions,
+            text=tr("Modèles"),
+            command=self._open_model_manager,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=9,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        )
+        self.models_btn.pack(side="left", padx=(8, 0))
         self.action_hint = tk.Label(
             main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
         )
@@ -662,7 +866,7 @@ class StableCraftApp(tk.Tk):
         footer.pack(fill="x", pady=(8, 0))
         tk.Label(
             footer,
-            text=f"Config : {self.config_path}",
+            text=tr("Config : {path}", path=self.config_path),
             bg=BG,
             fg=MUTED,
             anchor="w",
@@ -682,6 +886,23 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         ).pack(side="right")
 
+    def _translate_static_widgets(self, parent: tk.Misc) -> None:
+        for child in parent.winfo_children():
+            if isinstance(
+                child,
+                (tk.Label, tk.Button, tk.Checkbutton, tk.Radiobutton),
+            ):
+                try:
+                    text = str(child.cget("text"))
+                except tk.TclError:
+                    text = ""
+                if text:
+                    try:
+                        child.config(text=tr(text))
+                    except tk.TclError:
+                        pass
+            self._translate_static_widgets(child)
+
     # ------------------------------------------------------------------
     # Profile / settings
     # ------------------------------------------------------------------
@@ -691,6 +912,56 @@ class StableCraftApp(tk.Tk):
             if key == self.profile_key:
                 return label
         return self.profile_labels[0] if self.profile_labels else ""
+
+    def _mode(self) -> str:
+        return "t2i" if self.mode_var.get() == "t2i" else "edit"
+
+    def _update_mode_hint(self) -> None:
+        if self._mode() == "t2i":
+            self.mode_hint.config(
+                text=tr(
+                    "T2I ignore la scène : le prompt génère une image au format du "
+                    "crop, puis PhotoCraft la masque avec la sélection. Utilise une "
+                    "sélection rectangulaire pour un résultat propre."
+                )
+            )
+        else:
+            self.mode_hint.config(
+                text=tr(
+                    "EDIT envoie le crop de la scène au modèle et conserve la "
+                    "scène d'origine, même après un passage en T2I."
+                )
+            )
+
+    def _on_mode_change(self) -> None:
+        mode = self._mode()
+        if self.running:
+            self.mode_var.set(self._last_mode)
+            return
+        if mode == self._last_mode:
+            return
+        if mode == "t2i":
+            if self.profile_key not in T2I_REFERENCE_PROFILES:
+                self._ref_enabled_before_t2i = bool(
+                    self.ref_var.get() and self.reference_path
+                )
+                self.ref_var.set(False)
+        else:
+            restored = self._reload_session_reference()
+            if (
+                not restored
+                and self._ref_enabled_before_t2i
+                and self.reference_path
+                and self.reference_path.exists()
+                and self._reference_supported()
+            ):
+                self.ref_var.set(True)
+                self._set_session_reference_enabled(True)
+        self._last_mode = mode
+        self._update_mode_hint()
+        self._update_reference_for_profile()
+        self._update_generate_state()
+        self._check_models()
 
     def _load_profile(self, key: str) -> None:
         self.profile_key = key
@@ -707,21 +978,87 @@ class StableCraftApp(tk.Tk):
         self.seed_var.set("-1")
         vram = profile.get("vram_gb")
         weights = profile.get("weights_gb")
-        detail = f"{self.steps_var.get()} steps · CFG {self.cfg_var.get()}"
+        detail = tr(
+            "{steps} steps · CFG {cfg}",
+            steps=self.steps_var.get(),
+            cfg=self.cfg_var.get(),
+        )
         if weights:
-            detail += f" · {weights} Go de poids"
+            detail += tr(" · {weights} Go de poids", weights=weights)
         if vram:
-            detail += f" · ~{vram} Go VRAM"
+            detail += tr(" · ~{vram} Go VRAM", vram=vram)
+        if profile.get("recommended"):
+            detail += tr(" · recommandé")
+        if profile.get("experimental"):
+            detail += tr(" · expérimental")
+        if profile.get("untested"):
+            detail += tr(" · non testé")
         if key not in SUPPORTED_PROFILES:
-            detail += " · bientôt disponible"
+            detail += tr(" · bientôt disponible")
         self.profile_detail.config(text=detail)
+        warning = profile_text(profile, "warning").strip()
+        if warning:
+            self.profile_warning.config(text=f"⚠ {warning}")
+            if not self.profile_warning.winfo_manager():
+                self.profile_warning.pack(fill="x", pady=(2, 0))
+        else:
+            self.profile_warning.config(text="")
+            if self.profile_warning.winfo_manager():
+                self.profile_warning.pack_forget()
+        self._populate_quantizations()
+        self._update_mode_hint()
         self._update_reference_for_profile()
+        self._update_generate_state()
+        self._check_models()
+
+    def _populate_quantizations(self) -> None:
+        profile = self.manifest["profiles"].get(self.profile_key, {})
+        pcfg = self.cfg.get("profiles", {}).get(self.profile_key, {})
+        spec = (profile.get("files") or {}).get("unet", {})
+        options = spec.get("quantizations") or profile.get("quantizations") or []
+        self.quant_map = {}
+        if len(options) < 2:
+            if self.quant_frame.winfo_manager():
+                self.quant_frame.pack_forget()
+            return
+        current = resolve_filename(self.profile_key, "unet", pcfg, profile)
+        labels: list[str] = []
+        for option in options:
+            filename = str(option.get("filename", "?"))
+            label = str(option.get("label", filename))
+            self.quant_map[label] = filename
+            labels.append(label)
+            if filename == current:
+                self.quant_var.set(label)
+        if not self.quant_var.get() or self.quant_var.get() not in labels:
+            custom = tr("Personnalisé : {filename}", filename=current)
+            self.quant_map[custom] = current
+            labels.insert(0, custom)
+            self.quant_var.set(custom)
+        self.quant_combo.config(values=labels)
+        if not self.quant_frame.winfo_manager():
+            self.quant_frame.pack(fill="x", pady=(3, 0))
+        self.quant_combo.config(state="disabled" if self.running else "readonly")
+
+    def _on_quant_change(self, _event: object = None) -> None:
+        filename = self.quant_map.get(self.quant_var.get())
+        if not filename:
+            return
+        if filename == resolve_filename(
+            self.profile_key,
+            "unet",
+            self.cfg.get("profiles", {}).get(self.profile_key, {}),
+            self.manifest["profiles"].get(self.profile_key, {}),
+        ):
+            return
+        set_selected_file(self.profile_key, "unet", filename)
+        self._log(tr("Quantification : {filename}", filename=filename))
         self._update_generate_state()
         self._check_models()
 
     @staticmethod
     def _same_selection(
-        left: list[int] | None, right: list[int] | None, tolerance: int = 2
+        left: list[int] | None, right: list[int] | None, tolerance: int = 2,
     ) -> bool:
         if not left or not right or len(left) != len(right):
             return False
@@ -755,6 +1092,7 @@ class StableCraftApp(tk.Tk):
                 "padding": int(self.padding_var.get()),
                 "feather": int(self.feather_var.get()),
                 "profile": self.profile_key,
+                "mode": self._mode(),
                 "prompt": self.prompt_text.get("1.0", "end").strip(),
                 "negative": (
                     self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
@@ -774,6 +1112,7 @@ class StableCraftApp(tk.Tk):
                 same = (
                     int(generation.get("seed", -1)) == values["seed"]
                     and str(generation.get("profile", "")) == values["profile"]
+                    and str(generation.get("mode", "edit")) == values["mode"]
                     and str(generation.get("prompt", "")).strip() == values["prompt"]
                     and str(generation.get("negative", "")).strip() == values["negative"]
                     and int(generation.get("steps", -1)) == values["steps"]
@@ -793,38 +1132,62 @@ class StableCraftApp(tk.Tk):
         duplicate = self._duplicate_generation()
         reuse = self._reusable_session()
         has_input = self.has_selection or reuse
-        enabled = (
-            not self.running
-            and self.profile_key in SUPPORTED_PROFILES
-            and self.pc_ok
-            and self.comfy_ok
-            and self.models_ok
-            and has_input
-            and values is not None
-            and duplicate is None
-        )
+        if not self.models_ok:
+            enabled = (
+                not self.running
+                and self.profile_key in SUPPORTED_PROFILES
+            )
+        else:
+            enabled = (
+                not self.running
+                and self.profile_key in SUPPORTED_PROFILES
+                and self.pc_ok
+                and self.comfy_ok
+                and has_input
+                and values is not None
+                and duplicate is None
+            )
+        if not self.models_ok:
+            button_text = tr("Gérer les modèles")
+        else:
+            button_text = tr("Régénérer") if reuse else tr("Générer")
         self.generate_btn.config(
-            text="Régénérer" if reuse else "Générer",
+            text=button_text,
             state="normal" if enabled else "disabled",
             bg=ACCENT if enabled else PANEL_2,
         )
         if duplicate is not None:
             self.action_hint.config(
-                text=(
-                    f"Cette combinaison existe déjà (#{duplicate + 1}). "
-                    "Mets le seed à -1 ou change le prompt."
+                text=tr(
+                    "Cette combinaison existe déjà (#{index}). Mets le seed à -1 "
+                    "ou change le prompt.",
+                    index=duplicate + 1,
                 )
             )
         elif values is None:
-            self.action_hint.config(text="Vérifie les réglages (seed, steps, CFG…).")
+            self.action_hint.config(
+                text=tr("Vérifie les réglages (seed, steps, CFG…).")
+            )
+        elif not self.models_ok:
+            self.action_hint.config(
+                text=tr("Modèles manquants — le bouton ouvre le gestionnaire.")
+            )
         elif not has_input:
             self.action_hint.config(
-                text="Fais un lasso, ou sélectionne un calque StableCraft pour régénérer."
+                text=tr(
+                    "Fais un lasso, ou sélectionne un calque StableCraft pour régénérer."
+                )
             )
         else:
             self.action_hint.config(text="")
         for button in self.gallery_buttons.values():
             button.config(state="disabled" if self.running else "normal")
+        radio_state = "disabled" if self.running else "normal"
+        self.edit_radio.config(state=radio_state)
+        self.t2i_radio.config(state=radio_state)
+        self.models_btn.config(state="disabled" if self.running else "normal")
+        if self.quant_frame.winfo_manager():
+            self.quant_combo.config(state="disabled" if self.running else "readonly")
 
     def _on_profile_change(self, _event: object = None) -> None:
         label = self.profile_var.get()
@@ -850,7 +1213,11 @@ class StableCraftApp(tk.Tk):
         comfy_cfg = self.cfg["comfyui"]
         endpoint = str(comfy_cfg["endpoint"])
         while not self.stop_event.is_set():
-            pc: dict[str, Any] = {"ok": False, "text": "PhotoCraft : déconnecté", "doc": None}
+            pc: dict[str, Any] = {
+                "ok": False,
+                "text": tr("PhotoCraft : déconnecté"),
+                "doc": None,
+            }
             client = None
             try:
                 token = read_token(Path(pc_cfg["control_token_file"]))
@@ -866,18 +1233,25 @@ class StableCraftApp(tk.Tk):
                     inspect = client.execute("document.inspect")
                     pc = {
                         "ok": True,
-                        "text": "PhotoCraft : connecté",
+                        "text": tr("PhotoCraft : connecté"),
                         "doc": inspect,
                     }
                 else:
-                    pc = {"ok": True, "text": "PhotoCraft : connecté (aucun document)", "doc": None}
+                    pc = {
+                        "ok": True,
+                        "text": tr("PhotoCraft : connecté (aucun document)"),
+                        "doc": None,
+                    }
             except Exception as exc:  # noqa: BLE001 - status must never crash the UI
-                pc["text"] = f"PhotoCraft : {short_error(exc)}"
+                pc["text"] = tr("PhotoCraft : {error}", error=short_error(exc))
             finally:
                 if client is not None:
                     client.close_socket()
 
-            comfy: dict[str, Any] = {"ok": False, "text": "ComfyUI : déconnecté"}
+            comfy: dict[str, Any] = {
+                "ok": False,
+                "text": tr("ComfyUI : déconnecté"),
+            }
             try:
                 stats = comfy_json(endpoint, "/system_stats", timeout=3.0)
                 system = stats.get("system", {})
@@ -886,50 +1260,92 @@ class StableCraftApp(tk.Tk):
                 vram = devices[0].get("vram_free", 0) / 1e9 if devices else 0
                 comfy = {
                     "ok": True,
-                    "text": f"ComfyUI : {system.get('comfyui_version', '?')} · {gpu} · {vram:.1f} Go libres",
+                    "text": tr(
+                        "ComfyUI : {version} · {gpu} · {vram} Go libres",
+                        version=system.get("comfyui_version", "?"),
+                        gpu=gpu,
+                        vram=f"{vram:.1f}",
+                    ),
                 }
             except Exception as exc:  # noqa: BLE001
-                comfy["text"] = f"ComfyUI : {short_error(exc)}"
+                comfy["text"] = tr("ComfyUI : {error}", error=short_error(exc))
 
             self.queue.put(("status", pc, comfy))
             self.stop_event.wait(3.0)
 
     def _check_models(self) -> None:
-        threading.Thread(target=self._check_models_loop, daemon=True).start()
-
-    def _check_models_loop(self) -> None:
         key = self.profile_key
+        mode = self._mode()
+        self.models_checked = False
+        threading.Thread(
+            target=self._check_models_loop,
+            args=(key, mode),
+            daemon=True,
+        ).start()
+
+    def _check_models_loop(self, key: str, mode: str) -> None:
         profile = self.manifest["profiles"].get(key, {})
         pcfg = self.cfg.get("profiles", {}).get(key, {})
         files = profile.get("files", {})
         endpoint = str(self.cfg["comfyui"]["endpoint"])
-        missing: list[str] = []
+        missing: list[dict[str, Any]] = []
         error: str | None = None
+
+        def add_missing(kind: str, filename: str, note: str = "") -> None:
+            spec = files.get(kind, {}) if kind in files else {}
+            missing.append(
+                {
+                    "kind": kind,
+                    "label": {
+                        "unet": "UNet",
+                        "lora": "LoRA",
+                        "text_encoder": "Text encoder",
+                        "vae": "VAE",
+                        "node": "Custom node",
+                    }.get(kind, kind),
+                    "filename": filename,
+                    "note": note or str(spec.get("note", "") or ""),
+                    "folder": str(spec.get("folder", "") or ""),
+                    "options": (
+                        download_options(key, kind, profile, filename)
+                        if kind != "node"
+                        else []
+                    ),
+                }
+            )
+
         try:
             if key in SUPPORTED_PROFILES:
-                unet = file_name(pcfg.get("unet"), files["unet"]["filename"])
-                clip = file_name(pcfg.get("text_encoder"), files["text_encoder"]["filename"])
-                vae = file_name(pcfg.get("vae"), files["vae"]["filename"])
+                unet = resolve_filename(key, "unet", pcfg, profile)
+                clip = resolve_filename(key, "text_encoder", pcfg, profile)
+                vae = resolve_filename(key, "vae", pcfg, profile)
                 clip_loader = "CLIPLoaderGGUF" if clip.lower().endswith(".gguf") else "CLIPLoader"
-                if unet not in comfy_options(endpoint, "UnetLoaderGGUF", "unet_name"):
-                    missing.append(unet)
+                unet_loader = "UnetLoaderGGUF" if unet.lower().endswith(".gguf") else "UNETLoader"
+                if unet not in comfy_options(endpoint, unet_loader, "unet_name"):
+                    add_missing("unet", unet)
                 if clip not in comfy_options(endpoint, clip_loader, "clip_name"):
-                    missing.append(clip)
+                    add_missing("text_encoder", clip)
                 if vae not in comfy_options(endpoint, "VAELoader", "vae_name"):
-                    missing.append(vae)
-                for node in profile.get("requires_nodes", []):
-                    try:
-                        comfy_json(endpoint, f"/object_info/{node}")
-                    except Exception:  # noqa: BLE001
-                        missing.append(node)
-                if key == "krea2_edit":
+                    add_missing("vae", vae)
+                if files.get("lora") and mode == "edit":
+                    lora = resolve_filename(key, "lora", pcfg, profile)
+                    if lora not in comfy_options(endpoint, "LoraLoaderModelOnly", "lora_name"):
+                        add_missing("lora", lora)
+                needs_edit_nodes = mode == "edit" and key in KREA_PROFILES
+                if needs_edit_nodes or key == QWEN_PROFILE:
+                    for node in profile.get("requires_nodes", []):
+                        try:
+                            comfy_json(endpoint, f"/object_info/{node}")
+                        except Exception:  # noqa: BLE001
+                            add_missing("node", node, "Nœud ComfyUI manquant.")
+                if needs_edit_nodes or (key == "krea2_edit" and mode == "t2i"):
                     try:
                         comfy_json(endpoint, "/object_info/EmptySD3LatentImage")
                     except Exception:  # noqa: BLE001
-                        missing.append("EmptySD3LatentImage")
+                        add_missing("node", "EmptySD3LatentImage", "Nœud ComfyUI manquant.")
         except Exception as exc:  # noqa: BLE001
             error = short_error(exc)
-        self.queue.put(("models", key, missing, error))
+        self.queue.put(("models", key, mode, missing, error))
 
     def _poll_queue(self) -> None:
         try:
@@ -939,7 +1355,7 @@ class StableCraftApp(tk.Tk):
                 if kind == "status":
                     self._handle_status(item[1], item[2])
                 elif kind == "models":
-                    self._handle_models(item[1], item[2], item[3])
+                    self._handle_models(item[1], item[2], item[3], item[4])
                 elif kind == "log":
                     self._log(str(item[1]))
                 elif kind == "preview":
@@ -954,6 +1370,19 @@ class StableCraftApp(tk.Tk):
                     self.pending_session_id = str(item[1])
                 elif kind == "generation_line":
                     self.pending_generation = int(item[1])
+                elif kind == "update":
+                    version = str(item[1])
+                    self.update_url = str(item[2])
+                    self.update_label.config(
+                        text=tr(
+                            "Mise à jour disponible : v{version} — ouvrir la page Releases",
+                            version=version,
+                        )
+                    )
+                elif kind == "krea_node":
+                    self.krea_status = item[1]
+                    self.krea_latest = item[2]
+                    self._update_krea_node_label()
                 elif kind == "error":
                     self.last_error = str(item[1])
                 elif kind == "done":
@@ -982,46 +1411,162 @@ class StableCraftApp(tk.Tk):
                 self._clear_pending_reference()
         if doc:
             self.doc_status.config(
-                text=f"Document : {doc.get('name', '?')} · {doc.get('width')}×{doc.get('height')} · {doc.get('mode')}/{doc.get('depth')} bits",
+                text=tr(
+                    "Document : {name} · {width}×{height} · {mode}/{depth} bits",
+                    name=doc.get("name", "?"),
+                    width=doc.get("width"),
+                    height=doc.get("height"),
+                    mode=doc.get("mode"),
+                    depth=doc.get("depth"),
+                ),
                 fg=MUTED,
             )
             if doc.get("hasSelection"):
                 x, y, w, h = doc.get("selectionBounds") or [0, 0, 0, 0]
-                self.sel_status.config(text=f"Sélection : {w}×{h} à ({x},{y})", fg=GREEN)
+                self.sel_status.config(
+                    text=tr(
+                        "Sélection : {width}×{height} à ({x},{y})",
+                        width=w,
+                        height=h,
+                        x=x,
+                        y=y,
+                    ),
+                    fg=GREEN,
+                )
             elif self.session_id:
-                self.sel_status.config(text="Sélection : aucune — galerie disponible", fg=YELLOW)
+                self.sel_status.config(
+                    text=tr("Sélection : aucune — galerie disponible"), fg=YELLOW
+                )
             else:
-                self.sel_status.config(text="Sélection : aucune — fais un lasso", fg=YELLOW)
+                self.sel_status.config(
+                    text=tr("Sélection : aucune — fais un lasso"), fg=YELLOW
+                )
         else:
-            self.doc_status.config(text="Document : aucun", fg=MUTED)
-            self.sel_status.config(text="Sélection : —", fg=MUTED)
+            self.doc_status.config(text=tr("Document : aucun"), fg=MUTED)
+            self.sel_status.config(text=tr("Sélection : —"), fg=MUTED)
         self.pc_ok = bool(pc["ok"])
         self.comfy_ok = bool(comfy["ok"])
         self.has_selection = bool(doc and doc.get("hasSelection"))
         self._update_generate_state()
 
-    def _handle_models(self, key: str, missing: list[str], error: str | None) -> None:
-        if key != self.profile_key:
+    def _handle_models(
+        self, key: str, mode: str, missing: list[dict[str, Any]], error: str | None
+    ) -> None:
+        if key != self.profile_key or mode != self._mode():
             return
+        self.models_checked = True
+        self.missing_models = list(missing)
+        self.models_error = error
         if error:
             self.models_ok = False
-            self.models_status.config(text=f"Modèles : vérification impossible ({error})", fg=YELLOW)
+            self.models_status.config(
+                text=tr("Modèles : vérification impossible ({error})", error=error),
+                fg=YELLOW,
+                cursor="hand2",
+            )
             self._update_generate_state()
+            if self._model_manager is not None:
+                try:
+                    if self._model_manager.winfo_exists():
+                        self._model_manager.refresh()
+                except Exception:  # noqa: BLE001
+                    pass
             return
         if missing:
             self.models_ok = False
-            self.models_status.config(text=f"Modèles manquants : {', '.join(missing)}", fg=RED)
+            names = ", ".join(str(item.get("label", "?")) for item in missing[:3])
+            if len(missing) > 3:
+                names += f" (+{len(missing) - 3})"
+            self.models_status.config(
+                text=tr("Modèles manquants : {names} — cliquer pour gérer", names=names),
+                fg=RED,
+                cursor="hand2",
+            )
         else:
             self.models_ok = True
-            self.models_status.config(text="Modèles : OK", fg=GREEN)
+            self.models_status.config(
+                text=tr("Modèles : OK"), fg=GREEN, cursor="arrow"
+            )
         self._update_generate_state()
+        self._populate_quantizations()
+        if self._model_manager is not None:
+            try:
+                if self._model_manager.winfo_exists():
+                    self._model_manager.refresh()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _open_model_manager(self) -> None:
+        from model_manager import ModelManager  # noqa: PLC0415 - avoids import cycle
+
+        if self._model_manager is not None:
+            try:
+                if self._model_manager.winfo_exists():
+                    self._model_manager.deiconify()
+                    self._model_manager.lift()
+                    self._model_manager.focus_force()
+                    if hasattr(self._model_manager, "refresh"):
+                        self._model_manager.refresh()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        self._model_manager = ModelManager(self)
+
+    def _model_store_dir(self) -> Path:
+        configured = str(self.cfg.get("models", {}).get("store_dir", "") or "")
+        path = Path(configured) if configured else ROOT / "models"
+        return path if path.is_absolute() else ROOT / path
+
+    def _visible_model_options(self, kind: str, filename: str) -> list[str]:
+        endpoint = str(self.cfg["comfyui"]["endpoint"])
+        loader_keys: list[tuple[str, str]] = []
+        if kind == "unet":
+            loader = "UnetLoaderGGUF" if filename.lower().endswith(".gguf") else "UNETLoader"
+            loader_keys.append((loader, "unet_name"))
+        elif kind == "lora":
+            loader_keys.append(("LoraLoaderModelOnly", "lora_name"))
+        elif kind == "text_encoder":
+            loader_keys.append(("CLIPLoader", "clip_name"))
+            loader_keys.append(("CLIPLoaderGGUF", "clip_name"))
+        elif kind == "vae":
+            loader_keys.append(("VAELoader", "vae_name"))
+        found: list[str] = []
+        for loader, key in loader_keys:
+            try:
+                options = comfy_options(endpoint, loader, key)
+            except Exception:  # noqa: BLE001
+                continue
+            for option in options:
+                if option == filename or Path(option).name == filename:
+                    if option not in found:
+                        found.append(option)
+        return found
+
+    def _comfy_running(self) -> bool:
+        return bool(self.comfy_ok)
 
     # ------------------------------------------------------------------
     # Reference image
     # ------------------------------------------------------------------
 
     def _reference_supported(self) -> bool:
-        return self.profile_key in REFERENCE_PROFILES
+        if self.profile_key not in REFERENCE_PROFILES:
+            return False
+        if self._mode() == "t2i":
+            return self.profile_key in T2I_REFERENCE_PROFILES
+        return True
+
+    def _reference_help(self) -> str:
+        if self.profile_key not in REFERENCE_PROFILES:
+            return tr("Disponible sur Krea 2, FLUX.3 Klein et Qwen Image 2.1.")
+        if self._mode() == "t2i":
+            if self.profile_key in KREA_PROFILES:
+                return tr(
+                    "Krea 2 utilise la référence en EDIT ; en T2I, passe en EDIT "
+                    "pour une génération guidée par l'image."
+                )
+            return tr("La référence guide la génération T2I.")
+        return tr("Disponible sur Krea 2, FLUX.3 Klein et Qwen Image 2.1.")
 
     def _update_reference_for_profile(self) -> None:
         supported = self._reference_supported()
@@ -1032,10 +1577,10 @@ class StableCraftApp(tk.Tk):
             self.ref_profile_hint.config(text="")
             if self.ref_var.get():
                 self._show_reference_panel()
+            else:
+                self._hide_reference_panel()
         else:
-            self.ref_profile_hint.config(
-                text="Disponible sur Krea 2 Edit et FLUX.3 Klein."
-            )
+            self.ref_profile_hint.config(text=self._reference_help())
             self._hide_reference_panel()
         self._update_reference_hint()
 
@@ -1052,9 +1597,7 @@ class StableCraftApp(tk.Tk):
             return
         if not self._reference_supported():
             self.ref_var.set(False)
-            self.ref_profile_hint.config(
-                text="Disponible sur Krea 2 Edit et FLUX.3 Klein."
-            )
+            self.ref_profile_hint.config(text=self._reference_help())
             return
         enabled = bool(self.ref_var.get())
         if enabled:
@@ -1081,12 +1624,19 @@ class StableCraftApp(tk.Tk):
         if self.reference_path and self.reference_path.exists():
             self.ref_hint.config(
                 text=(
-                    "Image 2 = référence. Décris dans le prompt ce que tu veux "
-                    "en reprendre."
+                    tr(
+                        "Image de référence pour le T2I. Décris ce que tu veux "
+                        "en reprendre."
+                    )
+                    if self._mode() == "t2i"
+                    else tr(
+                        "Image 2 = référence. Décris dans le prompt ce que tu veux "
+                        "en reprendre."
+                    )
                 )
             )
         else:
-            self.ref_hint.config(text="Clique ou dépose une image ici.")
+            self.ref_hint.config(text=tr("Clique ou dépose une image ici."))
 
     def _draw_reference_tile(self) -> None:
         self.ref_canvas.delete("all")
@@ -1103,11 +1653,11 @@ class StableCraftApp(tk.Tk):
             self.ref_canvas.create_text(
                 56,
                 70,
-                text="Clique ou dépose",
+                text=tr("Clique ou dépose"),
                 fill=MUTED,
                 font=("Segoe UI", 7),
             )
-        self.ref_name.config(text=self.reference_name or "Aucune image")
+        self.ref_name.config(text=self.reference_name or tr("Aucune image"))
         self.ref_remove.config(
             state="normal" if self.reference_path else "disabled"
         )
@@ -1146,7 +1696,43 @@ class StableCraftApp(tk.Tk):
         else:
             self._hide_reference_panel()
 
+    def _reload_session_reference(self) -> bool:
+        """Restore the layer's reference when coming back from T2I to EDIT."""
+        if not self.session_id or not self.session_data or not self._reference_supported():
+            return False
+        reference = self.session_data.get("reference")
+        if not isinstance(reference, dict):
+            return False
+        directory = self.session_store.directory(str(self.session_id))
+        image_path = directory / str(reference.get("image", "reference.png"))
+        thumb_path = directory / str(reference.get("thumb", "reference_thumb.png"))
+        if not image_path.exists():
+            return False
+        name = str(reference.get("name") or tr("Image de référence"))
+        if name == "reference.png":
+            name = tr("Image de référence")
+        self._display_reference(
+            image_path,
+            thumb_path,
+            name,
+            bool(reference.get("enabled", True)),
+            pending=False,
+        )
+        return True
+
     def _load_reference_for_session(self) -> None:
+        generations = self.session_data.get("generations", []) if self.session_data else []
+        current = int(self.session_data.get("current", -1)) if self.session_data else -1
+        used_by_current = (
+            0 <= current < len(generations)
+            and bool(generations[current].get("reference"))
+        )
+        if not used_by_current:
+            # The session may still keep reference.png for future use, but the
+            # UI must not show it again if the latest generation did not use it.
+            self._clear_reference_ui()
+            return
+
         reference = self.session_data.get("reference") if self.session_data else None
         if isinstance(reference, dict):
             directory = self.session_store.directory(str(self.session_id))
@@ -1155,14 +1741,14 @@ class StableCraftApp(tk.Tk):
                 reference.get("thumb", "reference_thumb.png")
             )
             if image_path.exists():
-                name = str(reference.get("name") or "Image de référence")
+                name = str(reference.get("name") or tr("Image de référence"))
                 if name == "reference.png":
-                    name = "Image de référence"
+                    name = tr("Image de référence")
                 self._display_reference(
                     image_path,
                     thumb_path,
                     name,
-                    bool(reference.get("enabled", True)),
+                    True,
                     pending=False,
                 )
                 return
@@ -1197,15 +1783,15 @@ class StableCraftApp(tk.Tk):
             return
         if not self._reference_supported():
             messagebox.showinfo(
-                "Image de référence",
-                "Disponible sur Krea 2 Edit et FLUX.3 Klein.",
+                tr("Image de référence"),
+                self._reference_help(),
             )
             return
         selected = filedialog.askopenfilename(
-            title="Choisir une image de référence",
+            title=tr("Choisir une image de référence"),
             filetypes=[
                 ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"),
-                ("Tous les fichiers", "*.*"),
+                (tr("Tous les fichiers"), "*.*"),
             ],
         )
         if selected:
@@ -1216,13 +1802,13 @@ class StableCraftApp(tk.Tk):
             return
         if not self._reference_supported():
             messagebox.showinfo(
-                "Image de référence",
-                "Disponible sur Krea 2 Edit et FLUX.3 Klein.",
+                tr("Image de référence"),
+                self._reference_help(),
             )
             return
         python, error = self._comfy_python()
         if error:
-            messagebox.showerror("Python ComfyUI introuvable", error)
+            messagebox.showerror(tr("Python ComfyUI introuvable"), error)
             return
         script = ROOT / "prototypes" / "reference_image.py"
         if self.session_id and self.session_data:
@@ -1255,13 +1841,16 @@ class StableCraftApp(tk.Tk):
                 creationflags=flags,
             )
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Image de référence", short_error(exc))
+            messagebox.showerror(tr("Image de référence"), short_error(exc))
             return
         if result.returncode != 0:
             details = (result.stderr or result.stdout or "").strip()
             messagebox.showerror(
-                "Image de référence",
-                f"Impossible de préparer l'image.\n\n{details[:800]}",
+                tr("Image de référence"),
+                tr(
+                    "Impossible de préparer l'image.\n\n{details}",
+                    details=details[:800],
+                ),
             )
             return
 
@@ -1347,7 +1936,7 @@ class StableCraftApp(tk.Tk):
 
         window = tk.Toplevel(self)
         self.guide_window = window
-        window.title("Guide de prompt — StableCraft")
+        window.title(tr("Guide de prompt — StableCraft"))
         width, height = 660, 720
         x = self.winfo_rootx() + self.winfo_width() + 12
         y = self.winfo_rooty() + 40
@@ -1361,7 +1950,7 @@ class StableCraftApp(tk.Tk):
         footer.pack(fill="x", side="bottom", padx=12, pady=8)
         tk.Button(
             footer,
-            text="Fermer",
+            text=tr("Fermer"),
             command=window.destroy,
             bg=PANEL_2,
             fg=FG,
@@ -1411,14 +2000,24 @@ class StableCraftApp(tk.Tk):
         text.tag_configure("warn", foreground=YELLOW, spacing3=4)
 
         def add(value: str, tag: str = "body") -> None:
-            text.insert("end", value + "\n", tag)
+            text.insert("end", tr(value) + "\n", tag)
 
         add("Guide de prompt", "h1")
         add(
-            "StableCraft envoie au modèle le crop de ta scène (sélection + contexte), "
-            "puis applique le résultat dans le lasso. Le prompt décrit donc le résultat "
-            "attendu dans la scène, pas une action abstraite.",
+            "En mode EDIT, StableCraft envoie au modèle le crop de ta scène "
+            "(sélection + contexte), puis applique le résultat dans le lasso. En mode "
+            "T2I, aucune scène n'est envoyée : le prompt décrit l'image à générer, "
+            "puis PhotoCraft la masque avec la sélection.",
             "body",
+        )
+
+        add("0. EDIT ou T2I ?", "h2")
+        add("• EDIT : modifier une image existante. Décris le résultat final dans la scène.", "body")
+        add("• T2I : créer une image sans image source. Décris la scène complète.", "body")
+        add(
+            "• En T2I, utilise une sélection rectangulaire : l'image est générée au "
+            "format du crop puis masquée. Le lasso donne une forme irrégulière au masque.",
+            "warn",
         )
 
         add("1. La bonne attitude, sans référence", "h2")
@@ -1436,6 +2035,13 @@ class StableCraftApp(tk.Tk):
         add("2. Avec une image de référence", "h2")
         add("Image 1 = la scène, c'est-à-dire ton image PhotoCraft.", "body")
         add("Image 2 = l'image de référence que tu as ajoutée.", "body")
+        add("Qwen Image 2.1 les appelle <image1> et <image2> dans son prompt.", "body")
+        add(
+            "En T2I, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme "
+            "image 1 pour guider une nouvelle image. Krea 2 utilise la référence "
+            "en EDIT.",
+            "body",
+        )
         add(
             "La référence n'est active que si la case est cochée et qu'une image est chargée. "
             "Elle n'est jamais collée : elle sert d'inspiration au modèle.",
@@ -1462,7 +2068,7 @@ class StableCraftApp(tk.Tk):
         add("• Un objet seul, détouré ou sur un fond simple, est plus facile à transférer.", "body")
         add("• Une référence avec beaucoup de fond peut être confondue avec la scène.", "body")
         add("• Pour un vêtement, demande la couleur/matière ; pour un accessoire, décris sa position.", "body")
-        add("• Krea 2 Edit et FLUX.3 Klein acceptent la référence. FLUX.2 Klein 9B ne la propose pas.", "body")
+        add("• Krea 2, FLUX.3 Klein et Qwen Image 2.1 acceptent la référence. FLUX.2 Klein 9B ne la propose pas.", "body")
         add("• Si le résultat copie trop la référence, précise « only » / « keep unchanged » dans le prompt.", "body")
 
         add("4. Rappel", "h2")
@@ -1577,7 +2183,7 @@ class StableCraftApp(tk.Tk):
             self._old_wndproc = old
             self._log("Drag & drop Windows activé.")
         except Exception as exc:  # noqa: BLE001
-            self._log(f"Drag & drop indisponible : {short_error(exc)}")
+            self._log(tr("Drag & drop indisponible : {error}", error=short_error(exc)))
 
     def _disable_windows_drop(self) -> None:
         if self._drop_hwnd is None or self._win_user32 is None:
@@ -1638,11 +2244,17 @@ class StableCraftApp(tk.Tk):
         previous = self.session_id
         self.session_id = session_id
         self.session_data = None
+        if not session_id:
+            # A fresh lasso starts in EDIT, even if the previous canvas was
+            # generated in T2I.
+            self.mode_var.set("edit")
+            self._last_mode = "edit"
+            self._update_mode_hint()
         if session_id:
             try:
                 self.session_data = self.session_store.load(session_id)
             except Exception as exc:  # noqa: BLE001
-                self._log(f"Session {session_id} : {short_error(exc)}")
+                self._log(tr("Session {session} : {error}", session=session_id, error=short_error(exc)))
         self._populate_gallery()
         if self.session_data:
             generations = self.session_data.get("generations", [])
@@ -1669,6 +2281,7 @@ class StableCraftApp(tk.Tk):
             self._draw_reference_tile()
         self._update_reference_for_profile()
         self._update_generate_state()
+        self._check_models()
 
     def _restore_session_fields(self, sdata: dict[str, Any]) -> None:
         generations = sdata.get("generations", [])
@@ -1676,6 +2289,10 @@ class StableCraftApp(tk.Tk):
         if not (0 <= index < len(generations)):
             return
         generation = generations[index]
+        saved_mode = str(generation.get("mode", "edit"))
+        self.mode_var.set("t2i" if saved_mode == "t2i" else "edit")
+        self._last_mode = self._mode()
+        self._update_mode_hint()
         self.prompt_text.delete("1.0", "end")
         self.prompt_text.insert("1.0", str(generation.get("prompt", "")))
         self.neg_text.delete("1.0", "end")
@@ -1721,9 +2338,9 @@ class StableCraftApp(tk.Tk):
         self.gallery_buttons.clear()
 
         if not self.session_data:
-            self.gallery_title.config(text="Aucune galerie")
+            self.gallery_title.config(text=tr("Aucune galerie"))
             self.gallery_hint.config(
-                text="Clique sur un calque StableCraft pour retrouver ses générations."
+                text=tr("Clique sur un calque StableCraft pour retrouver ses générations.")
             )
             self._set_document_preview()
             self._set_result_preview(None)
@@ -1732,10 +2349,14 @@ class StableCraftApp(tk.Tk):
         generations = self.session_data.get("generations", [])
         current = int(self.session_data.get("current", -1))
         self.gallery_title.config(
-            text=f"Galerie — StableCraft [{self.session_id}] · {len(generations)} génération(s)"
+            text=tr(
+                "Galerie — StableCraft [{session}] · {count} génération(s)",
+                session=self.session_id,
+                count=len(generations),
+            )
         )
         if not generations:
-            self.gallery_hint.config(text="Aucune génération dans cette session.")
+            self.gallery_hint.config(text=tr("Aucune génération dans cette session."))
             self._set_document_preview()
             self._set_result_preview(None)
             return
@@ -1784,12 +2405,15 @@ class StableCraftApp(tk.Tk):
                 prompt = prompt[:71] + "…"
             self.gallery_hint.config(
                 text=(
-                    f"#{current + 1} · {generation.get('profile', '?')} · "
+                    f"#{current + 1} · {str(generation.get('mode', 'edit')).upper()} · "
+                    f"{generation.get('profile', '?')} · "
                     f"seed {generation.get('seed', '?')} · {prompt}"
                 )
             )
         else:
-            self.gallery_hint.config(text="Clique sur une vignette pour appliquer cette génération.")
+            self.gallery_hint.config(
+                text=tr("Clique sur une vignette pour appliquer cette génération.")
+            )
         self.gallery_canvas.update_idletasks()
         self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
 
@@ -1825,7 +2449,7 @@ class StableCraftApp(tk.Tk):
             self.cfg["comfyui"].get("python") or ""
         )
         if not python or not Path(python).exists():
-            return None, (
+            return None, tr(
                 "Renseigne [comfyui] python dans config.toml avec le python_embeded de ComfyUI."
             )
         return python, None
@@ -1838,44 +2462,61 @@ class StableCraftApp(tk.Tk):
         if self.running:
             return
         if self.profile_key not in SUPPORTED_PROFILES:
-            messagebox.showinfo("Bientôt", "Ce profil sera ajouté plus tard.")
+            messagebox.showinfo(
+                tr("Bientôt"), tr("Ce profil sera ajouté plus tard.")
+            )
+            return
+        if not self.models_ok:
+            self._open_model_manager()
             return
         reuse = self._reusable_session()
         if not self.has_selection and not reuse:
             messagebox.showwarning(
-                "Sélection vide",
-                "Fais un lasso autour de la zone à modifier, ou sélectionne un "
-                "calque StableCraft pour régénérer avec sa sélection d'origine.",
+                tr("Sélection vide"),
+                tr(
+                    "Fais un lasso autour de la zone à modifier, ou sélectionne un "
+                    "calque StableCraft pour régénérer avec sa sélection d'origine."
+                ),
             )
             return
         duplicate = self._duplicate_generation()
         if duplicate is not None:
             messagebox.showinfo(
-                "Déjà généré",
-                f"Cette combinaison existe déjà dans la galerie (#{duplicate + 1}).\n\n"
-                "Mets le seed à -1 ou change le prompt pour régénérer.",
+                tr("Déjà généré"),
+                tr(
+                    "Cette combinaison existe déjà dans la galerie (#{index}).\n\n"
+                    "Mets le seed à -1 ou change le prompt pour régénérer.",
+                    index=duplicate + 1,
+                ),
             )
             return
         if self.ref_var.get() and self._reference_supported():
             if self._reference_active_path() is None:
                 messagebox.showwarning(
-                    "Référence vide",
-                    "Ajoute une image de référence ou décoche la case "
-                    "« Utiliser une image de référence ».",
+                    tr("Référence vide"),
+                    tr(
+                        "Ajoute une image de référence ou décoche la case "
+                        "« Utiliser une image de référence »."
+                    ),
                 )
                 return
         prompt = self.prompt_text.get("1.0", "end").strip()
         if not prompt:
-            messagebox.showwarning("Prompt vide", "Écris ce que tu veux changer.")
+            messagebox.showwarning(
+                tr("Prompt vide"),
+                tr("Décris l'image à générer.")
+                if self._mode() == "t2i"
+                else tr("Écris ce que tu veux changer."),
+            )
             return
         negative = self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
         python, error = self._comfy_python()
         if error:
-            messagebox.showerror("Python ComfyUI introuvable", error)
+            messagebox.showerror(tr("Python ComfyUI introuvable"), error)
             return
         bridge = ROOT / "prototypes" / "bridge_cli.py"
         if not bridge.exists():
-            messagebox.showerror("Bridge introuvable", str(bridge))
+            messagebox.showerror(tr("Bridge introuvable"), str(bridge))
             return
 
         command = [
@@ -1885,6 +2526,8 @@ class StableCraftApp(tk.Tk):
             str(self.config_path),
             "--profile",
             self.profile_key,
+            "--mode",
+            self._mode(),
             "--prompt",
             prompt,
             "--padding",
@@ -1913,7 +2556,7 @@ class StableCraftApp(tk.Tk):
             command += ["--negative", negative]
         self._start_bridge(
             command,
-            "Régénération en cours…" if reuse else "Génération en cours…",
+            tr("Régénération en cours…") if reuse else tr("Génération en cours…"),
         )
 
     def _start_bridge(self, command: list[str], label: str) -> None:
@@ -1921,7 +2564,7 @@ class StableCraftApp(tk.Tk):
             return
         bridge = ROOT / "prototypes" / "bridge_cli.py"
         if not bridge.exists():
-            messagebox.showerror("Bridge introuvable", str(bridge))
+            messagebox.showerror(tr("Bridge introuvable"), str(bridge))
             return
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
@@ -1940,7 +2583,7 @@ class StableCraftApp(tk.Tk):
                 creationflags=flags,
             )
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Lancement impossible", short_error(exc))
+            messagebox.showerror(tr("Lancement impossible"), short_error(exc))
             return
 
         self.running = True
@@ -1999,11 +2642,15 @@ class StableCraftApp(tk.Tk):
         else:
             self._update_generate_state()
         if code == 0 and not self.last_error:
-            self.progress_label.config(text="Terminé — calque StableCraft prêt.", fg=GREEN)
+            self.progress_label.config(
+                text=tr("Terminé — calque StableCraft prêt."), fg=GREEN
+            )
         elif self.last_error:
-            self.progress_label.config(text="Erreur — voir le journal.", fg=RED)
+            self.progress_label.config(text=tr("Erreur — voir le journal."), fg=RED)
         else:
-            self.progress_label.config(text=f"Processus terminé (code {code}).", fg=YELLOW)
+            self.progress_label.config(
+                text=tr("Processus terminé (code {code}).", code=code), fg=YELLOW
+            )
         self.proc = None
 
     def _cancel(self) -> None:
@@ -2019,7 +2666,98 @@ class StableCraftApp(tk.Tk):
                 urllib.request.urlopen(request, timeout=2)
             except Exception:  # noqa: BLE001
                 pass
-            self.progress_label.config(text="Annulation…", fg=YELLOW)
+            self.progress_label.config(text=tr("Annulation…"), fg=YELLOW)
+
+    # ------------------------------------------------------------------
+    # Update check
+    # ------------------------------------------------------------------
+
+    def _check_update(self) -> None:
+        try:
+            request = urllib.request.Request(
+                LATEST_RELEASE_API,
+                headers={"User-Agent": f"StableCraft/{APP_VERSION}"},
+            )
+            with urllib.request.urlopen(request, timeout=6) as response:
+                data = json.load(response)
+        except Exception:  # noqa: BLE001 - no release yet, private repo, offline
+            return
+        tag = str(data.get("tag_name", "") or "")
+        if not tag:
+            return
+        if version_tuple(tag) > version_tuple(APP_VERSION):
+            self.queue.put(
+                (
+                    "update",
+                    tag.lstrip("v"),
+                    data.get("html_url") or RELEASES_URL,
+                )
+            )
+
+    def _open_release_page(self, _event: object = None) -> None:
+        if self.update_url:
+            webbrowser.open(self.update_url)
+
+    def _on_language_change(self, _event: object = None) -> None:
+        language = self.language_var.get().lower()
+        if language == current_language():
+            return
+        try:
+            text = self.config_path.read_text(encoding="utf-8")
+            if re.search(r"(?m)^language\s*=.*$", text):
+                text = re.sub(
+                    r"(?m)^language\s*=.*$",
+                    f'language = "{language}"',
+                    text,
+                    count=1,
+                )
+            elif re.search(r"(?m)^\[app\]\s*$", text):
+                text = re.sub(
+                    r"(?m)^\[app\]\s*$",
+                    f'[app]\nlanguage = "{language}"',
+                    text,
+                    count=1,
+                )
+            else:
+                text += f'\n[app]\nlanguage = "{language}"\n'
+            self.config_path.write_text(text, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(tr("Langue"), str(exc))
+            return
+        messagebox.showinfo(
+            "Language / Langue",
+            "Redémarre l'UI pour appliquer la langue.\n\n"
+            "Restart the UI to apply the language.",
+        )
+
+    def _check_krea_node(self) -> None:
+        try:
+            latest = latest_krea_release()
+            status = krea_node_status(self.cfg, latest)
+        except Exception:  # noqa: BLE001
+            return
+        self.queue.put(("krea_node", status, latest))
+
+    def _update_krea_node_label(self) -> None:
+        status = self.krea_status or {}
+        if status.get("needs_install"):
+            self.node_update_label.config(
+                text=tr(
+                    "Nœud Krea 2 absent — installer v{version} (cliquer ici)",
+                    version=status.get("latest") or "?",
+                )
+            )
+        elif status.get("needs_update"):
+            self.node_update_label.config(
+                text=tr(
+                    "Nœud Krea 2 : v{installed} installé, v{latest} disponible — "
+                    "mettre à jour (cliquer ici)",
+                    installed=status.get("installed"),
+                    latest=status.get("latest"),
+                )
+            )
+        else:
+            self.node_update_label.config(text="")
 
     # ------------------------------------------------------------------
     # Preview / log
@@ -2036,7 +2774,9 @@ class StableCraftApp(tk.Tk):
             self.preview_canvas.create_text(
                 225,
                 145,
-                text="Aucun aperçu.\nFais un lasso, écris un prompt, puis clique Générer.",
+                text=tr(
+                    "Aucun aperçu.\nFais un lasso, écris un prompt, puis clique Générer."
+                ),
                 fill=MUTED,
                 font=("Segoe UI", 9),
                 justify="center",
@@ -2049,7 +2789,7 @@ class StableCraftApp(tk.Tk):
             self.preview_canvas.create_text(
                 225,
                 145,
-                text=f"Aperçu indisponible : {short_error(exc)}",
+                text=tr("Aperçu indisponible : {error}", error=short_error(exc)),
                 fill=RED,
                 font=("Segoe UI", 9),
                 justify="center",
@@ -2076,7 +2816,7 @@ class StableCraftApp(tk.Tk):
         try:
             os.startfile(str(self.config_path))  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
-            self._log(f"Config : {self.config_path}")
+            self._log(tr("Config : {path}", path=self.config_path))
 
     def _on_close(self) -> None:
         self._closing = True

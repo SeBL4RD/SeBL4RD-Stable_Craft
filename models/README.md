@@ -1,11 +1,14 @@
-# Modèles
+# Models
 
-Dossier local pour les modèles de StableCraft. **Aucun poids n'est versionné.**
+Local folder for StableCraft models. **No weights are versioned.**
 
-Sous-dossiers attendus : `unet/`, `text_encoders/`, `vae/`, `loras/`.
+Expected subfolders: `unet/`, `text_encoders/`, `vae/`, `loras/`.
 
-ComfyUI doit voir ce dossier, par exemple avec une section `stablecraft` dans
-`extra_model_paths.yaml` (voir `config.toml`, clé `[models] store_dir`). Si les modèles
-sont déjà dans ComfyUI, laisse les chemins commentés dans `config.toml`.
+ComfyUI must see this folder, for example through a `stablecraft` section in
+`extra_model_paths.yaml`. StableCraft's model manager creates that section
+automatically when it downloads or copies a file.
 
-StableCraft ne télécharge aucun modèle sans consentement explicite.
+If the models already live in ComfyUI's folders, leave the paths commented out in
+`config.toml`; the manager will detect them through ComfyUI.
+
+StableCraft never downloads a model without explicit confirmation.

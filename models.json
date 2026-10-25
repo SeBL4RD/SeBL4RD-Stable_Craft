@@ -1,10 +1,12 @@
 {
   "schema": 1,
-  "updated": "2026-10-23",
+  "updated": "2026-10-25",
   "profiles": {
     "flux3_klein": {
-      "label": "FLUX.3 Klein Edit",
+      "label": "FLUX.3 Klein",
+      "label_en": "FLUX.3 Klein",
       "description": "Édition instructionnelle, 16 steps, CFG 1. Meilleur compromis fidélité/VRAM sur 12 Go.",
+      "description_en": "Instruction editing, 16 steps, CFG 1. Best fidelity/VRAM compromise on 12 GB.",
       "license": "FLUX Kommunity License",
       "license_url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/blob/main/LICENSE.md",
       "source": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy",
@@ -24,29 +26,54 @@
           "folder": "unet",
           "size": 6092755872,
           "sha256": "af562de40a975439a0f55340221bf48c951e2fc5ad0e11df0bdd73c8091eefcf",
-          "download_url": null,
-          "note": "Conversion GGUF communautaire ; la source officielle est en safetensors."
+          "download_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-Q8_0.gguf",
+          "note": "Conversion GGUF communautaire ; la source officielle est en safetensors.",
+          "quantizations": [
+            {
+              "label": "Q4_K_M",
+              "filename": "flux-3-image-klein-Q4_K_M.gguf",
+              "size": 3666908064,
+              "sha256": "a0fe17e27da7660832a3ae3fe35b9c5cd0d81566a4ea5ec7bb4a26421d4f8542",
+              "download_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-Q4_K_M.gguf"
+            },
+            {
+              "label": "Q8_0",
+              "filename": "flux-3-image-klein-Q8_0.gguf",
+              "size": 6092755872,
+              "sha256": "af562de40a975439a0f55340221bf48c951e2fc5ad0e11df0bdd73c8091eefcf",
+              "download_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-Q8_0.gguf"
+            },
+            {
+              "label": "BF16",
+              "filename": "flux-3-image-klein-BF16.gguf",
+              "size": 11097412512,
+              "sha256": "86b6f43e51f8083a1a2bd51b635d7aa8e6517433ba10f22dc721dc832a74feea",
+              "download_url": "https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-BF16.gguf"
+            }
+          ]
         },
         "text_encoder": {
-          "filename": "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors",
+          "filename": "qwen3vl_4b_fp8_scaled.safetensors",
           "folder": "text_encoders",
-          "size": 5610000000,
-          "sha256": null,
-          "download_url": null,
-          "note": "Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fonctionne pas pour flux3."
+          "size": 5242467968,
+          "sha256": "54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094",
+          "download_url": "https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+          "note": "Text encoder Qwen3-VL-4B officiel. Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fonctionne pas pour flux3."
         },
         "vae": {
           "filename": "flux2_vae.safetensors",
           "folder": "vae",
-          "size": 335000000,
-          "sha256": null,
-          "download_url": null
+          "size": 336213556,
+          "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5",
+          "download_url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
         }
       }
     },
     "flux2_klein_9b": {
-      "label": "FLUX.2 Klein 9B Edit",
+      "label": "FLUX.2 Klein 9B",
+      "label_en": "FLUX.2 Klein 9B",
       "description": "Plus de texture et de détail ; 4 steps, CFG 1. Plus lourd, peut réinterpréter la silhouette.",
+      "description_en": "More texture and detail; 4 steps, CFG 1. Heavier, may reinterpret the silhouette.",
       "license": "FLUX.2 Klein 9B : non-commercial ; 4B : Apache-2.0",
       "license_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b",
       "source": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b",
@@ -66,32 +93,135 @@
           "folder": "unet",
           "size": 9978304800,
           "sha256": "dfa8908dd58c5af6479b944f80558e226ee40a8fe0903729309e8d1b98fe5297",
-          "download_url": null,
-          "note": "Pour 12 Go, préférer un Q4_K_M du même modèle."
+          "download_url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf",
+          "note": "Pour 12 Go, préférer un Q4_K_M du même modèle.",
+          "quantizations": [
+            {
+              "label": "Q4_K_M",
+              "filename": "flux-2-klein-9b-Q4_K_M.gguf",
+              "size": 5909829920,
+              "sha256": "5489463ed96056b0bb5472abb5d1bba7055e48d574e37877acb43b407465e26f",
+              "download_url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf"
+            },
+            {
+              "label": "Q8_0",
+              "filename": "flux-2-klein-9b-Q8_0.gguf",
+              "size": 9978304800,
+              "sha256": "dfa8908dd58c5af6479b944f80558e226ee40a8fe0903729309e8d1b98fe5297",
+              "download_url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf"
+            },
+            {
+              "label": "BF16",
+              "filename": "flux-2-klein-9b-BF16.gguf",
+              "size": 18157197600,
+              "sha256": "12a86c9755cb1e14e7ebaff48fe56da9a912477cd5a200ae552512f5e957786e",
+              "download_url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-BF16.gguf"
+            }
+          ]
         },
         "text_encoder": {
           "filename": "Qwen3-8B-Q4_K_M.gguf",
           "folder": "text_encoders",
-          "size": 5027000000,
-          "sha256": null,
-          "download_url": null
+          "size": 5027783488,
+          "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+          "download_url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+          "quantizations": [
+            {
+              "label": "Q4_K_M",
+              "filename": "Qwen3-8B-Q4_K_M.gguf",
+              "size": 5027783488,
+              "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+              "download_url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"
+            },
+            {
+              "label": "Q8_0",
+              "filename": "Qwen3-8B-Q8_0.gguf",
+              "size": 8709518112,
+              "sha256": "408b955510e196121c1c375201744783b5c9a43c7956d73fc78df54c66e883d6",
+              "download_url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q8_0.gguf"
+            }
+          ]
         },
         "vae": {
           "filename": "flux2_vae.safetensors",
           "folder": "vae",
-          "size": 335000000,
-          "sha256": null,
-          "download_url": null
+          "size": 336213556,
+          "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5",
+          "download_url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
+        }
+      }
+    },
+    "krea2_general_edit": {
+      "label": "Krea 2 General Edit (base + LoRA)",
+      "label_en": "Krea 2 General Edit (base + LoRA)",
+      "description": "Base Krea 2 Turbo + LoRA General Edit. T2I sur la base seule, EDIT expérimental. Recommandé pour l'édition générale.",
+      "description_en": "Krea 2 Turbo base + General Edit LoRA. T2I uses the base alone, EDIT is experimental. Recommended for general editing.",
+      "license": "Krea 2 Community License ; LoRA sous licence Krea 2 Identity Edit",
+      "license_url": "https://huggingface.co/krea/Krea-2-Turbo/blob/main/LICENSE.md",
+      "source": "https://huggingface.co/conradlocke/krea2-identity-edit",
+      "recommended": true,
+      "experimental": true,
+      "untested": true,
+      "warning": "Krea 2 EDIT est expérimental : les résultats sont irréguliers, surtout sur les grandes zones. Pour un usage général, préférez Qwen Image 2.1 ou FLUX.3.",
+      "warning_en": "Krea 2 EDIT is experimental: results are inconsistent, especially on large areas. For general use, prefer Qwen Image 2.1 or FLUX.3.",
+      "vram_gb": 12,
+      "weights_gb": 14.2,
+      "requires_nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+      "settings": {
+        "steps": 8,
+        "cfg": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "ref_boost": 4.0,
+        "grounding_px": 768,
+        "lora_strength": 1.0
+      },
+      "files": {
+        "unet": {
+          "filename": "krea2_turbo_fp8_scaled.safetensors",
+          "folder": "unet",
+          "size": 13141730784,
+          "sha256": "eb4dd8c612cfd10f64f25b057e6e6bbcb5737c94a7372177e456dbf7579502f1",
+          "download_url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+          "note": "Base officielle Krea 2 Turbo, chargée avec UNETLoader (safetensors)."
+        },
+        "lora": {
+          "filename": "krea2_general_edit_v2.safetensors",
+          "folder": "loras",
+          "size": 1828285656,
+          "sha256": "fb5315477444c8df6dea2ad347a852bd90e97ab0f9109f4100a39714a7a09356",
+          "download_url": "https://huggingface.co/conradlocke/krea2-identity-edit/resolve/main/krea2_general_edit_v2.safetensors",
+          "note": "LoRA d'édition générale, appliqué uniquement en mode EDIT."
+        },
+        "text_encoder": {
+          "filename": "qwen3vl_4b_fp8_scaled.safetensors",
+          "folder": "text_encoders",
+          "size": 5242467968,
+          "sha256": "54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094",
+          "download_url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+          "note": "Text encoder officiel Krea 2. Un GGUF Qwen3VL-4B ne fournit pas les 12 couches attendues."
+        },
+        "vae": {
+          "filename": "qwen_image_vae.safetensors",
+          "folder": "vae",
+          "size": 253806246,
+          "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+          "download_url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors"
         }
       }
     },
     "krea2_edit": {
-      "label": "Krea 2 Edit",
-      "description": "Édition par instruction avec les nœuds krea2edit. Turbo 8 steps, CFG 1.",
-      "license": "Krea 2 Community License",
+      "label": "Krea 2 Edit (Identity, fichier fusionné)",
+      "label_en": "Krea 2 Edit (Identity, merged file)",
+      "description": "Krea 2 Turbo avec le LoRA Identity Edit intégré. Adapté aux personnages, pas aux edits généraux. T2I possible.",
+      "description_en": "Krea 2 Turbo with the Identity Edit LoRA baked in. Suited to characters, not general edits. T2I supported.",
+      "license": "Krea 2 Community License (modèle dérivé ; le dépôt GGUF indique une licence inconnue)",
       "license_url": "https://huggingface.co/krea/Krea-2-Turbo/blob/main/LICENSE.md",
-      "source": "https://huggingface.co/Comfy-Org/Krea-2",
+      "source": "https://huggingface.co/ChrisColeTech/krea2-turbo-edit-GGUF",
       "recommended": false,
+      "experimental": true,
+      "warning": "Krea 2 EDIT est expérimental : ce fichier fusionné est pensé pour l'identité et les personnages, pas pour les modifications générales. Pour un usage général, préférez Qwen Image 2.1 ou FLUX.3.",
+      "warning_en": "Krea 2 EDIT is experimental: this merged file targets identity and characters, not general edits. For general use, prefer Qwen Image 2.1 or FLUX.3.",
       "vram_gb": 12,
       "weights_gb": 12.6,
       "requires_nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
@@ -110,22 +240,100 @@
           "size": 7259460736,
           "sha256": "665b636aecc29ba05ded98a6e6863408a98eec225e08896b449b4e0ba03895b3",
           "download_url": null,
-          "note": "Modèle fusionné (arch qwen_image) ; Krea-2-Turbo-Q4_K_M.gguf (arch krea2) n'est pas chargeable par UnetLoaderGGUF."
+          "note": "Krea 2 Turbo avec Identity Edit LoRA déjà intégré (aucun LoRA séparé à charger). Arch qwen_image, chargeable par UnetLoaderGGUF."
         },
         "text_encoder": {
-          "filename": "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors",
+          "filename": "qwen3vl_4b_fp8_scaled.safetensors",
           "folder": "text_encoders",
-          "size": 5610000000,
-          "sha256": null,
-          "download_url": null,
-          "note": "Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fournit pas les 12 couches attendues par krea2."
+          "size": 5242467968,
+          "sha256": "54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094",
+          "download_url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+          "note": "Text encoder officiel Krea 2. Le GGUF Qwen3VL-4B-Instruct-Q4_K_M ne fournit pas les 12 couches attendues."
         },
         "vae": {
           "filename": "qwen_image_vae.safetensors",
           "folder": "vae",
-          "size": 250000000,
-          "sha256": null,
-          "download_url": null
+          "size": 253806246,
+          "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+          "download_url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors"
+        }
+      }
+    },
+    "qwen_image_21": {
+      "label": "Qwen Image 2.1 (T2I + Edit)",
+      "label_en": "Qwen Image 2.1 (T2I + Edit)",
+      "description": "Génération et édition dans un seul modèle, jusqu'à 10 références. 25 steps, CFG 1. Licence non commerciale.",
+      "description_en": "Generation and editing in one model, up to 10 references. 25 steps, CFG 1. Non-commercial license.",
+      "license": "Qwen Research License (non commerciale)",
+      "license_url": "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE",
+      "source": "https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF",
+      "recommended": false,
+      "vram_gb": 12,
+      "weights_gb": 11.2,
+      "requires_nodes": ["TextEncodeQwenImage21", "QwenImage21Cache"],
+      "settings": {
+        "steps": 25,
+        "cfg": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "resolution_megapixels": 1.0
+      },
+      "quantizations": [
+        {
+          "label": "Q4_K_M",
+          "filename": "qwen_image_2.1_Q4_K_M.gguf",
+          "size": 4189343904,
+          "sha256": "dc956c958fbfa1d5c64ec316d7e865283d17d97a9eb332a4a74a4d63afaae9a5",
+          "download_url": "https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1_Q4_K_M.gguf"
+        },
+        {
+          "label": "Q8_0",
+          "filename": "qwen_image_2.1_Q8_0.gguf",
+          "size": 7591579808,
+          "sha256": "cf1962b6c3ffd1d77ab8407f226f72073a333fc82ffe90e2337ad61a4053d47d",
+          "download_url": "https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1_Q8_0.gguf"
+        }
+      ],
+      "files": {
+        "unet": {
+          "filename": "qwen_image_2.1_Q4_K_M.gguf",
+          "folder": "unet",
+          "size": 4189343904,
+          "sha256": "dc956c958fbfa1d5c64ec316d7e865283d17d97a9eb332a4a74a4d63afaae9a5",
+          "download_url": "https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1_Q4_K_M.gguf",
+          "note": "GGUF converti pour ComfyUI-GGUF, avec la métadonnée d'architecture qwen_image. Q8_0 proposé dans quantizations. Le dépôt Unsloth n'inclut pas cette métadonnée et n'est pas chargeable tel quel par UnetLoaderGGUF."
+        },
+        "text_encoder": {
+          "filename": "qwen3vl_8b_w4a8.safetensors",
+          "folder": "text_encoders",
+          "size": 6312105364,
+          "sha256": "7754425e55e7bea2bfde4dde59a4cc236cb44e5ee9c215ea66ef8d47012824eb",
+          "download_url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_w4a8.safetensors",
+          "note": "W4A8 officiel (6,3 Go) : 3 Go de moins que l'int8, avec le vision encoder complet. Choisis INT8 dans la liste pour une fidélité maximale.",
+          "quantizations": [
+            {
+              "label": "W4A8",
+              "filename": "qwen3vl_8b_w4a8.safetensors",
+              "size": 6312105364,
+              "sha256": "7754425e55e7bea2bfde4dde59a4cc236cb44e5ee9c215ea66ef8d47012824eb",
+              "download_url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_w4a8.safetensors"
+            },
+            {
+              "label": "INT8",
+              "filename": "qwen3vl_8b_int8_convrot.safetensors",
+              "size": 9350798360,
+              "sha256": "8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f",
+              "download_url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors"
+            }
+          ]
+        },
+        "vae": {
+          "filename": "qwen_image_2.1_vae_bf16.safetensors",
+          "folder": "vae",
+          "size": 675509688,
+          "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9",
+          "download_url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+          "note": "VAE propre à Qwen Image 2.1, différent de qwen_image_vae.safetensors."
         }
       }
     }

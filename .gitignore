@@ -7,6 +7,7 @@ demo/
 # Local configuration (contains absolute paths)
 config.toml
 config.local.toml
+uninstall.ps1
 
 # User data: sessions, token, logs (never in AppData)
 user/

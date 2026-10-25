@@ -1,10 +1,10 @@
 """Probe PhotoCraft's control channel.
 
 Usage:
-    python prototypes/control_probe.py [--port 7878] [--token PATH]
+    python prototypes/control_probe.py [--port 7990] [--token PATH]
 
 Requires PhotoCraft to be running with:
-    --control 7878 --control-token-file <token>
+    --control 7990 --control-token-file <token>
     --automation-read-root <dir> --automation-write-root <dir>
 """
 
@@ -25,7 +25,7 @@ DEFAULT_TOKEN = ROOT / ".runtime" / "control.token"
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=7878)
+    ap.add_argument("--port", type=int, default=7990)
     ap.add_argument("--token", type=Path, default=DEFAULT_TOKEN)
     ap.add_argument("--open", dest="open_path", default=None)
     args = ap.parse_args()
