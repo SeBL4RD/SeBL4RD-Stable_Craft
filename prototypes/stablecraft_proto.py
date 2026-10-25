@@ -8,7 +8,7 @@ Run with ComfyUI's embedded Python (it already has Pillow and requests):
     F:\\ComfyUI_windows_portable\\python_embeded\\python.exe prototypes\\stablecraft_proto.py
 
 Environment:
-    COMFYUI_URL      default http://127.0.0.1:12452
+    COMFYUI_URL      default http://127.0.0.1:8188
     COMFYUI_UNET     default flux-3-image-klein-Q8_0.gguf
     COMFYUI_CLIP     default Qwen-3-VL-4B-Scaled-FP8-v2.safetensors
     COMFYUI_VAE      default flux2_vae.safetensors
@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "demo" / "lasso-before.png"
 OUT = ROOT / "prototypes" / "out"
 
-BASE = os.environ.get("COMFYUI_URL", "http://127.0.0.1:12452").rstrip("/")
+BASE = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 UNET = os.environ.get("COMFYUI_UNET", "flux-3-image-klein-Q8_0.gguf")
 CLIP = os.environ.get("COMFYUI_CLIP", "Qwen-3-VL-4B-Scaled-FP8-v2.safetensors")
 VAE = os.environ.get("COMFYUI_VAE", "flux2_vae.safetensors")

@@ -6,7 +6,7 @@ StableCraft is a companion app for PhotoCraft: draw a lasso around an area, desc
 the change, and the result arrives as a **new masked layer**. Everything runs locally
 on your own GPU, with ComfyUI as the generation engine.
 
-![Version](https://img.shields.io/badge/version-0.2.2-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.3-3b82f6)
 ![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-6b7280)
 ![License](https://img.shields.io/badge/license-MIT-8b5cf6)
@@ -60,7 +60,7 @@ checked through the commands exposed by each build, not through a fixed version 
 - **PhotoCraft 0.16.0** or newer (portable or installed).
 - **ComfyUI portable** (with `python_embeded\python.exe`), recent enough:
   `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes.
-- **Python 3.11+**.
+- **Python 3.11+** with **Tkinter** (the python.org Windows installer includes it).
 - For Krea 2: the custom node
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` to load GGUF UNet models.
@@ -121,6 +121,14 @@ Command line:
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
+If ComfyUI uses a non-default port, pass `-ComfyEndpoint` or edit
+`[comfyui] endpoint` in `config.toml` after installation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
+  -ComfyEndpoint "http://127.0.0.1:12452"
+```
+
 ### Option 2 — manual
 
 ```powershell
@@ -137,6 +145,7 @@ executable = "D:/.../photocraft.exe"
 control_port = 7990
 
 [comfyui]
+endpoint = "http://127.0.0.1:8188"
 root = "F:/ComfyUI_windows_portable"
 python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 ```
@@ -145,6 +154,19 @@ The default control port is **7990**. Port 7878 is inside a Windows excluded por
 range on some machines, which makes PhotoCraft's control channel fail with an
 “access permissions” error.
 
+The default ComfyUI endpoint is **http://127.0.0.1:8188**, ComfyUI's own default.
+If ComfyUI listens on another port, change `endpoint`:
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:12452"
+```
+
+When StableCraft starts ComfyUI, it adds `--port <endpoint port>` to the
+`start_command` batch when the batch does not already contain a `--port`. If the
+batch already has one, keep it identical to `endpoint`; StableCraft logs a warning
+when the two ports differ.
+
 When launched, `StableCraft.bat`:
 
 1. checks the required paths;
@@ -152,6 +174,23 @@ When launched, `StableCraft.bat`:
 3. starts PhotoCraft with the control channel when needed;
 4. cleans temporary StableCraft files from “Open Recent”;
 5. opens the UI.
+
+### Launching the batch
+
+`StableCraft.bat` is a Windows batch file. Double-click it, or run it with:
+
+- **cmd.exe**: `StableCraft.bat`
+- **PowerShell**: `.\StableCraft.bat`
+- **Git Bash / MSYS**: `cmd //c StableCraft.bat`
+
+It is not a Linux/WSL script. The batch uses `py -3` when available, otherwise
+`python`; Python **3.11+** and **Tkinter** are required. If neither works, it prints
+the installation instructions instead of closing silently.
+
+If the window closes immediately, run the batch from cmd.exe or PowerShell to read
+the message, then check `user\logs\launcher.log`. Use the python.org installer (not
+the Microsoft Store alias) and enable “Add python.exe to PATH”. If Windows blocked a
+downloaded `.bat`, open its Properties and click **Unblock**.
 
 A clear message is shown when a required path is missing. Missing models do not block
 installation: the UI reports them and **Generate** opens the model manager with
@@ -205,6 +244,11 @@ and examples.
 
 - missing files are listed with **Locate** (use an existing file) and **Download**
   (with size, source and confirmation);
+- **Locate** accepts any supported filename (**GGUF or safetensors**): the file does
+  not need to match the name in `models.json`. It starts in ComfyUI's `models` folder
+  and keeps the selected file's real name. A file already inside a ComfyUI model folder is used in place,
+  without copying it into the project. Select a standalone UNet/diffusion model, not
+  an all-in-one checkpoint;
 - quantization choices are limited to **Q4_K_M**, **Q8_0** and **BF16** where the model
   provides them;
 - downloaded files go to the project's `models/` folder and are added to ComfyUI's

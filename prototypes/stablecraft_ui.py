@@ -88,7 +88,7 @@ DEFAULTS: dict[str, Any] = {
         "automation_root": str(ROOT / "user"),
     },
     "comfyui": {
-        "endpoint": "http://127.0.0.1:12452",
+        "endpoint": "http://127.0.0.1:8188",
         "python": "",
     },
     "models": {
@@ -2573,7 +2573,9 @@ class StableCraftApp(tk.Tk):
             command += ["--session", self.session_id]
         else:
             command += ["--session-mode"]
-        if self.reference_is_pending:
+        if not reuse:
+            # A new session must receive the active reference explicitly. For
+            # an existing session the bridge reloads it from session.json.
             reference = self._reference_active_path()
             if reference is not None:
                 command += ["--reference", str(reference)]

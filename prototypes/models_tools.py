@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -139,6 +140,70 @@ def download_options(
 # ---------------------------------------------------------------------------
 
 
+_GGUF_SCALARS = {
+    0: "<B",
+    1: "<b",
+    2: "<H",
+    3: "<h",
+    4: "<I",
+    5: "<i",
+    6: "<f",
+    7: "<B",
+    10: "<Q",
+    11: "<q",
+    12: "<d",
+}
+
+
+def _gguf_read_string(handle: Any) -> str:
+    length = struct.unpack("<Q", handle.read(8))[0]
+    if length > 4_000_000:
+        raise ValueError("GGUF string metadata is unreasonably large")
+    return handle.read(length).decode("utf-8", errors="replace")
+
+
+def _gguf_skip_value(handle: Any, value_type: int) -> str | None:
+    if value_type == 8:
+        return _gguf_read_string(handle)
+    if value_type == 9:
+        element_type = struct.unpack("<I", handle.read(4))[0]
+        count = struct.unpack("<Q", handle.read(8))[0]
+        for _ in range(count):
+            _gguf_skip_value(handle, element_type)
+        return None
+    fmt = _GGUF_SCALARS.get(value_type)
+    if fmt is None:
+        raise ValueError(f"unknown GGUF value type {value_type}")
+    handle.read(struct.calcsize(fmt))
+    return None
+
+
+def gguf_architecture(path: Path) -> str | None:
+    """Read general.architecture from a GGUF header without loading weights.
+
+    Returns None when the file is not a readable GGUF or when the metadata is
+    missing (notably some Unsloth Qwen Image conversions).
+    """
+    try:
+        with path.open("rb") as handle:
+            if handle.read(4) != b"GGUF":
+                return None
+            version = struct.unpack("<I", handle.read(4))[0]
+            if version < 1:
+                return None
+            handle.read(8)  # tensor count
+            kv_count = struct.unpack("<Q", handle.read(8))[0]
+            for _ in range(min(kv_count, 4096)):
+                key = _gguf_read_string(handle)
+                value_type = struct.unpack("<I", handle.read(4))[0]
+                value = _gguf_skip_value(handle, value_type)
+                if key == "general.architecture":
+                    return value
+    except (OSError, struct.error, ValueError, UnicodeDecodeError):
+        return None
+    return None
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -227,12 +292,51 @@ def copy_file(
 # ---------------------------------------------------------------------------
 
 
+_AUTO_COMFY_ROOT: Path | None = None
+_AUTO_COMFY_ROOT_DONE = False
+
+
 def comfyui_root(cfg: dict[str, Any]) -> Path | None:
-    value = str(cfg.get("comfyui", {}).get("root", "") or "")
-    if not value:
-        return None
-    root = Path(value)
-    return root if root.exists() else None
+    global _AUTO_COMFY_ROOT, _AUTO_COMFY_ROOT_DONE
+
+    section = cfg.get("comfyui", {})
+    value = str(section.get("root", "") or "")
+    if value:
+        root = Path(value)
+        return root if root.exists() else None
+
+    # Allow a manual config that only sets the embedded Python or the launcher.
+    python_value = str(section.get("python", "") or "")
+    if python_value:
+        python_path = Path(python_value)
+        if (
+            python_path.exists()
+            and python_path.parent.name.lower() == "python_embeded"
+        ):
+            root = python_path.parent.parent
+            if root.exists():
+                return root
+    start_value = str(section.get("start_command", "") or "")
+    if start_value:
+        start = Path(start_value)
+        if start.exists():
+            root = start.parent
+            if root.exists():
+                return root
+
+    # Last resort: reuse the launcher's auto-detection when config.toml leaves
+    # the ComfyUI paths empty. Cache it: the UI and model manager call this often.
+    if _AUTO_COMFY_ROOT_DONE:
+        return _AUTO_COMFY_ROOT
+    _AUTO_COMFY_ROOT_DONE = True
+    try:
+        from launcher import find_comfyui  # noqa: PLC0415
+
+        _start, _python, root, error = find_comfyui(cfg)
+        _AUTO_COMFY_ROOT = root if error is None else None
+    except Exception:  # noqa: BLE001
+        _AUTO_COMFY_ROOT = None
+    return _AUTO_COMFY_ROOT
 
 
 def extra_model_paths_path(cfg: dict[str, Any]) -> Path | None:
@@ -289,9 +393,9 @@ def ensure_extra_model_paths(cfg: dict[str, Any]) -> tuple[bool, str | None]:
 
 
 def endpoint_port(cfg: dict[str, Any]) -> int:
-    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452"))
+    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:8188"))
     parsed = urllib.parse.urlparse(endpoint)
-    return parsed.port or 12452
+    return parsed.port or 8188
 
 
 def stop_comfyui(cfg: dict[str, Any]) -> None:
@@ -336,7 +440,7 @@ def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
 
 
 def wait_for_comfyui(cfg: dict[str, Any], timeout: float = 240.0) -> bool:
-    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452")).rstrip("/")
+    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:8188")).rstrip("/")
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:

@@ -16,7 +16,10 @@ from typing import Any, Callable
 from i18n import profile_text, tr
 from models_tools import (
     FOLDER_FOR_KIND,
+    KIND_LABELS,
+    comfyui_root,
     ensure_extra_model_paths,
+    gguf_architecture,
     human_size,
     install_krea_node,
     krea_node_status,
@@ -39,6 +42,22 @@ RED = "#ef4444"
 YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
+# Locate accepts every format ComfyUI can load for that kind. The expected
+# filename in models.json is only a default: users may have another naming.
+MODEL_FILE_PATTERNS = {
+    "unet": "*.gguf *.safetensors *.sft",
+    "lora": "*.gguf *.safetensors *.sft *.pt *.pth",
+    "text_encoder": "*.safetensors *.sft *.gguf *.pt *.pth *.bin",
+    "vae": "*.safetensors *.sft *.pt *.pth *.ckpt",
+}
+# Folders actually scanned by the loaders used by StableCraft.
+MODEL_SUBDIRS = {
+    "unet": ("diffusion_models", "unet"),
+    "lora": ("loras",),
+    "text_encoder": ("text_encoders", "clip"),
+    "vae": ("vae",),
+}
+
 
 class ModelManager(tk.Toplevel):
     def __init__(self, app: Any) -> None:
@@ -54,6 +73,7 @@ class ModelManager(tk.Toplevel):
         self.node_status: dict[str, Any] | None = None
         self._needs_restart = False
         self._rows: list[dict[str, Any]] = []
+        self._last_locate_dirs: dict[str, Path] = {}
 
         self.title(
             tr(
@@ -338,6 +358,20 @@ class ModelManager(tk.Toplevel):
                 wraplength=680,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(2, 3))
+        if kind != "node":
+            tk.Label(
+                frame,
+                text=tr(
+                    "Nom libre : choisis ton fichier même s'il ne porte pas "
+                    "le nom attendu."
+                ),
+                bg=PANEL,
+                fg=MUTED,
+                anchor="w",
+                justify="left",
+                wraplength=680,
+                font=("Segoe UI", 8),
+            ).pack(fill="x", pady=(0, 3))
 
         option_var: tk.StringVar | None = None
         option_by_label: dict[str, dict[str, Any]] = {}
@@ -430,25 +464,112 @@ class ModelManager(tk.Toplevel):
     # Locate / download
     # ------------------------------------------------------------------
 
+    def _comfy_models_dir(self) -> Path | None:
+        configured = str(self.cfg.get("comfyui", {}).get("models_dir", "") or "")
+        if configured:
+            path = Path(configured)
+            if path.exists():
+                return path
+        root = comfyui_root(self.cfg)
+        if root is not None:
+            path = root / "ComfyUI" / "models"
+            if path.exists():
+                return path
+        return None
+
+    def _locate_initial_dir(self, kind: str) -> str | None:
+        last = self._last_locate_dirs.get(kind)
+        if last is not None and last.exists():
+            return str(last)
+        models = self._comfy_models_dir()
+        if models is not None:
+            return str(models)
+        store = self.app._model_store_dir()
+        for path in (store / FOLDER_FOR_KIND.get(kind, "unet"), store):
+            if path.exists():
+                return str(path)
+        return None
+
+    def _comfy_relative_name(self, source: Path, kind: str) -> str | None:
+        models = self._comfy_models_dir()
+        if models is None:
+            return None
+        for sub in MODEL_SUBDIRS.get(kind, ()):
+            try:
+                relative = source.resolve().relative_to((models / sub).resolve())
+                return str(relative)
+            except (OSError, ValueError):
+                continue
+        return None
+
+    def _is_in_comfy_model_folder(self, source: Path, kind: str) -> bool:
+        return self._comfy_relative_name(source, kind) is not None
+
+    def _under_comfy_models(self, source: Path) -> bool:
+        models = self._comfy_models_dir()
+        if models is None:
+            return False
+        try:
+            source.resolve().relative_to(models.resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
     def _locate(self, item: dict[str, Any]) -> None:
         if self.busy:
             return
         kind = str(item.get("kind", ""))
-        patterns = "*.gguf" if kind in {"unet", "lora"} else "*.safetensors *.sft"
-        selected = filedialog.askopenfilename(
-            parent=self,
-            title=tr("Localiser {label}", label=item.get("label", kind)),
-            filetypes=[
+        patterns = MODEL_FILE_PATTERNS.get(kind, "*.*")
+        initialdir = self._locate_initial_dir(kind)
+        dialog_options: dict[str, Any] = {
+            "parent": self,
+            "title": tr("Localiser {label}", label=item.get("label", kind)),
+            "filetypes": [
                 (tr("Modèles"), patterns),
                 (tr("Tous les fichiers"), "*.*"),
             ],
-        )
+        }
+        if initialdir:
+            dialog_options["initialdir"] = initialdir
+        selected = filedialog.askopenfilename(**dialog_options)
         if not selected:
             return
         source = Path(selected)
         if not source.is_file():
             messagebox.showerror(tr("Fichier introuvable"), str(source), parent=self)
             return
+        self._last_locate_dirs[kind] = source.parent
+        if (
+            kind == "unet"
+            and source.suffix.lower() == ".gguf"
+            and self.profile_key == "qwen_image_21"
+        ):
+            architecture = gguf_architecture(source)
+            if architecture is None:
+                if not messagebox.askyesno(
+                    tr("GGUF sans métadonnée"),
+                    tr(
+                        "Ce GGUF n'annonce pas general.architecture = qwen_image. "
+                        "ComfyUI ne pourra probablement pas le charger pour Qwen "
+                        "Image 2.1.\n\nLes GGUF Unsloth sont concernés : utilise la "
+                        "version Abiray ou un safetensors officiel.\n\n"
+                        "Continuer quand même ?"
+                    ),
+                    parent=self,
+                ):
+                    return
+            elif architecture != "qwen_image":
+                messagebox.showerror(
+                    tr("GGUF incompatible"),
+                    tr(
+                        "Ce GGUF annonce l'architecture « {architecture} ». "
+                        "Qwen Image 2.1 attend « qwen_image ». Choisis le bon fichier.",
+                        architecture=architecture,
+                    ),
+                    parent=self,
+                )
+                return
+
         visible: list[str] = []
         if self.app.comfy_ok:
             try:
@@ -457,12 +578,30 @@ class ModelManager(tk.Toplevel):
                 visible = []
         if visible:
             set_selected_file(self.app.profile_key, kind, visible[0])
+            self._refresh_quantizations()
             self.status.config(
                 text=tr("{filename} est déjà visible par ComfyUI.", filename=visible[0]),
                 fg=GREEN,
             )
             self.app._check_models()
             self.refresh()
+            return
+
+        if self._under_comfy_models(source) and not self._is_in_comfy_model_folder(
+            source, kind
+        ):
+            folders = ", ".join(MODEL_SUBDIRS.get(kind, ()))
+            messagebox.showwarning(
+                tr("Dossier de modèle incorrect"),
+                tr(
+                    "Ce fichier est dans le dossier de ComfyUI, mais pas dans un "
+                    "sous-dossier utilisable pour {kind}.\n\nDéplace-le dans : "
+                    "{folders}\n\npuis relance Localiser.",
+                    kind=KIND_LABELS.get(kind, kind),
+                    folders=folders,
+                ),
+                parent=self,
+            )
             return
 
         store = self.app._model_store_dir()
@@ -532,6 +671,15 @@ class ModelManager(tk.Toplevel):
             )
             return
 
+        if self._is_in_comfy_model_folder(source, kind):
+            # The file is already in a folder ComfyUI scans: use it in place,
+            # never duplicate a multi-GB model into StableCraft's store.
+            selected_name = self._comfy_relative_name(source, kind) or source.name
+            self._use_local_file(
+                source, kind, ensure_store=False, selected_name=selected_name
+            )
+            return
+
         if not messagebox.askyesno(
             tr("Copier le modèle ?"),
             tr(
@@ -548,18 +696,33 @@ class ModelManager(tk.Toplevel):
             lambda progress: self._copy_and_select(source, destination, kind, progress),
         )
 
-    def _use_local_file(self, path: Path, kind: str) -> None:
-        changed, error = ensure_extra_model_paths(self.cfg)
-        if error:
-            messagebox.showerror(tr("Chemins ComfyUI"), error, parent=self)
-            return
-        set_selected_file(self.app.profile_key, kind, path.name)
+    def _refresh_quantizations(self) -> None:
+        try:
+            self.app._populate_quantizations()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _use_local_file(
+        self,
+        path: Path,
+        kind: str,
+        *,
+        ensure_store: bool = True,
+        selected_name: str | None = None,
+    ) -> None:
+        if ensure_store:
+            changed, error = ensure_extra_model_paths(self.cfg)
+            if error:
+                messagebox.showerror(tr("Chemins ComfyUI"), error, parent=self)
+                return
+        name = selected_name or path.name
+        set_selected_file(self.app.profile_key, kind, name)
+        self._refresh_quantizations()
         self._needs_restart = True
         self.status.config(
             text=tr(
-                "{filename} est dans le dossier des modèles. Redémarre ComfyUI "
-                "pour le voir.",
-                filename=path.name,
+                "{filename} est sélectionné. Redémarre ComfyUI pour qu'il le voie.",
+                filename=name,
             ),
             fg=GREEN,
         )
@@ -581,6 +744,7 @@ class ModelManager(tk.Toplevel):
         if error:
             raise RuntimeError(error)
         set_selected_file(self.app.profile_key, kind, destination.name)
+        self._refresh_quantizations()
         self._needs_restart = True
         return tr("Déplacé : {filename}", filename=destination.name)
 
@@ -598,6 +762,7 @@ class ModelManager(tk.Toplevel):
         if error:
             raise RuntimeError(error)
         set_selected_file(self.app.profile_key, kind, destination.name)
+        self._refresh_quantizations()
         self._needs_restart = True
         return tr("Copié : {filename}", filename=destination.name)
 
@@ -661,6 +826,7 @@ class ModelManager(tk.Toplevel):
                     parent=self,
                 ):
                     set_selected_file(self.app.profile_key, str(item.get("kind")), filename)
+                    self._refresh_quantizations()
                     changed, error = ensure_extra_model_paths(self.cfg)
                     if error:
                         messagebox.showerror(tr("Chemins ComfyUI"), error, parent=self)
@@ -688,6 +854,7 @@ class ModelManager(tk.Toplevel):
             if error:
                 raise RuntimeError(error)
             set_selected_file(self.app.profile_key, str(item.get("kind")), filename)
+            self._refresh_quantizations()
             self._needs_restart = True
             return tr("Téléchargé : {filename}", filename=filename)
 

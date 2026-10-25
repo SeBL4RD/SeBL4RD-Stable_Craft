@@ -203,27 +203,35 @@ def find_comfyui(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, Path | 
 
 
 def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
-    """Return a batch that starts ComfyUI without opening the browser.
+    """Return a ComfyUI batch with StableCraft's port and browser options.
 
-    ComfyUI's `--windows-standalone-build` forces `--auto-launch`; only the
-    `--disable-auto-launch` argument cancels it. The user's launcher batch does
-    not forward arguments, so make a temporary copy with the flag added.
+    ComfyUI's `--windows-standalone-build` forces `--auto-launch`; only
+    `--disable-auto-launch` cancels it. The user's launcher batch does not
+    forward arguments, so make a temporary copy with the flags added.
+
+    The port is derived from [comfyui] endpoint when it is not already set in
+    the batch, so changing the endpoint is enough for a local ComfyUI.
     """
-    enabled = bool(cfg.get("comfyui", {}).get("disable_browser", True))
-    if not enabled or start_command.suffix.lower() not in {".bat", ".cmd"}:
+    section = cfg.get("comfyui", {})
+    disable_browser = bool(section.get("disable_browser", True))
+    endpoint = str(section.get("endpoint", "http://127.0.0.1:8188"))
+    parsed = urllib.parse.urlparse(endpoint)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 8188
+    is_local = host in {"127.0.0.1", "localhost", "::1"}
+
+    if start_command.suffix.lower() not in {".bat", ".cmd"}:
         return start_command
     try:
         text = start_command.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return start_command
-    if "--disable-auto-launch" in text:
         return start_command
 
     lines = text.splitlines(keepends=True)
     changed = False
     for index, line in enumerate(lines):
         lowered = line.lower()
-        if "main.py" not in lowered or "disable-auto-launch" in lowered:
+        if "main.py" not in lowered or lowered.lstrip().startswith(("rem ", "::")):
             continue
         newline = ""
         content = line
@@ -231,8 +239,21 @@ def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
             content, newline = content[:-2], "\r\n"
         elif content.endswith("\n") or content.endswith("\r"):
             content, newline = content[:-1], content[-1]
-        lines[index] = f"{content} --disable-auto-launch{newline}"
-        changed = True
+
+        additions: list[str] = []
+        if disable_browser and "disable-auto-launch" not in lowered:
+            additions.append("--disable-auto-launch")
+        port_match = re.search(r"--port(?:=|\s+)(\d+)", lowered)
+        if is_local and port_match is None:
+            additions.append(f"--port {port}")
+        elif port_match is not None and int(port_match.group(1)) != port:
+            log(
+                f"Attention: ComfyUI démarre sur le port {port_match.group(1)} "
+                f"mais [comfyui] endpoint utilise le port {port}."
+            )
+        if additions:
+            lines[index] = f"{content} {' '.join(additions)}{newline}"
+            changed = True
     if not changed:
         return start_command
 
@@ -240,12 +261,12 @@ def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
     # batch uses paths relative to its working directory, so user/runtime is safe.
     if "%~dp0" in text:
         wrapper = start_command.with_name(
-            f"{start_command.stem}.stablecraft-no-browser{start_command.suffix}"
+            f"{start_command.stem}.stablecraft{start_command.suffix}"
         )
     else:
         runtime = USER_DIR / "runtime"
         runtime.mkdir(parents=True, exist_ok=True)
-        wrapper = runtime / f"comfyui-no-browser{start_command.suffix}"
+        wrapper = runtime / f"comfyui-stablecraft{start_command.suffix}"
     try:
         wrapper.write_text("".join(lines), encoding="utf-8")
     except OSError:
@@ -427,7 +448,7 @@ def main() -> int:
         )
         return 1
 
-    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452"))
+    endpoint = str(cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:8188"))
     parsed = urllib.parse.urlparse(endpoint)
     comfy_host = parsed.hostname or "127.0.0.1"
     comfy_port = parsed.port or 8188

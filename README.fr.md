@@ -6,7 +6,7 @@ StableCraft est une application compagne pour PhotoCraft : on entoure une zone a
 lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
 Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de génération.
 
-![Version](https://img.shields.io/badge/version-0.2.2-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.3-3b82f6)
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
@@ -61,7 +61,7 @@ numéro de version figé.
 - **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
 - **ComfyUI portable** (avec `python_embeded\python.exe`), récent : `0.42.1+`
   pour Qwen Image 2.1 et les nœuds Krea 2.
-- **Python 3.11+**.
+- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut).
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
@@ -121,6 +121,14 @@ Ou, en ligne de commande :
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
+Si ComfyUI utilise un autre port, passe `-ComfyEndpoint` ou modifie
+`[comfyui] endpoint` dans `config.toml` après l'installation :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
+  -ComfyEndpoint "http://127.0.0.1:12452"
+```
+
 ### Option 2 — manuel
 
 ```powershell
@@ -137,6 +145,7 @@ executable = "D:/.../photocraft.exe"
 control_port = 7990
 
 [comfyui]
+endpoint = "http://127.0.0.1:8188"
 root = "F:/ComfyUI_windows_portable"
 python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 ```
@@ -145,6 +154,19 @@ Le port de contrôle par défaut est **7990**. Le port 7878 tombe dans une plage
 ports exclue par Windows sur certaines machines, ce qui fait échouer le control
 channel de PhotoCraft avec une erreur de permissions d'accès.
 
+L'endpoint ComfyUI par défaut est **http://127.0.0.1:8188**, le port par défaut de
+ComfyUI. Si ton ComfyUI écoute sur un autre port, change `endpoint` :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:12452"
+```
+
+Quand StableCraft démarre ComfyUI, il ajoute `--port <port de l'endpoint>` au batch
+`start_command` si celui-ci ne contient pas déjà un `--port`. Si le batch en contient
+un, garde les deux ports identiques ; StableCraft écrit un avertissement dans le
+journal en cas de différence.
+
 Au lancement, `StableCraft.bat` :
 
 1. vérifie les chemins ;
@@ -152,6 +174,24 @@ Au lancement, `StableCraft.bat` :
 3. démarre PhotoCraft avec le control channel si nécessaire ;
 4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
 5. ouvre l'interface.
+
+### Lancer le batch
+
+`StableCraft.bat` est un fichier batch Windows. Double-clique dessus, ou lance-le
+avec :
+
+- **cmd.exe** : `StableCraft.bat`
+- **PowerShell** : `.\StableCraft.bat`
+- **Git Bash / MSYS** : `cmd //c StableCraft.bat`
+
+Ce n'est pas un script Linux/WSL. Le batch utilise `py -3` s'il est disponible,
+sinon `python` ; Python **3.11+** et **Tkinter** sont requis. Si aucun ne fonctionne,
+il affiche les instructions d'installation au lieu de se fermer sans explication.
+
+Si la fenêtre se ferme immédiatement, lance le batch depuis cmd.exe ou PowerShell
+pour lire le message, puis consulte `user\logs\launcher.log`. Utilise l'installateur
+python.org (pas l'alias du Microsoft Store) et coche « Add python.exe to PATH ». Si
+Windows a bloqué un `.bat` téléchargé, ouvre ses Propriétés et clique **Débloquer**.
 
 Si un chemin obligatoire manque, un message clair s'affiche. Les modèles manquants ne
 bloquent pas l'installation : l'UI les signale et **Générer** ouvre le gestionnaire de
@@ -210,6 +250,13 @@ pratiques et des exemples.
 
 - les fichiers manquants sont listés avec **Localiser** (utiliser un fichier existant)
   et **Télécharger** (taille, source et confirmation) ;
+- **Localiser** accepte n'importe quel nom de fichier supporté (**GGUF ou
+  safetensors**) : il n'a pas besoin de correspondre au nom attendu dans
+  `models.json`. La boîte de dialogue s'ouvre dans le dossier `models` de ComfyUI et
+  conserve le nom réel du fichier choisi. Un fichier
+  déjà présent dans un dossier de modèles de ComfyUI est utilisé sur place, sans être
+  recopié dans le projet. Choisis un UNet/modèle de diffusion seul, pas un checkpoint
+  tout-en-un ;
 - les choix de quantification sont limités à **Q4_K_M**, **Q8_0** et **BF16** quand le
   modèle les propose ;
 - les fichiers téléchargés vont dans `models/` et sont ajoutés à

@@ -24,7 +24,7 @@
 param(
     [string]$PhotoCraft = "",
     [string]$ComfyPython = "",
-    [string]$ComfyEndpoint = "http://127.0.0.1:12452",
+    [string]$ComfyEndpoint = "",
     [string]$ConfigFile = "",
     [switch]$NoShortcuts,
     [switch]$NoDesktopShortcut
@@ -156,15 +156,30 @@ $ComfyPython = (Resolve-Path $ComfyPython).Path
 Write-Host "Python ComfyUI : $ComfyPython" -ForegroundColor Green
 
 Write-Step "Vérification du Python de l'UI"
-$systemPython = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
-if (-not $systemPython) {
-    Write-Warning "python.exe introuvable. L'UI Tkinter ne pourra pas démarrer. Installe Python 3.11+."
-} else {
-    & $systemPython -c "import tkinter" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Tkinter est absent de $systemPython. L'UI ne pourra pas démarrer."
+$uiPythonOk = $false
+$uiPythonLabel = $null
+$pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+if ($pyLauncher) {
+    & $pyLauncher.Source -3 -c "import sys, tkinter; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $uiPythonOk = $true
+        $uiPythonLabel = "$($pyLauncher.Source) -3"
     }
-    Write-Host "Python UI : $systemPython" -ForegroundColor Green
+}
+if (-not $uiPythonOk) {
+    $pythonExe = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+    if ($pythonExe) {
+        & $pythonExe -c "import sys, tkinter; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $uiPythonOk = $true
+            $uiPythonLabel = $pythonExe
+        }
+    }
+}
+if (-not $uiPythonOk) {
+    Write-Warning "Python 3.11+ avec Tkinter introuvable. L'UI ne pourra pas démarrer. Installe Python depuis python.org en cochant 'Add python.exe to PATH' et 'tcl/tk and IDLE'."
+} else {
+    Write-Host "Python UI : $uiPythonLabel" -ForegroundColor Green
 }
 
 & $ComfyPython -c "import requests, PIL" 2>$null
@@ -198,6 +213,23 @@ if (Test-Path $legacySessions) {
 $configTarget = Join-Path $Root "config.toml"
 $comfyRoot = Split-Path (Split-Path $ComfyPython)
 $startCommand = Join-Path $comfyRoot "run_nvidia_gpu.bat"
+
+if (-not $ComfyEndpoint) {
+    $ComfyEndpoint = "http://127.0.0.1:8188"
+    $sourceConfig = $null
+    if ($ConfigFile -and (Test-Path $ConfigFile)) {
+        $sourceConfig = $ConfigFile
+    } elseif (Test-Path $configTarget) {
+        $sourceConfig = $configTarget
+    }
+    if ($sourceConfig) {
+        $existingText = Get-Content $sourceConfig -Raw -Encoding UTF8
+        $endpointMatch = [regex]::Match($existingText, '(?m)^\s*endpoint\s*=\s*"([^"]+)"')
+        if ($endpointMatch.Success) {
+            $ComfyEndpoint = $endpointMatch.Groups[1].Value
+        }
+    }
+}
 
 $script:TokenToml = Convert-ToTomlPath $token
 $script:UserToml = Convert-ToTomlPath $userDir

@@ -11,4 +11,8 @@ automatically when it downloads or copies a file.
 If the models already live in ComfyUI's folders, leave the paths commented out in
 `config.toml`; the manager will detect them through ComfyUI.
 
+**Locate** accepts any supported filename (GGUF or safetensors); it does not need to
+match the name in `models.json`. Files already in a ComfyUI model folder are used in
+place, without being copied here.
+
 StableCraft never downloads a model without explicit confirmation.

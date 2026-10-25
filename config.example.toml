@@ -36,7 +36,10 @@ control_token_file = ""
 automation_root = ""
 
 [comfyui]
-endpoint = "http://127.0.0.1:12452"
+# 8188 = port par défaut de ComfyUI. Si ton ComfyUI écoute sur un autre port,
+# change endpoint ci-dessous. StableCraft ajoutera automatiquement --port à
+# start_command si celui-ci n'en contient pas déjà un.
+endpoint = "http://127.0.0.1:8188"
 # Dossier ComfyUI portable (celui qui contient run_nvidia_gpu.bat et python_embeded).
 # Vide = recherche automatique.
 root = ""

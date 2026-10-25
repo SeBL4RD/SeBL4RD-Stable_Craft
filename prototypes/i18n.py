@@ -320,14 +320,34 @@ EN: dict[str, str] = {
     ),
     "Déplacement de {filename}…": "Moving {filename}…",
     "Déplacé : {filename}": "Moved: {filename}",
-    "{filename} est dans le dossier des modèles. Redémarre ComfyUI pour le voir.": (
-        "{filename} is in the models folder. Restart ComfyUI to see it."
+    "{filename} est sélectionné. Redémarre ComfyUI pour qu'il le voie.": (
+        "{filename} is selected. Restart ComfyUI so it can see it."
+    ),
+    "Nom libre : choisis ton fichier même s'il ne porte pas le nom attendu.": (
+        "Free naming: pick your file even if it does not match the expected name."
     ),
     "Ce fichier est hors du dossier des modèles.\n\nLe copier dans :\n{destination}\n\nPuis ajouter le dossier aux chemins ComfyUI ?": (
         "This file is outside the models folder.\n\nCopy it to:\n{destination}\n\n"
         "Then add the folder to ComfyUI's model paths?"
     ),
     "Fichier introuvable": "File not found",
+    "GGUF sans métadonnée": "GGUF without metadata",
+    "Ce GGUF n'annonce pas general.architecture = qwen_image. ComfyUI ne pourra probablement pas le charger pour Qwen Image 2.1.\n\nLes GGUF Unsloth sont concernés : utilise la version Abiray ou un safetensors officiel.\n\nContinuer quand même ?": (
+        "This GGUF does not declare general.architecture = qwen_image. "
+        "ComfyUI will probably not load it for Qwen Image 2.1.\n\n"
+        "This affects Unsloth GGUFs: use the Abiray version or the official "
+        "safetensors file.\n\nContinue anyway?"
+    ),
+    "GGUF incompatible": "Incompatible GGUF",
+    "Ce GGUF annonce l'architecture « {architecture} ». Qwen Image 2.1 attend « qwen_image ». Choisis le bon fichier.": (
+        "This GGUF declares architecture “{architecture}”. Qwen Image 2.1 "
+        "expects “qwen_image”. Choose the correct file."
+    ),
+    "Dossier de modèle incorrect": "Incorrect model folder",
+    "Ce fichier est dans le dossier de ComfyUI, mais pas dans un sous-dossier utilisable pour {kind}.\n\nDéplace-le dans : {folders}\n\npuis relance Localiser.": (
+        "This file is inside ComfyUI's models folder, but not in a subfolder "
+        "usable for {kind}.\n\nMove it to: {folders}\n\nthen click Locate again."
+    ),
     "ComfyUI injoignable": "ComfyUI unreachable",
     "Démarre ComfyUI avant de localiser un modèle, pour vérifier qu'il est bien visible.": (
         "Start ComfyUI before locating a model, so visibility can be verified."

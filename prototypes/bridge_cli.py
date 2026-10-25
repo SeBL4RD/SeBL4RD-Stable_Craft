@@ -283,10 +283,14 @@ def build_workflow(
         raise ComfyError("le mode EDIT nécessite une image source")
 
     def start(apply_lora: bool = False) -> tuple[dict[str, Any], list[Any]]:
+        unet_inputs: dict[str, Any] = {"unet_name": unet}
+        if not unet.lower().endswith(".gguf"):
+            # ComfyUI's UNETLoader requires weight_dtype; GGUF has its own loader.
+            unet_inputs["weight_dtype"] = "default"
         workflow: dict[str, Any] = {
             "1": {
                 "class_type": unet_loader_for(unet),
-                "inputs": {"unet_name": unet},
+                "inputs": unet_inputs,
             }
         }
         model: list[Any] = ["1", 0]
@@ -505,10 +509,6 @@ def build_workflow(
                             "resolution": 1024,
                         },
                     },
-                    "5": {
-                        "class_type": "EmptyLatentImage",
-                        "inputs": {"width": width, "height": height, "batch_size": 1},
-                    },
                     "6": {
                         "class_type": "QwenImage21Cache",
                         "inputs": {"model": model, "device": "auto", "dtype": "default"},
@@ -524,7 +524,9 @@ def build_workflow(
                             "scheduler": "simple",
                             "positive": ["4", 0],
                             "negative": ["4", 1],
-                            "latent_image": ["5", 0],
+                            # Qwen Image 2.1 uses a 64-channel latent; the text
+                            # encoder returns the matching empty latent on output 2.
+                            "latent_image": ["4", 2],
                             "denoise": 1.0,
                         },
                     },
@@ -1584,7 +1586,7 @@ def main() -> None:
     pcfg = cfg.get("profiles", {}).get(profile_name, {})
     manifest = manifest_profile(profile_name)
 
-    comfy_endpoint = cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:12452")
+    comfy_endpoint = cfg.get("comfyui", {}).get("endpoint", "http://127.0.0.1:8188")
     host = cfg.get("photocraft", {}).get("control_host", "127.0.0.1")
     port = int(cfg.get("photocraft", {}).get("control_port", 7990))
     token_path = as_path(
@@ -1623,8 +1625,10 @@ def main() -> None:
         raise SystemExit(
             "--reference nécessite --session-mode (nouvelle session) ou --session <id>."
         )
-    if args.reference and mode != "edit":
-        raise SystemExit("--reference n'est disponible qu'en mode EDIT.")
+    if args.reference and mode == "t2i" and profile_name not in T2I_REFERENCE_PROFILES:
+        raise SystemExit(
+            "Ce profil n'utilise pas la référence en T2I ; passe en mode EDIT."
+        )
 
     if args.session_mode or args.session or args.apply:
         ctx = {
