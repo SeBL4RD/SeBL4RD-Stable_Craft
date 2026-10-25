@@ -1,7 +1,10 @@
 # Prototype outputs
 prototypes/out/
 __pycache__/
-demo/
+demo/*
+!demo/t2i_forest.png
+!demo/DEMO_StableCraft_EDIT.jpg
+!demo/DEMO_full.jpg
 *.pyc
 
 # Local configuration (contains absolute paths)

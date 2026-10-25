@@ -29,6 +29,14 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 - aucun poids de modèle dans le dépôt ;
 - aucun téléchargement silencieux.
 
+
+<a href="./demo/t2i_forest.png" target="_blank"><img src="./demo/t2i_forest.png" alt="Image 1" width="400"></a> <a href="./demo/DEMO_StableCraft_EDIT.jpg" target="_blank"><img src="./demo/DEMO_StableCraft_EDIT.jpg" alt="Image 2" width="400"></a>
+
+
+<a href="./demo/DEMO_full.jpg" target="_blank">
+  <img src="./demo/DEMO_full.jpg" alt="image info" width="600">
+</a>
+
 ## Fondement
 
 StableCraft ne modifie pas PhotoCraft et n'est pas un fork.
@@ -50,7 +58,7 @@ numéro de version figé.
 
 ### Logiciel
 
-- **PhotoCraft 0.14.0** ou supérieur (portable ou installé).
+- **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
 - **ComfyUI portable** (avec `python_embeded\python.exe`), récent : `0.42.1+`
   pour Qwen Image 2.1 et les nœuds Krea 2.
 - **Python 3.11+**.
