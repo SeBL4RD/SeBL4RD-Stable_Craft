@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 AUTHOR = "SeBL4RD"
 REPO_OWNER = "SeBL4RD"
 REPO_NAME = "SeBL4RD-Stable_Craft"
