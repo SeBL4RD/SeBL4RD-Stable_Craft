@@ -17,7 +17,9 @@ from i18n import profile_text, tr
 from models_tools import (
     FOLDER_FOR_KIND,
     KIND_LABELS,
+    UI_FONT,
     comfyui_root,
+    open_path,
     ensure_extra_model_paths,
     gguf_architecture,
     human_size,
@@ -105,7 +107,7 @@ class ModelManager(tk.Toplevel):
             text=profile_text(self.profile, "label") or self.profile_key,
             bg=BG,
             fg=FG,
-            font=("Segoe UI", 15, "bold"),
+            font=(UI_FONT, 15, "bold"),
             anchor="w",
         ).pack(fill="x")
         tk.Label(
@@ -116,7 +118,7 @@ class ModelManager(tk.Toplevel):
             justify="left",
             wraplength=710,
             anchor="w",
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(fill="x", pady=(2, 0))
         warning = profile_text(self.profile, "warning").strip()
         if warning:
@@ -128,7 +130,7 @@ class ModelManager(tk.Toplevel):
                 justify="left",
                 wraplength=710,
                 anchor="w",
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
             ).pack(fill="x", pady=(3, 0))
         self.restart_label = tk.Label(
             header,
@@ -138,7 +140,7 @@ class ModelManager(tk.Toplevel):
             anchor="w",
             wraplength=710,
             justify="left",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.restart_label.pack(fill="x", pady=(4, 0))
 
@@ -168,7 +170,7 @@ class ModelManager(tk.Toplevel):
             anchor="w",
             justify="left",
             wraplength=700,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         )
         self.summary.pack(fill="x", pady=(2, 6))
 
@@ -182,7 +184,7 @@ class ModelManager(tk.Toplevel):
             anchor="w",
             justify="left",
             wraplength=650,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         )
         self.node_label.pack(fill="x")
         node_actions = tk.Frame(self.node_frame, bg=PANEL)
@@ -198,7 +200,7 @@ class ModelManager(tk.Toplevel):
             bg=PANEL,
             fg=ACCENT,
             cursor="hand2",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.node_link.pack(side="left", padx=(10, 0))
         self.node_link.bind("<Button-1>", self._open_node_release)
@@ -218,7 +220,7 @@ class ModelManager(tk.Toplevel):
             anchor="w",
             wraplength=730,
             justify="left",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.status.pack(fill="x", pady=(3, 4))
         actions = tk.Frame(footer, bg=BG)
@@ -255,7 +257,7 @@ class ModelManager(tk.Toplevel):
             bd=0,
             padx=9,
             pady=4,
-            font=("Segoe UI", 8, "bold"),
+            font=(UI_FONT, 8, "bold"),
             cursor="hand2",
         )
 
@@ -345,7 +347,7 @@ class ModelManager(tk.Toplevel):
             bg=PANEL,
             fg=FG,
             anchor="w",
-            font=("Segoe UI", 9, "bold"),
+            font=(UI_FONT, 9, "bold"),
         ).pack(side="left", fill="x", expand=True)
         if item.get("note"):
             tk.Label(
@@ -356,7 +358,7 @@ class ModelManager(tk.Toplevel):
                 anchor="w",
                 justify="left",
                 wraplength=680,
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
             ).pack(fill="x", pady=(2, 3))
         if kind != "node":
             tk.Label(
@@ -406,7 +408,7 @@ class ModelManager(tk.Toplevel):
                 bg=PANEL,
                 fg=MUTED,
                 anchor="w",
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
             )
             size_label.pack(side="left", padx=(8, 0), pady=(3, 0))
 
@@ -426,7 +428,7 @@ class ModelManager(tk.Toplevel):
                 text=tr("Voir le nœud Krea 2 ci-dessus ou mettre à jour ComfyUI."),
                 bg=PANEL,
                 fg=YELLOW,
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
             ).pack(side="left", padx=(5, 0))
         else:
             self._button(
@@ -448,7 +450,7 @@ class ModelManager(tk.Toplevel):
                     text=tr("Fichier local uniquement"),
                     bg=PANEL,
                     fg=MUTED,
-                    font=("Segoe UI", 8),
+                    font=(UI_FONT, 8),
                 ).pack(side="left", padx=(5, 0))
 
         self._rows.append(
@@ -1107,7 +1109,7 @@ class ModelManager(tk.Toplevel):
         path = self.app._model_store_dir()
         path.mkdir(parents=True, exist_ok=True)
         try:
-            os.startfile(str(path))  # type: ignore[attr-defined]
+            open_path(path)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(tr("Dossier des modèles"), str(exc), parent=self)
 

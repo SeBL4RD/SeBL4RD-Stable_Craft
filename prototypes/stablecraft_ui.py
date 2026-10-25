@@ -40,7 +40,10 @@ from app_meta import (  # noqa: E402
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
 from i18n import current_language, profile_text, set_language, tr  # noqa: E402
 from models_tools import (  # noqa: E402
+    MONO_FONT,
+    UI_FONT,
     download_options,
+    open_path,
     krea_node_status,
     latest_krea_release,
     resolve_filename,
@@ -263,8 +266,8 @@ class StableCraftApp(tk.Tk):
         style.configure("TLabel", background=BG, foreground=FG)
         style.configure("Panel.TLabel", background=PANEL, foreground=FG)
         style.configure("Muted.TLabel", background=BG, foreground=MUTED)
-        style.configure("Title.TLabel", background=BG, foreground=FG, font=("Segoe UI", 18, "bold"))
-        style.configure("Sub.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9))
+        style.configure("Title.TLabel", background=BG, foreground=FG, font=(UI_FONT, 18, "bold"))
+        style.configure("Sub.TLabel", background=BG, foreground=MUTED, font=(UI_FONT, 9))
         style.configure("TButton", background=PANEL_2, foreground=FG, borderwidth=0, padding=6)
         style.map("TButton", background=[("active", BORDER)])
         style.configure(
@@ -299,7 +302,7 @@ class StableCraftApp(tk.Tk):
         style.configure("TCheckbutton", background=BG, foreground=FG)
         style.map("TCheckbutton", background=[("active", BG)])
 
-    def _text(self, parent: tk.Misc, height: int, font: tuple[str, int] | tuple[str, int, str] = ("Segoe UI", 10)) -> tk.Text:
+    def _text(self, parent: tk.Misc, height: int, font: tuple[str, int] | tuple[str, int, str] = (UI_FONT, 10)) -> tk.Text:
         return tk.Text(
             parent,
             height=height,
@@ -355,7 +358,7 @@ class StableCraftApp(tk.Tk):
         header = tk.Frame(frame, bg=BG)
         header.pack(fill="x")
         tk.Label(
-            header, text=tr(title), bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")
+            header, text=tr(title), bg=BG, fg=MUTED, font=(UI_FONT, 9, "bold")
         ).pack(side="left")
         if action_text and action:
             tk.Button(
@@ -368,7 +371,7 @@ class StableCraftApp(tk.Tk):
                 activeforeground=FG,
                 relief="flat",
                 bd=0,
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
                 cursor="hand2",
             ).pack(side="right")
         return frame
@@ -408,7 +411,7 @@ class StableCraftApp(tk.Tk):
             text="StableCraft",
             bg=BG,
             fg=FG,
-            font=("Segoe UI", 20, "bold"),
+            font=(UI_FONT, 20, "bold"),
         ).pack(side="left")
         tk.Label(
             title_row,
@@ -417,7 +420,7 @@ class StableCraftApp(tk.Tk):
             fg=ACCENT,
             padx=6,
             pady=1,
-            font=("Segoe UI", 8, "bold"),
+            font=(UI_FONT, 8, "bold"),
         ).pack(side="left", padx=(7, 0), pady=(5, 0))
         language_box = tk.Frame(title_row, bg=BG)
         language_box.pack(side="right")
@@ -426,7 +429,7 @@ class StableCraftApp(tk.Tk):
             text=tr("Langue"),
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         ).pack(side="left", padx=(0, 4))
         self.language_var = tk.StringVar(value=current_language().upper())
         self.language_combo = ttk.Combobox(
@@ -444,14 +447,14 @@ class StableCraftApp(tk.Tk):
             text="Le lasso de Stable.art, dans PhotoCraft, avec ComfyUI.",
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(anchor="w")
         tk.Label(
             header,
             text=tr("par {author} · {repo}", author=AUTHOR, repo=REPO_URL),
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 7),
+            font=(UI_FONT, 7),
         ).pack(anchor="w", pady=(1, 4))
         self.update_label = tk.Label(
             header,
@@ -459,7 +462,7 @@ class StableCraftApp(tk.Tk):
             bg=BG,
             fg=YELLOW,
             anchor="w",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
             cursor="hand2",
         )
         self.update_label.pack(fill="x")
@@ -472,7 +475,7 @@ class StableCraftApp(tk.Tk):
             anchor="w",
             wraplength=460,
             justify="left",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
             cursor="hand2",
         )
         self.node_update_label.pack(fill="x")
@@ -480,15 +483,15 @@ class StableCraftApp(tk.Tk):
 
         status = tk.Frame(main, bg=PANEL, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
         status.pack(fill="x", pady=(4, 0))
-        self.pc_status = tk.Label(status, text="PhotoCraft : connexion…", bg=PANEL, fg=YELLOW, anchor="w", font=("Segoe UI", 9))
+        self.pc_status = tk.Label(status, text="PhotoCraft : connexion…", bg=PANEL, fg=YELLOW, anchor="w", font=(UI_FONT, 9))
         self.pc_status.pack(fill="x")
-        self.comfy_status = tk.Label(status, text="ComfyUI : connexion…", bg=PANEL, fg=YELLOW, anchor="w", font=("Segoe UI", 9))
+        self.comfy_status = tk.Label(status, text="ComfyUI : connexion…", bg=PANEL, fg=YELLOW, anchor="w", font=(UI_FONT, 9))
         self.comfy_status.pack(fill="x")
-        self.doc_status = tk.Label(status, text="Document : —", bg=PANEL, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.doc_status = tk.Label(status, text="Document : —", bg=PANEL, fg=MUTED, anchor="w", font=(UI_FONT, 9))
         self.doc_status.pack(fill="x")
-        self.sel_status = tk.Label(status, text="Sélection : —", bg=PANEL, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.sel_status = tk.Label(status, text="Sélection : —", bg=PANEL, fg=MUTED, anchor="w", font=(UI_FONT, 9))
         self.sel_status.pack(fill="x")
-        self.models_status = tk.Label(status, text="Modèles : vérification…", bg=PANEL, fg=YELLOW, anchor="w", font=("Segoe UI", 9))
+        self.models_status = tk.Label(status, text="Modèles : vérification…", bg=PANEL, fg=YELLOW, anchor="w", font=(UI_FONT, 9))
         self.models_status.pack(fill="x")
         self.models_status.bind("<Button-1>", lambda _event: self._open_model_manager())
 
@@ -506,7 +509,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9, "bold"),
+            font=(UI_FONT, 9, "bold"),
         )
         self.edit_radio.pack(side="left")
         self.t2i_radio = tk.Radiobutton(
@@ -520,7 +523,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9, "bold"),
+            font=(UI_FONT, 9, "bold"),
         )
         self.t2i_radio.pack(side="left", padx=(12, 0))
         self.mode_hint = tk.Label(
@@ -531,7 +534,7 @@ class StableCraftApp(tk.Tk):
             anchor="w",
             justify="left",
             wraplength=420,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.mode_hint.pack(fill="x", pady=(2, 0))
 
@@ -555,7 +558,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(anchor="w")
         self.neg_text = self._text(prompt_frame, 2)
         # hidden until the checkbox is on
@@ -573,7 +576,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         )
         self.ref_check.pack(anchor="w", pady=(4, 0))
         self.ref_profile_hint = tk.Label(
@@ -582,7 +585,7 @@ class StableCraftApp(tk.Tk):
             bg=BG,
             fg=YELLOW,
             anchor="w",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
             wraplength=420,
         )
         self.ref_profile_hint.pack(fill="x")
@@ -608,7 +611,7 @@ class StableCraftApp(tk.Tk):
             anchor="w",
             justify="left",
             wraplength=290,
-            font=("Segoe UI", 8, "bold"),
+            font=(UI_FONT, 8, "bold"),
         )
         self.ref_name.pack(fill="x")
         self.ref_hint = tk.Label(
@@ -619,7 +622,7 @@ class StableCraftApp(tk.Tk):
             anchor="w",
             justify="left",
             wraplength=290,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.ref_hint.pack(fill="x", pady=(2, 4))
         self.ref_remove = tk.Button(
@@ -634,7 +637,7 @@ class StableCraftApp(tk.Tk):
             bd=0,
             padx=8,
             pady=2,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
             cursor="hand2",
             state="disabled",
         )
@@ -660,7 +663,7 @@ class StableCraftApp(tk.Tk):
         self.profile_combo.pack(fill="x", pady=(4, 2))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
         self._lock_scroll_wheel(self.profile_combo)
-        self.profile_detail = tk.Label(prof_frame, text="", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.profile_detail = tk.Label(prof_frame, text="", bg=BG, fg=MUTED, anchor="w", font=(UI_FONT, 9))
         self.profile_detail.pack(fill="x")
         self.profile_warning = tk.Label(
             prof_frame,
@@ -670,7 +673,7 @@ class StableCraftApp(tk.Tk):
             anchor="w",
             justify="left",
             wraplength=420,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.quant_frame = tk.Frame(prof_frame, bg=BG)
         tk.Label(
@@ -678,7 +681,7 @@ class StableCraftApp(tk.Tk):
             text=tr("Quantification"),
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(side="left")
         self.quant_var = tk.StringVar()
         self.quant_combo = ttk.Combobox(
@@ -711,7 +714,7 @@ class StableCraftApp(tk.Tk):
             ("Seed (-1 = aléatoire)", self.seed_var, 2, 0, -1, 2**31 - 1, 1),
         ]
         for label, var, row, col, lo, hi, step in fields:
-            tk.Label(grid, text=label, bg=BG, fg=MUTED, font=("Segoe UI", 9)).grid(
+            tk.Label(grid, text=label, bg=BG, fg=MUTED, font=(UI_FONT, 9)).grid(
                 row=row, column=col, sticky="w", padx=(0, 6), pady=2
             )
             if label.startswith("Seed"):
@@ -745,7 +748,7 @@ class StableCraftApp(tk.Tk):
             bd=0,
             padx=14,
             pady=9,
-            font=("Segoe UI", 10, "bold"),
+            font=(UI_FONT, 10, "bold"),
             cursor="hand2",
         )
         self.generate_btn.pack(side="left", fill="x", expand=True)
@@ -777,18 +780,18 @@ class StableCraftApp(tk.Tk):
             bd=0,
             padx=10,
             pady=9,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
             cursor="hand2",
         )
         self.models_btn.pack(side="left", padx=(8, 0))
         self.action_hint = tk.Label(
-            main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
+            main, text="", bg=BG, fg=YELLOW, anchor="w", font=(UI_FONT, 8)
         )
         self.action_hint.pack(fill="x", pady=(3, 0))
 
         self.progress = ttk.Progressbar(main, mode="indeterminate")
         self.progress.pack(fill="x", pady=(10, 0))
-        self.progress_label = tk.Label(main, text="Prêt.", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.progress_label = tk.Label(main, text="Prêt.", bg=BG, fg=MUTED, anchor="w", font=(UI_FONT, 9))
         self.progress_label.pack(fill="x", pady=(2, 0))
 
         gallery_frame = self._section(main, "GALERIE")
@@ -798,7 +801,7 @@ class StableCraftApp(tk.Tk):
             bg=BG,
             fg=MUTED,
             anchor="w",
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         )
         self.gallery_title.pack(fill="x")
         self.gallery_canvas = tk.Canvas(
@@ -828,7 +831,7 @@ class StableCraftApp(tk.Tk):
             bg=BG,
             fg=MUTED,
             anchor="w",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         )
         self.gallery_hint.pack(fill="x", pady=(2, 0))
 
@@ -847,7 +850,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(side="left")
         tk.Radiobutton(
             preview_tools,
@@ -860,7 +863,7 @@ class StableCraftApp(tk.Tk):
             selectcolor=PANEL_2,
             activebackground=BG,
             activeforeground=FG,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         ).pack(side="left", padx=(8, 0))
         self.preview_canvas = tk.Canvas(
             preview_frame,
@@ -884,7 +887,7 @@ class StableCraftApp(tk.Tk):
             bd=0,
             padx=8,
             pady=6,
-            font=("Consolas", 8),
+            font=(MONO_FONT, 8),
             state="disabled",
         )
         self.log_text.pack(fill="x", pady=(4, 0))
@@ -897,7 +900,7 @@ class StableCraftApp(tk.Tk):
             bg=BG,
             fg=MUTED,
             anchor="w",
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
         ).pack(side="left", fill="x", expand=True)
         tk.Button(
             footer,
@@ -909,7 +912,7 @@ class StableCraftApp(tk.Tk):
             activeforeground=FG,
             relief="flat",
             bd=0,
-            font=("Segoe UI", 8),
+            font=(UI_FONT, 8),
             cursor="hand2",
         ).pack(side="right")
 
@@ -1675,14 +1678,14 @@ class StableCraftApp(tk.Tk):
                 48,
                 text="+ Image",
                 fill=MUTED,
-                font=("Segoe UI", 10, "bold"),
+                font=(UI_FONT, 10, "bold"),
             )
             self.ref_canvas.create_text(
                 56,
                 70,
                 text=tr("Clique ou dépose"),
                 fill=MUTED,
-                font=("Segoe UI", 7),
+                font=(UI_FONT, 7),
             )
         self.ref_name.config(text=self.reference_name or tr("Aucune image"))
         self.ref_remove.config(
@@ -2000,7 +2003,7 @@ class StableCraftApp(tk.Tk):
             bd=0,
             padx=16,
             pady=12,
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
         )
         scroll = ttk.Scrollbar(window, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=scroll.set)
@@ -2008,15 +2011,15 @@ class StableCraftApp(tk.Tk):
         text.pack(side="left", fill="both", expand=True)
 
         text.tag_configure(
-            "h1", font=("Segoe UI", 14, "bold"), foreground=FG, spacing1=6, spacing3=8
+            "h1", font=(UI_FONT, 14, "bold"), foreground=FG, spacing1=6, spacing3=8
         )
         text.tag_configure(
-            "h2", font=("Segoe UI", 10, "bold"), foreground=ACCENT, spacing1=12, spacing3=4
+            "h2", font=(UI_FONT, 10, "bold"), foreground=ACCENT, spacing1=12, spacing3=4
         )
         text.tag_configure("body", foreground=FG, spacing3=4)
         text.tag_configure(
             "code",
-            font=("Consolas", 9),
+            font=(MONO_FONT, 9),
             background="#141418",
             foreground="#d1d5db",
             lmargin1=12,
@@ -2418,7 +2421,7 @@ class StableCraftApp(tk.Tk):
                 bd=0,
                 padx=4,
                 pady=3,
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
                 state="disabled" if self.running else "normal",
                 command=lambda idx=index: self._apply_generation(idx),
             )
@@ -2597,6 +2600,8 @@ class StableCraftApp(tk.Tk):
             return
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        if os.name != "nt":
+            env.pop("PYTHONPATH", None)
         flags = 0x08000000 if os.name == "nt" else 0
         try:
             self.proc = subprocess.Popen(
@@ -2807,7 +2812,7 @@ class StableCraftApp(tk.Tk):
                     "Aucun aperçu.\nFais un lasso, écris un prompt, puis clique Générer."
                 ),
                 fill=MUTED,
-                font=("Segoe UI", 9),
+                font=(UI_FONT, 9),
                 justify="center",
             )
             self.preview_image = None
@@ -2820,7 +2825,7 @@ class StableCraftApp(tk.Tk):
                 145,
                 text=tr("Aperçu indisponible : {error}", error=short_error(exc)),
                 fill=RED,
-                font=("Segoe UI", 9),
+                font=(UI_FONT, 9),
                 justify="center",
             )
             self.preview_image = None
@@ -2843,7 +2848,7 @@ class StableCraftApp(tk.Tk):
 
     def _open_config(self) -> None:
         try:
-            os.startfile(str(self.config_path))  # type: ignore[attr-defined]
+            open_path(self.config_path)
         except Exception:  # noqa: BLE001
             self._log(tr("Config : {path}", path=self.config_path))
 

@@ -113,7 +113,9 @@ def comfy_temp_dir(cfg: dict[str, Any]) -> Path | None:
     root = str(section.get("root", "") or os.environ.get("STABLECRAFT_COMFY_ROOT", "") or "")
     if not root:
         return None
-    return as_path(root) / "ComfyUI" / "temp"
+    base = as_path(root)
+    app = base if (base / "main.py").exists() else base / "ComfyUI"
+    return app / "temp"
 
 
 # ---------------------------------------------------------------------------
@@ -1727,7 +1729,7 @@ def main() -> None:
             print("Dry run: stopping before ComfyUI.")
             return
 
-        comfy.require("UnetLoaderGGUF", "unet_name", unet)
+        comfy.require(unet_loader_for(unet), "unet_name", unet)
         comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
         if profile_name == "krea2_edit":
