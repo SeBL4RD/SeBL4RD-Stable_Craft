@@ -1,6 +1,6 @@
 """StableCraft one-click launcher.
 
-Double-click StableCraft.bat. This script:
+Double-click StableCraft.bat (on Linux: run stablecraft.sh). This script:
 
 1. reads config.toml;
 2. checks the required paths (PhotoCraft, ComfyUI, Python UI);
@@ -17,6 +17,7 @@ from __future__ import annotations
 import ctypes
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -33,6 +34,8 @@ USER_DIR = ROOT / "user"
 MODELS_DIR = ROOT / "models"
 LOG_DIR = USER_DIR / "logs"
 LOG_PATH = LOG_DIR / "launcher.log"
+# Name shown in "relaunch" messages: the batch on Windows, the app elsewhere.
+RELAUNCH_NAME = "StableCraft.bat" if os.name == "nt" else "StableCraft"
 UI_LOG_PATH = LOG_DIR / "ui.log"
 LEGACY_SESSIONS = ROOT / ".runtime" / "automation" / "stablecraft" / "sessions"
 
@@ -62,10 +65,18 @@ def show_error(title: str, message: str) -> None:
         messagebox.showerror(title, message)
         root.destroy()
     except Exception:  # noqa: BLE001
-        try:
-            ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
-        except Exception:  # noqa: BLE001
-            print(message)
+        if os.name == "nt":
+            try:
+                ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        elif shutil.which("notify-send"):
+            try:
+                subprocess.run(["notify-send", "-u", "critical", title, message], timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+        print(message)
 
 
 def port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -122,6 +133,23 @@ def find_photocraft(cfg: dict[str, Any]) -> tuple[Path | None, str | None]:
             return path, None
         return None, f"[photocraft] executable introuvable :\n{path}"
 
+    if os.name != "nt":
+        found = shutil.which("photocraft")
+        if found:
+            return Path(found), None
+        for candidate in (
+            Path("/usr/bin/photocraft"),
+            Path.home() / ".local/bin/photocraft",
+            Path("/opt/photocraft/photocraft"),
+        ):
+            if candidate.exists():
+                return candidate, None
+        return None, (
+            "PhotoCraft introuvable.\n\n"
+            "Installe le paquet Linux de PhotoCraft (photocraft-*-linux-x86_64.pkg.tar.zst sur Arch),\n"
+            "ou renseigne [photocraft] executable dans config.toml."
+        )
+
     candidates = [
         Path("D:/Programmes/photocraft-0.14.0-windows-x64-portable/photocraft.exe"),
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/PhotoCraft/photocraft.exe",
@@ -150,6 +178,53 @@ def find_photocraft(cfg: dict[str, Any]) -> tuple[Path | None, str | None]:
     )
 
 
+def comfy_app_dir(root: Path) -> Path:
+    """ComfyUI checkout: root itself (git install) or root/ComfyUI (Windows portable)."""
+    return root if (root / "main.py").exists() else root / "ComfyUI"
+
+
+def find_comfyui_posix(
+    root: Path | None, start_value: str, python_value: str
+) -> tuple[Path | None, Path | None, Path | None, str | None]:
+    """Linux/macOS: ComfyUI is a git checkout started with `python main.py`."""
+    if root is not None:
+        candidates = [root]
+    else:
+        home = Path.home()
+        candidates = [home / "ComfyUI", home / "comfy" / "ComfyUI", home / "comfy", Path("/opt/ComfyUI")]
+    app: Path | None = None
+    for candidate in candidates:
+        if (comfy_app_dir(candidate) / "main.py").exists():
+            root, app = candidate, comfy_app_dir(candidate)
+            break
+    if app is None or root is None:
+        return None, None, None, (
+            "ComfyUI introuvable.\n\n"
+            "Renseigne [comfyui] root dans config.toml, par exemple :\n"
+            "root = \"/home/<user>/ComfyUI\""
+        )
+    start = as_path(start_value) if start_value else app / "main.py"
+    if python_value:
+        python = as_path(python_value)
+    else:
+        options = [app / ".venv/bin/python", app / "venv/bin/python", root / ".venv/bin/python", root / "venv/bin/python"]
+        python = next((p for p in options if p.exists()), None)
+        if python is None:
+            python = Path(sys.executable)
+            log(f"[comfyui] aucun venv dans {app} ni {root}, essai avec {python}")
+    if not start.exists():
+        return None, None, None, f"[comfyui] start_command introuvable :\n{start}"
+    if not python.exists():
+        return None, None, None, f"[comfyui] python introuvable :\n{python}"
+    return start, python, root, None
+
+
+def posix_comfyui_command(start: Path, python: Path, host: str, port: int) -> list[str]:
+    if start.suffix == ".py":
+        return [str(python), str(start), "--listen", host, "--port", str(port), "--disable-auto-launch"]
+    return [str(start)]
+
+
 def find_comfyui(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, Path | None, str | None]:
     section = cfg.get("comfyui", {})
     root_value = str(section.get("root", "") or "")
@@ -161,6 +236,9 @@ def find_comfyui(cfg: dict[str, Any]) -> tuple[Path | None, Path | None, Path | 
         root = as_path(root_value)
         if not root.exists():
             return None, None, None, f"[comfyui] root introuvable :\n{root}"
+
+    if os.name != "nt":
+        return find_comfyui_posix(root, start_value, python_value)
 
     start = as_path(start_value) if start_value else (root / "run_nvidia_gpu.bat" if root else None)
     python = as_path(python_value) if python_value else (root / "python_embeded/python.exe" if root else None)
@@ -444,7 +522,7 @@ def main() -> int:
         show_error(
             "StableCraft — chemins manquants",
             "StableCraft ne peut pas démarrer :\n\n" + "\n\n".join(errors) +
-            "\n\nCorrige config.toml puis relance StableCraft.bat.",
+            f"\n\nCorrige config.toml puis relance {RELAUNCH_NAME}.",
         )
         return 1
 
@@ -467,11 +545,29 @@ def main() -> int:
             log("ComfyUI sera lancé sans ouverture du navigateur.")
         log(f"ComfyUI n'écoute pas sur {comfy_host}:{comfy_port}; démarrage…")
         try:
-            subprocess.Popen(
-                ["cmd", "/c", str(launch_command)],
-                cwd=str(start_command.parent),
-                creationflags=CREATE_NEW_CONSOLE,
-            )
+            if os.name == "nt":
+                subprocess.Popen(
+                    ["cmd", "/c", str(launch_command)],
+                    cwd=str(start_command.parent),
+                    creationflags=CREATE_NEW_CONSOLE,
+                )
+            else:
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                # Linux: a configured restart_command (systemd unit, script)
+                # owns ComfyUI, so the launcher never leaves an orphan process.
+                restart = str(cfg.get("comfyui", {}).get("restart_command", "") or "")
+                argv = (
+                    shlex.split(restart)
+                    if restart
+                    else posix_comfyui_command(start_command, comfy_python, comfy_host, comfy_port)
+                )
+                subprocess.Popen(
+                    argv,
+                    cwd=str(start_command.parent),
+                    stdout=(LOG_DIR / "comfyui.log").open("a", encoding="utf-8"),
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except Exception as exc:  # noqa: BLE001
             show_error("StableCraft — ComfyUI", f"Impossible de lancer ComfyUI :\n{exc}")
             return 1
@@ -480,7 +576,7 @@ def main() -> int:
                 "StableCraft — ComfyUI",
                 "ComfyUI n'a pas démarré dans les 4 minutes.\n\n"
                 f"Lance-le manuellement :\n{start_command}\n\n"
-                f"Puis relance StableCraft.bat. Détails : {LOG_PATH}",
+                f"Puis relance {RELAUNCH_NAME}. Détails : {LOG_PATH}",
             )
             return 1
     else:
@@ -501,7 +597,7 @@ def main() -> int:
             "StableCraft — PhotoCraft à redémarrer",
             "PhotoCraft tourne déjà, mais avec une ancienne configuration "
             "(le fichier de contrôle n'est plus au même endroit).\n\n"
-            "Ferme complètement PhotoCraft, puis relance StableCraft.bat.\n\n"
+            f"Ferme complètement PhotoCraft, puis relance {RELAUNCH_NAME}.\n\n"
             f"Fichier attendu :\n{token}",
         )
         return 1
@@ -511,7 +607,7 @@ def main() -> int:
             show_error(
                 "StableCraft — PhotoCraft déjà ouvert",
                 "PhotoCraft est déjà ouvert, mais sans le control channel.\n\n"
-                "Ferme PhotoCraft complètement, puis relance StableCraft.bat.",
+                f"Ferme PhotoCraft complètement, puis relance {RELAUNCH_NAME}.",
             )
             return 1
         log(f"PhotoCraft n'écoute pas sur {host}:{port}; démarrage avec control channel…")
@@ -528,8 +624,25 @@ def main() -> int:
             "--automation-write-root",
             str(automation),
         ]
+        if os.name != "nt":
+            args.insert(1, "--new-instance")
         try:
-            subprocess.Popen(args, cwd=str(photocraft.parent))
+            if os.name == "nt":
+                subprocess.Popen(args, cwd=str(photocraft.parent))
+            else:
+                # Never inherit the launcher's stdio on Linux. Launched from a menu
+                # there is no terminal, and a closed pipe makes PhotoCraft panic on
+                # its first stderr write ("failed printing to stderr: Broken pipe").
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                app_log = (LOG_DIR / "photocraft-app.log").open("a", encoding="utf-8")
+                subprocess.Popen(
+                    args,
+                    cwd=str(photocraft.parent),
+                    stdin=subprocess.DEVNULL,
+                    stdout=app_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except Exception as exc:  # noqa: BLE001
             show_error("StableCraft — PhotoCraft", f"Impossible de lancer PhotoCraft :\n{exc}")
             return 1
@@ -537,7 +650,7 @@ def main() -> int:
             show_error(
                 "StableCraft — PhotoCraft",
                 "PhotoCraft n'a pas exposé le control channel.\n\n"
-                "Ferme PhotoCraft s'il est déjà ouvert, puis relance StableCraft.bat.\n"
+                f"Ferme PhotoCraft s'il est déjà ouvert, puis relance {RELAUNCH_NAME}.\n"
                 f"Détails : {LOG_PATH}",
             )
             return 1
@@ -548,6 +661,8 @@ def main() -> int:
 
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
+    if os.name != "nt":
+        env.pop("PYTHONPATH", None)
     env["STABLECRAFT_COMFY_PYTHON"] = str(comfy_python)
     comfy_root_for_env = comfy_root or (
         start_command.parent if start_command is not None else None

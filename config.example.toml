@@ -25,6 +25,7 @@ default_profile = "flux3_klein"
 
 [photocraft]
 # Photocraft.exe. Vide = recherche automatique.
+# Linux : /usr/bin/photocraft (paquet Arch), trouvé tout seul dans le PATH.
 executable = ""
 control_host = "127.0.0.1"
 # 7990 évite la plage 7878 souvent exclue par Windows (Hyper-V/WSL).
@@ -53,6 +54,13 @@ python = ""
 # temp_dir = ""
 # Ne pas ouvrir l'UI web de ComfyUI dans le navigateur au démarrage.
 # disable_browser = true
+# Linux : root = dossier du checkout git (celui qui contient main.py) ;
+# python vide = premier .venv ou venv trouvé à côté de main.py, puis dans root.
+# Commande de redémarrage optionnelle (unité systemd, script), utilisée au
+# lancement si ComfyUI ne tourne pas, et par « Redémarrer ComfyUI » :
+# StableCraft attend la fin de la commande : un code de sortie non nul est
+# affiché comme un refus (exemple : file ComfyUI occupée, code 3).
+# restart_command = "systemctl --user restart comfyui"
 # Optionnel, pour l'affichage et la validation.
 # models_dir = ""
 

@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -339,11 +341,49 @@ def comfyui_root(cfg: dict[str, Any]) -> Path | None:
     return _AUTO_COMFY_ROOT
 
 
+def comfy_app_dir(root: Path) -> Path:
+    """ComfyUI checkout: root itself (git install) or root/ComfyUI (Windows portable)."""
+    return root if (root / "main.py").exists() else root / "ComfyUI"
+
+
+UI_FONT = "Segoe UI" if os.name == "nt" else "Inter"
+MONO_FONT = "Consolas" if os.name == "nt" else "DejaVu Sans Mono"
+
+
+def ui_scale() -> float:
+    """Extra Tk scale for HiDPI Linux screens (XWayland with force_zero_scaling).
+
+    stablecraft.sh sets STABLECRAFT_UI_SCALE from the Hyprland monitor scale.
+    """
+    if os.name == "nt":
+        return 1.0
+    try:
+        value = float(os.environ.get("STABLECRAFT_UI_SCALE", "") or 1.0)
+    except ValueError:
+        value = 1.0
+    return min(max(value, 0.5), 4.0)
+
+
+def open_path(path: Path | str) -> None:
+    """Open a file or folder with the desktop's default application."""
+    if os.name == "nt":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(
+            ["xdg-open", str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+
 def extra_model_paths_path(cfg: dict[str, Any]) -> Path | None:
     root = comfyui_root(cfg)
     if root is None:
         return None
-    return root / "ComfyUI" / "extra_model_paths.yaml"
+    return comfy_app_dir(root) / "extra_model_paths.yaml"
 
 
 def ensure_store_dirs(cfg: dict[str, Any]) -> Path:
@@ -400,6 +440,18 @@ def endpoint_port(cfg: dict[str, Any]) -> int:
 
 def stop_comfyui(cfg: dict[str, Any]) -> None:
     port = endpoint_port(cfg)
+    if os.name != "nt":
+        if str(cfg.get("comfyui", {}).get("restart_command", "") or ""):
+            return  # start_comfyui runs the configured restart command
+        result = subprocess.run(
+            ["ss", "-ltnpH", f"sport = :{port}"], capture_output=True, text=True, timeout=10
+        )
+        for pid in sorted(set(re.findall(r"pid=(\d+)", result.stdout))):
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except OSError:
+                pass
+        return
     command = (
         "$p = Get-NetTCPConnection -LocalPort "
         f"{port} -State Listen -ErrorAction SilentlyContinue | "
@@ -420,6 +472,49 @@ def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
     if root is None:
         raise RuntimeError("Dossier ComfyUI introuvable.")
     start_value = str(section.get("start_command", "") or "")
+    if os.name != "nt":
+        restart = str(section.get("restart_command", "") or "")
+        if restart:
+            # Run it to the end: a refused restart (busy queue) must not look like success.
+            proc = subprocess.Popen(
+                shlex.split(restart),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                output, _ = proc.communicate(timeout=360)
+            except subprocess.TimeoutExpired:
+                # Kill the whole group: a grandchild could keep stdout open.
+                os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                output = "restart_command : délai de 360 s dépassé, commande arrêtée."
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    output.strip()[-400:] or f"restart_command a échoué (code {proc.returncode})"
+                )
+            return proc
+        command = Path(start_value) if start_value else comfy_app_dir(root) / "main.py"
+        if not command.exists():
+            raise RuntimeError(f"Lanceur ComfyUI introuvable : {command}")
+        python = str(section.get("python", "") or "") or os.environ.get("STABLECRAFT_COMFY_PYTHON", "") or sys.executable
+        if command.suffix == ".py":
+            argv = [python, str(command), "--listen", "127.0.0.1", "--port", str(endpoint_port(cfg)), "--disable-auto-launch"]
+        else:
+            argv = [str(command)]
+        logs = USER_DIR / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        return subprocess.Popen(
+            argv,
+            cwd=str(command.parent),
+            stdout=(logs / "comfyui.log").open("a", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     command = Path(start_value) if start_value else root / "run_nvidia_gpu.bat"
     if not command.exists():
         raise RuntimeError(f"Lanceur ComfyUI introuvable : {command}")
@@ -465,7 +560,7 @@ def krea_node_path(cfg: dict[str, Any]) -> Path | None:
     root = comfyui_root(cfg)
     if root is None:
         return None
-    return root / "ComfyUI" / "custom_nodes" / KREA_NODE_DIR
+    return comfy_app_dir(root) / "custom_nodes" / KREA_NODE_DIR
 
 
 def _read_node_version(path: Path) -> str | None:
