@@ -14,7 +14,8 @@ French version: [LINUX.fr.md](LINUX.fr.md).
 2. Install Tk for Python 3.11+: `sudo pacman -S tk`.
 3. Copy `config.example.toml` to `config.toml`.
 4. In `[comfyui]`, set `root` to the folder that contains `main.py`, and `endpoint` to
-   the ComfyUI port. An empty `python` means `<root>/.venv/bin/python`; with no venv,
+   the ComfyUI port. An empty `python` means the first `.venv` or `venv` found next to
+   `main.py`, then in `<root>`; with no venv,
    StableCraft tries its own Python and writes that to `user/logs/launcher.log`.
 5. In `[profiles.*]`, use the file names that ComfyUI sees (`unet`, `text_encoder`,
    `vae`, `lora`). Profiles with a `.gguf` model need the ComfyUI-GGUF custom node.

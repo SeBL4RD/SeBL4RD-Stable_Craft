@@ -477,13 +477,21 @@ def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
         if restart:
             # Run it to the end: a refused restart (busy queue) must not look like success.
             proc = subprocess.Popen(
-                shlex.split(restart), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                shlex.split(restart),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
             )
             try:
                 output, _ = proc.communicate(timeout=360)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.communicate()
+                # Kill the whole group: a grandchild could keep stdout open.
+                os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
                 output = "restart_command : délai de 360 s dépassé, commande arrêtée."
             if proc.returncode != 0:
                 raise RuntimeError(

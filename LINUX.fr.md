@@ -14,7 +14,8 @@ Version anglaise : [LINUX.md](LINUX.md).
 2. Installe Tk pour Python 3.11+ : `sudo pacman -S tk`.
 3. Copie `config.example.toml` en `config.toml`.
 4. Dans `[comfyui]`, mets `root` sur le dossier qui contient `main.py`, et `endpoint` sur
-   le port de ComfyUI. `python` vide = `<root>/.venv/bin/python` ; sans venv, StableCraft essaie
+   le port de ComfyUI. `python` vide = premier `.venv` ou `venv` trouvé à côté de
+   `main.py`, puis dans `<root>` ; sans venv, StableCraft essaie
    son propre Python et le note dans `user/logs/launcher.log`.
 5. Dans `[profiles.*]`, mets les noms de fichiers que ComfyUI voit (`unet`,
    `text_encoder`, `vae`, `lora`). Les profils en `.gguf` demandent le node

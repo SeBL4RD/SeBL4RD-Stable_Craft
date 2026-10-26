@@ -211,7 +211,7 @@ def find_comfyui_posix(
         python = next((p for p in options if p.exists()), None)
         if python is None:
             python = Path(sys.executable)
-            log(f"[comfyui] aucun venv dans {app}, essai avec {python}")
+            log(f"[comfyui] aucun venv dans {app} ni {root}, essai avec {python}")
     if not start.exists():
         return None, None, None, f"[comfyui] start_command introuvable :\n{start}"
     if not python.exists():
