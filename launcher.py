@@ -622,7 +622,19 @@ def main() -> int:
         if os.name != "nt":
             args.insert(1, "--new-instance")
         try:
-            subprocess.Popen(args, cwd=str(photocraft.parent), start_new_session=(os.name != "nt"))
+            # LINUX-PORT-6: never inherit the launcher's stdio. Launched from a menu
+            # there is no terminal, and a closed pipe makes PhotoCraft panic on its
+            # first stderr write ("failed printing to stderr: Broken pipe").
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            app_log = (LOG_DIR / "photocraft-app.log").open("a", encoding="utf-8")
+            subprocess.Popen(
+                args,
+                cwd=str(photocraft.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=app_log,
+                stderr=subprocess.STDOUT,
+                start_new_session=(os.name != "nt"),
+            )
         except Exception as exc:  # noqa: BLE001
             show_error("StableCraft — PhotoCraft", f"Impossible de lancer PhotoCraft :\n{exc}")
             return 1
