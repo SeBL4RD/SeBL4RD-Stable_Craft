@@ -1,24 +1,65 @@
-# StableCraft sur Linux
+# StableCraft on Linux
 
-Testé sur Arch Linux (Omarchy, Hyprland + XWayland), PhotoCraft 0.16.0, ComfyUI en checkout git.
+Tested on Arch Linux (Hyprland + XWayland) with the native PhotoCraft 0.16.0 package,
+ComfyUI 0.42.0 from a git checkout, and an RTX 4090 Laptop. Other distributions should
+work with adapted paths, but they are not tested.
 
-## Installation
+French version: [LINUX.fr.md](LINUX.fr.md).
 
-1. Installe le paquet Linux de PhotoCraft : `sudo pacman -U photocraft-<version>-linux-x86_64.pkg.tar.zst`.
-2. Installe Tk pour Python : `sudo pacman -S tk`.
-3. Copie `config.example.toml` en `config.toml`.
-4. Dans `[comfyui]`, mets `root` sur le dossier qui contient `main.py`, et `endpoint` sur le port de ComfyUI.
-5. Dans `[profiles.*]`, mets les noms de fichiers que ComfyUI voit (`unet`, `text_encoder`, `vae`, `lora`).
-6. Lance `./stablecraft.sh`.
+## Install
 
-## Ce qui change par rapport à Windows
+1. Install the Linux package of PhotoCraft, for example
+   `sudo pacman -U photocraft-<version>-linux-x86_64.pkg.tar.zst`. The `photocraft`
+   command must be in `PATH`.
+2. Install Tk for Python 3.11+: `sudo pacman -S tk`.
+3. Copy `config.example.toml` to `config.toml`.
+4. In `[comfyui]`, set `root` to the folder that contains `main.py`, and `endpoint` to
+   the ComfyUI port. An empty `python` means `<root>/.venv/bin/python`.
+5. In `[profiles.*]`, use the file names that ComfyUI sees (`unet`, `text_encoder`,
+   `vae`, `lora`). Profiles with a `.gguf` model need the ComfyUI-GGUF custom node.
+6. Run `./stablecraft.sh`.
 
-- PhotoCraft est trouvé dans le `PATH`. Le lanceur démarre une instance séparée (`--new-instance`) avec le canal de contrôle.
-- ComfyUI démarre avec `python main.py --disable-auto-launch`, ou avec `restart_command` si tu le renseignes.
-- Les fichiers `.safetensors` (int8, fp8, bf16) passent par `UNETLoader` avec `weight_dtype = "default"`.
-- Les fichiers et dossiers s'ouvrent avec `xdg-open`.
-- Écran HiDPI : `stablecraft.sh` lit l'échelle de l'écran sous Hyprland. Ailleurs, mets `STABLECRAFT_UI_SCALE=2` à la main.
+## Menu entry (optional)
 
-## Vérifier les profils
+Save this as `~/.local/share/applications/stablecraft.desktop`, with your own path:
 
-`<python de ComfyUI> tools/check_profiles.py config.toml` vérifie que chaque profil actif trouve ses fichiers et ses nodes dans ComfyUI.
+```ini
+[Desktop Entry]
+Type=Application
+Name=StableCraft
+Comment=Lasso editing in PhotoCraft with ComfyUI
+Exec=/path/to/StableCraft/stablecraft.sh
+Terminal=false
+Categories=Graphics;
+```
+
+## What differs from Windows
+
+- PhotoCraft is found in `PATH` and starts as a separate instance (`--new-instance`)
+  with the control channel. Its output goes to `user/logs/photocraft-app.log`: from a
+  menu there is no terminal, and an inherited closed pipe made PhotoCraft crash before
+  it opened the control channel.
+- ComfyUI starts with `python main.py --disable-auto-launch` on the configured port.
+  Its output goes to `user/logs/comfyui.log`.
+- `.safetensors` models (int8, fp8, bf16) load through `UNETLoader` with
+  `weight_dtype = "default"`.
+- Files and folders open with `xdg-open`.
+- HiDPI: under Hyprland with `xwayland:force_zero_scaling`, `stablecraft.sh` reads the
+  monitor scale. Elsewhere, set `STABLECRAFT_UI_SCALE=2` yourself.
+- Dragging a reference image onto the window is Windows-only and is not ported.
+
+## Restart command
+
+"Restart ComfyUI" stops the process that listens on the port, then starts ComfyUI again.
+If ComfyUI runs as a service, set `restart_command` (a script, or
+`systemctl --user restart <unit>`). StableCraft waits for the command to finish. A
+non-zero exit code is shown as a refusal. A good script refuses (for example with exit
+code 3) while the ComfyUI queue is not empty, so that a running render is never cut.
+
+## Checks and test tools
+
+- `<ComfyUI python> tools/check_profiles.py config.toml` checks that each enabled
+  profile finds its files and nodes in ComfyUI.
+- `tools/diag_canal.py` is a short, bounded probe of the PhotoCraft control channel.
+- `tools/e2e.py` and `tools/e2e_session.py` run an edit end to end through the control
+  channel. They use the default ports 7990 and 8188.

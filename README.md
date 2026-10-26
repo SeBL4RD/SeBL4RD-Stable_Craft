@@ -183,7 +183,7 @@ When launched, `StableCraft.bat`:
 - **PowerShell**: `.\StableCraft.bat`
 - **Git Bash / MSYS**: `cmd //c StableCraft.bat`
 
-It is not a Linux/WSL script. The batch uses `py -3` when available, otherwise
+It is not a Linux/WSL script; on Linux, see [LINUX.md](LINUX.md). The batch uses `py -3` when available, otherwise
 `python`; Python **3.11+** and **Tkinter** are required. If neither works, it prints
 the installation instructions instead of closing silently.
 

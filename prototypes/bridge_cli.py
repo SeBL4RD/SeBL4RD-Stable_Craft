@@ -1732,7 +1732,7 @@ def main() -> None:
         comfy.require(unet_loader_for(unet), "unet_name", unet)
         comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
-        if lora:  # LEGACY-LORA-FIX: same check as the session path
+        if lora:  # same check as the session path
             comfy.require("LoraLoaderModelOnly", "lora_name", lora)
         if profile_name == "krea2_edit":
             comfy.require_node("Krea2EditModelPatch")

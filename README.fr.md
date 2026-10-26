@@ -184,7 +184,7 @@ avec :
 - **PowerShell** : `.\StableCraft.bat`
 - **Git Bash / MSYS** : `cmd //c StableCraft.bat`
 
-Ce n'est pas un script Linux/WSL. Le batch utilise `py -3` s'il est disponible,
+Ce n'est pas un script Linux/WSL ; sous Linux, voir [LINUX.fr.md](LINUX.fr.md). Le batch utilise `py -3` s'il est disponible,
 sinon `python` ; Python **3.11+** et **Tkinter** sont requis. Si aucun ne fonctionne,
 il affiche les instructions d'installation au lieu de se fermer sans explication.
 

@@ -57,6 +57,8 @@ python = ""
 # Linux : root = dossier du checkout git (celui qui contient main.py) ;
 # python vide = <root>/.venv/bin/python. Commande de redémarrage optionnelle
 # (unité systemd, script) utilisée par « Redémarrer ComfyUI » :
+# StableCraft attend la fin de la commande : un code de sortie non nul est
+# affiché comme un refus (exemple : file ComfyUI occupée, code 3).
 # restart_command = "/home/<user>/comfy/comfyui-restart.sh"
 # Optionnel, pour l'affichage et la validation.
 # models_dir = ""

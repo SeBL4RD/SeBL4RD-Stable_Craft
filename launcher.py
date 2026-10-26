@@ -1,6 +1,6 @@
 """StableCraft one-click launcher.
 
-Double-click StableCraft. This script:
+Double-click StableCraft.bat (on Linux: run stablecraft.sh). This script:
 
 1. reads config.toml;
 2. checks the required paths (PhotoCraft, ComfyUI, Python UI);
@@ -34,6 +34,8 @@ USER_DIR = ROOT / "user"
 MODELS_DIR = ROOT / "models"
 LOG_DIR = USER_DIR / "logs"
 LOG_PATH = LOG_DIR / "launcher.log"
+# Name shown in "relaunch" messages: the batch on Windows, the app elsewhere.
+RELAUNCH_NAME = "StableCraft.bat" if os.name == "nt" else "StableCraft"
 UI_LOG_PATH = LOG_DIR / "ui.log"
 LEGACY_SESSIONS = ROOT / ".runtime" / "automation" / "stablecraft" / "sessions"
 
@@ -517,7 +519,7 @@ def main() -> int:
         show_error(
             "StableCraft — chemins manquants",
             "StableCraft ne peut pas démarrer :\n\n" + "\n\n".join(errors) +
-            "\n\nCorrige config.toml puis relance StableCraft.",
+            f"\n\nCorrige config.toml puis relance {RELAUNCH_NAME}.",
         )
         return 1
 
@@ -548,7 +550,7 @@ def main() -> int:
                 )
             else:
                 LOG_DIR.mkdir(parents=True, exist_ok=True)
-                # LINUX-PORT-2: a configured restart_command (systemd unit, script)
+                # Linux: a configured restart_command (systemd unit, script)
                 # owns ComfyUI, so the launcher never leaves an orphan process.
                 restart = str(cfg.get("comfyui", {}).get("restart_command", "") or "")
                 argv = (
@@ -571,7 +573,7 @@ def main() -> int:
                 "StableCraft — ComfyUI",
                 "ComfyUI n'a pas démarré dans les 4 minutes.\n\n"
                 f"Lance-le manuellement :\n{start_command}\n\n"
-                f"Puis relance StableCraft. Détails : {LOG_PATH}",
+                f"Puis relance {RELAUNCH_NAME}. Détails : {LOG_PATH}",
             )
             return 1
     else:
@@ -592,7 +594,7 @@ def main() -> int:
             "StableCraft — PhotoCraft à redémarrer",
             "PhotoCraft tourne déjà, mais avec une ancienne configuration "
             "(le fichier de contrôle n'est plus au même endroit).\n\n"
-            "Ferme complètement PhotoCraft, puis relance StableCraft.\n\n"
+            f"Ferme complètement PhotoCraft, puis relance {RELAUNCH_NAME}.\n\n"
             f"Fichier attendu :\n{token}",
         )
         return 1
@@ -602,7 +604,7 @@ def main() -> int:
             show_error(
                 "StableCraft — PhotoCraft déjà ouvert",
                 "PhotoCraft est déjà ouvert, mais sans le control channel.\n\n"
-                "Ferme PhotoCraft complètement, puis relance StableCraft.",
+                f"Ferme PhotoCraft complètement, puis relance {RELAUNCH_NAME}.",
             )
             return 1
         log(f"PhotoCraft n'écoute pas sur {host}:{port}; démarrage avec control channel…")
@@ -622,19 +624,22 @@ def main() -> int:
         if os.name != "nt":
             args.insert(1, "--new-instance")
         try:
-            # LINUX-PORT-6: never inherit the launcher's stdio. Launched from a menu
-            # there is no terminal, and a closed pipe makes PhotoCraft panic on its
-            # first stderr write ("failed printing to stderr: Broken pipe").
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            app_log = (LOG_DIR / "photocraft-app.log").open("a", encoding="utf-8")
-            subprocess.Popen(
-                args,
-                cwd=str(photocraft.parent),
-                stdin=subprocess.DEVNULL,
-                stdout=app_log,
-                stderr=subprocess.STDOUT,
-                start_new_session=(os.name != "nt"),
-            )
+            if os.name == "nt":
+                subprocess.Popen(args, cwd=str(photocraft.parent))
+            else:
+                # Never inherit the launcher's stdio on Linux. Launched from a menu
+                # there is no terminal, and a closed pipe makes PhotoCraft panic on
+                # its first stderr write ("failed printing to stderr: Broken pipe").
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                app_log = (LOG_DIR / "photocraft-app.log").open("a", encoding="utf-8")
+                subprocess.Popen(
+                    args,
+                    cwd=str(photocraft.parent),
+                    stdin=subprocess.DEVNULL,
+                    stdout=app_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except Exception as exc:  # noqa: BLE001
             show_error("StableCraft — PhotoCraft", f"Impossible de lancer PhotoCraft :\n{exc}")
             return 1
@@ -642,7 +647,7 @@ def main() -> int:
             show_error(
                 "StableCraft — PhotoCraft",
                 "PhotoCraft n'a pas exposé le control channel.\n\n"
-                "Ferme PhotoCraft s'il est déjà ouvert, puis relance StableCraft.\n"
+                f"Ferme PhotoCraft s'il est déjà ouvert, puis relance {RELAUNCH_NAME}.\n"
                 f"Détails : {LOG_PATH}",
             )
             return 1

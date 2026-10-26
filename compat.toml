@@ -16,8 +16,8 @@ status = "tested"
 notes = "Control channel validated on 127.0.0.1:7990. Port 7878 is inside a Windows excluded port range on the test machine; 7990 avoids it. ui.inspect, document.inspect, select.rect, image.duplicate mergedOnly, app.save/open, prefs.get/set, select.saveSelection/loadSelection, channel.duplicate and session snapshot tested. T2I mode stored in session.json."
 
 [[tested]]
-stablecraft = "0.2.2 + linux-compat"
+stablecraft = "0.2.3 + linux-compat"
 photocraft = "0.16.0"
-os = "linux-x86_64 (Arch/Omarchy, Hyprland + XWayland)"
+os = "linux-x86_64 (Arch Linux, Hyprland + XWayland)"
 status = "tested"
 notes = "Native Arch package, control channel on 127.0.0.1:7990 (--new-instance). ComfyUI git checkout on :8188. UNETLoader with weight_dtype=default loads int8 convrot / fp8 safetensors. Tested: EDIT flux3_klein (one-shot) and krea2_general_edit (session, LoRA in graph). qwen_image_21 tested (session). flux2_klein_9b with the fp8 base file renders with block and streak artifacts in EDIT: use the distilled GGUF from models.json."
