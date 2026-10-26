@@ -350,6 +350,20 @@ UI_FONT = "Segoe UI" if os.name == "nt" else "Inter"
 MONO_FONT = "Consolas" if os.name == "nt" else "DejaVu Sans Mono"
 
 
+def ui_scale() -> float:
+    """Extra Tk scale for HiDPI Linux screens (XWayland with force_zero_scaling).
+
+    stablecraft.sh sets STABLECRAFT_UI_SCALE from the Hyprland monitor scale.
+    """
+    if os.name == "nt":
+        return 1.0
+    try:
+        value = float(os.environ.get("STABLECRAFT_UI_SCALE", "") or 1.0)
+    except ValueError:
+        value = 1.0
+    return min(max(value, 0.5), 4.0)
+
+
 def open_path(path: Path | str) -> None:
     """Open a file or folder with the desktop's default application."""
     if os.name == "nt":
@@ -461,7 +475,16 @@ def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
     if os.name != "nt":
         restart = str(section.get("restart_command", "") or "")
         if restart:
-            return subprocess.Popen(shlex.split(restart))
+            # Run it to the end: a refused restart (busy queue) must not look like success.
+            proc = subprocess.Popen(
+                shlex.split(restart), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            output, _ = proc.communicate(timeout=360)
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    output.strip()[-400:] or f"restart_command a échoué (code {proc.returncode})"
+                )
+            return proc
         command = Path(start_value) if start_value else comfy_app_dir(root) / "main.py"
         if not command.exists():
             raise RuntimeError(f"Lanceur ComfyUI introuvable : {command}")

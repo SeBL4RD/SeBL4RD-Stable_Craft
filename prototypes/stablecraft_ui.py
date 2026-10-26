@@ -44,6 +44,7 @@ from models_tools import (  # noqa: E402
     UI_FONT,
     download_options,
     open_path,
+    ui_scale,
     krea_node_status,
     latest_krea_release,
     resolve_filename,
@@ -171,6 +172,9 @@ def version_tuple(value: str) -> tuple[int, ...]:
 class StableCraftApp(tk.Tk):
     def __init__(self, config_path: Path, initial_profile: str | None = None) -> None:
         super().__init__()
+        self.ui_scale = ui_scale()
+        if self.ui_scale != 1.0:
+            self.tk.call("tk", "scaling", float(self.tk.call("tk", "scaling")) * self.ui_scale)
         self.config_path = config_path
         self.cfg = load_config(config_path)
         set_language(str(self.cfg.get("app", {}).get("language", "en")))
@@ -221,8 +225,9 @@ class StableCraftApp(tk.Tk):
         self.has_selection = False
 
         self.title(f"StableCraft v{APP_VERSION} — PhotoCraft × ComfyUI")
-        self.geometry("500x930+20+20")
-        self.minsize(460, 760)
+        s = self.ui_scale
+        self.geometry(f"{int(500 * s)}x{int(930 * s)}+20+20")
+        self.minsize(int(460 * s), int(760 * s))
         self.configure(bg=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1967,13 +1972,13 @@ class StableCraftApp(tk.Tk):
         window = tk.Toplevel(self)
         self.guide_window = window
         window.title(tr("Guide de prompt — StableCraft"))
-        width, height = 660, 720
+        width, height = int(660 * self.ui_scale), int(720 * self.ui_scale)
         x = self.winfo_rootx() + self.winfo_width() + 12
         y = self.winfo_rooty() + 40
         x = max(0, min(x, self.winfo_screenwidth() - width - 20))
         y = max(0, min(y, self.winfo_screenheight() - height - 40))
         window.geometry(f"{width}x{height}+{x}+{y}")
-        window.minsize(520, 520)
+        window.minsize(int(520 * self.ui_scale), int(520 * self.ui_scale))
         window.configure(bg=BG)
 
         footer = tk.Frame(window, bg=BG)

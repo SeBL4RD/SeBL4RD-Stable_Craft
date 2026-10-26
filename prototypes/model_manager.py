@@ -20,6 +20,7 @@ from models_tools import (
     UI_FONT,
     comfyui_root,
     open_path,
+    ui_scale,
     ensure_extra_model_paths,
     gguf_architecture,
     human_size,
@@ -83,8 +84,9 @@ class ModelManager(tk.Toplevel):
                 profile=profile_text(self.profile, "label") or self.profile_key,
             )
         )
-        self.geometry("760x620+560+80")
-        self.minsize(640, 480)
+        s = getattr(app, "ui_scale", ui_scale())
+        self.geometry(f"{int(760 * s)}x{int(620 * s)}+560+80")
+        self.minsize(int(640 * s), int(480 * s))
         self.configure(bg=BG)
         self.transient(app)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
