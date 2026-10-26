@@ -18,6 +18,7 @@ from models_tools import (
     FOLDER_FOR_KIND,
     KIND_LABELS,
     UI_FONT,
+    comfy_app_dir,
     comfyui_root,
     open_path,
     ui_scale,
@@ -374,7 +375,7 @@ class ModelManager(tk.Toplevel):
                 anchor="w",
                 justify="left",
                 wraplength=680,
-                font=("Segoe UI", 8),
+                font=(UI_FONT, 8),
             ).pack(fill="x", pady=(0, 3))
 
         option_var: tk.StringVar | None = None
@@ -476,7 +477,7 @@ class ModelManager(tk.Toplevel):
                 return path
         root = comfyui_root(self.cfg)
         if root is not None:
-            path = root / "ComfyUI" / "models"
+            path = comfy_app_dir(root) / "models"
             if path.exists():
                 return path
         return None
