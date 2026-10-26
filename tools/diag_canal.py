@@ -1,9 +1,11 @@
-"""Sonde bornée du canal de contrôle PhotoCraft. Lancer depuis ~/src/StableCraft.
-Usage: diag_canal.py [methode ...]  (défaut : engine.commands ui.inspect)"""
+"""Bounded probe of the PhotoCraft control channel. Run with any Python 3.11+.
+Usage: diag_canal.py [method ...]  (default: engine.commands ui.inspect)"""
+import os
 import sys
 import time
 from pathlib import Path
 
+os.chdir(Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(Path("prototypes").resolve()))
 from control_client import ControlClient, read_token  # noqa: E402
 

@@ -1,4 +1,5 @@
 """E2E StableCraft on Linux, session path (what the UI runs).
+Warning: it first closes every open PhotoCraft document, without saving.
 Run from the StableCraft folder with ComfyUI's Python:
   e2e_session.py IMAGE PROFILE PROMPT X Y W H"""
 import json

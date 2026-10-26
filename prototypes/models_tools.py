@@ -479,7 +479,12 @@ def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
             proc = subprocess.Popen(
                 shlex.split(restart), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
-            output, _ = proc.communicate(timeout=360)
+            try:
+                output, _ = proc.communicate(timeout=360)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                output = "restart_command : délai de 360 s dépassé, commande arrêtée."
             if proc.returncode != 0:
                 raise RuntimeError(
                     output.strip()[-400:] or f"restart_command a échoué (code {proc.returncode})"

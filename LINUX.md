@@ -14,7 +14,8 @@ French version: [LINUX.fr.md](LINUX.fr.md).
 2. Install Tk for Python 3.11+: `sudo pacman -S tk`.
 3. Copy `config.example.toml` to `config.toml`.
 4. In `[comfyui]`, set `root` to the folder that contains `main.py`, and `endpoint` to
-   the ComfyUI port. An empty `python` means `<root>/.venv/bin/python`.
+   the ComfyUI port. An empty `python` means `<root>/.venv/bin/python`; with no venv,
+   StableCraft tries its own Python and writes that to `user/logs/launcher.log`.
 5. In `[profiles.*]`, use the file names that ComfyUI sees (`unet`, `text_encoder`,
    `vae`, `lora`). Profiles with a `.gguf` model need the ComfyUI-GGUF custom node.
 6. Run `./stablecraft.sh`.
@@ -41,18 +42,21 @@ Categories=Graphics;
   it opened the control channel.
 - ComfyUI starts with `python main.py --disable-auto-launch` on the configured port.
   Its output goes to `user/logs/comfyui.log`.
-- `.safetensors` models (int8, fp8, bf16) load through `UNETLoader` with
-  `weight_dtype = "default"`.
 - Files and folders open with `xdg-open`.
 - HiDPI: under Hyprland with `xwayland:force_zero_scaling`, `stablecraft.sh` reads the
   monitor scale. Elsewhere, set `STABLECRAFT_UI_SCALE=2` yourself.
-- Dragging a reference image onto the window is Windows-only and is not ported.
+- Dragging a reference image onto the window is Windows-only and is not ported (the
+  "Click or drop" hint still shows): click to pick the image.
+- At `STABLECRAFT_UI_SCALE=2`, some long labels wrap too early: `wraplength` is not
+  scaled.
 
 ## Restart command
 
 "Restart ComfyUI" stops the process that listens on the port, then starts ComfyUI again.
 If ComfyUI runs as a service, set `restart_command` (a script, or
-`systemctl --user restart <unit>`). StableCraft waits for the command to finish. A
+`systemctl --user restart <unit>`). StableCraft also uses it to start ComfyUI when it
+is not running at launch. For "Restart ComfyUI", StableCraft waits for the command to
+finish. A
 non-zero exit code is shown as a refusal. A good script refuses (for example with exit
 code 3) while the ComfyUI queue is not empty, so that a running render is never cut.
 
@@ -62,4 +66,5 @@ code 3) while the ComfyUI queue is not empty, so that a running render is never 
   profile finds its files and nodes in ComfyUI.
 - `tools/diag_canal.py` is a short, bounded probe of the PhotoCraft control channel.
 - `tools/e2e.py` and `tools/e2e_session.py` run an edit end to end through the control
-  channel. They use the default ports 7990 and 8188.
+  channel. They use the default ports 7990 and 8188. `e2e_session.py` first closes
+  every open PhotoCraft document, without saving.
