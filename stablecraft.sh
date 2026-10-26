@@ -2,6 +2,9 @@
 # StableCraft on Linux: starts ComfyUI if needed, PhotoCraft with its control channel, then the UI.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 
+# Tk runs on XWayland. A menu launch may not export DISPLAY.
+export DISPLAY="${DISPLAY:-:0}"
+
 # HiDPI: with Hyprland xwayland:force_zero_scaling, Tk draws at 1:1 physical pixels.
 # Use the focused monitor scale so the window and fonts keep their normal size.
 if [ -z "${STABLECRAFT_UI_SCALE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
