@@ -276,6 +276,7 @@ def build_workflow(
     mode: str = "edit",
     lora: str | None = None,
     lora_strength: float = 1.0,
+    loras: list[tuple[str, float]] | None = None,
 ) -> dict[str, Any]:
     if mode not in {"edit", "t2i"}:
         raise ComfyError(f"unknown generation mode {mode!r}")
@@ -294,8 +295,9 @@ def build_workflow(
             }
         }
         model: list[Any] = ["1", 0]
+        next_id = 900
         if apply_lora and lora:
-            workflow["14"] = {
+            workflow[str(next_id)] = {
                 "class_type": "LoraLoaderModelOnly",
                 "inputs": {
                     "model": model,
@@ -303,7 +305,19 @@ def build_workflow(
                     "strength_model": lora_strength,
                 },
             }
-            model = ["14", 0]
+            model = [str(next_id), 0]
+            next_id += 1
+        for name, strength in loras or []:
+            workflow[str(next_id)] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": model,
+                    "lora_name": name,
+                    "strength_model": max(0.0, min(1.0, float(strength))),
+                },
+            }
+            model = [str(next_id), 0]
+            next_id += 1
         return workflow, model
 
     # ------------------------------------------------------------------
@@ -1231,6 +1245,68 @@ def create_session(
     return sdata
 
 
+def parse_lora_args(values: list[str] | None) -> list[tuple[str, float]]:
+    """Parse repeated ``--lora NAME=STRENGTH`` arguments."""
+    loras: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        text = str(raw).strip()
+        if not text:
+            continue
+        name = text
+        strength = 1.0
+        head, separator, tail = text.rpartition("=")
+        if separator and head.strip():
+            try:
+                strength = float(tail.replace(",", "."))
+                name = head.strip()
+            except ValueError:
+                name = text
+        name = name.strip()
+        if not name:
+            continue
+        if strength <= 0:
+            continue
+        key = name.replace("\\", "/").casefold()
+        if key in seen:
+            raise SystemExit(f"LoRA en double : {name}")
+        seen.add(key)
+        loras.append((name, max(0.0, min(1.0, strength))))
+    if len(loras) > 10:
+        raise SystemExit("Maximum 10 LoRA par génération.")
+    return loras
+
+
+def validate_loras(
+    comfy: ComfyClient, loras: list[tuple[str, float]] | None
+) -> list[tuple[str, float]]:
+    """Resolve names against ComfyUI's lora list and clamp strengths."""
+    values = list(loras or [])
+    if not values:
+        return []
+    options = comfy.options("LoraLoaderModelOnly", "lora_name")
+    lookup = {
+        str(option).replace("\\", "/").casefold(): str(option) for option in options
+    }
+    normalized: list[tuple[str, float]] = []
+    missing: list[str] = []
+    for name, strength in values[:10]:
+        actual = lookup.get(str(name).replace("\\", "/").casefold())
+        if actual is None:
+            missing.append(str(name))
+        else:
+            normalized.append((actual, max(0.0, min(1.0, float(strength)))))
+    if missing:
+        raise ComfyError(
+            "LoRA introuvable(s) dans ComfyUI : "
+            + ", ".join(missing)
+            + "\nOuvre la page LoRA Manager et vérifie que le fichier est visible."
+        )
+    if len(values) > 10:
+        raise ComfyError("Maximum 10 LoRA par génération.")
+    return normalized
+
+
 def comfy_generate(
     ctx: dict[str, Any],
     comfy: ComfyClient,
@@ -1244,6 +1320,7 @@ def comfy_generate(
 ) -> Image.Image:
     mode = ctx["mode"]
     profile = ctx["profile_name"]
+    ctx["loras"] = validate_loras(comfy, list(ctx.get("loras") or []))
     comfy.require(unet_loader_for(ctx["unet"]), "unet_name", ctx["unet"])
     comfy.require(clip_loader_for(ctx["text_encoder"]), "clip_name", ctx["text_encoder"])
     comfy.require("VAELoader", "vae_name", ctx["vae"])
@@ -1290,6 +1367,7 @@ def comfy_generate(
         mode=mode,
         lora=ctx.get("lora"),
         lora_strength=float(ctx.get("lora_strength", 1.0)),
+        loras=ctx.get("loras"),
     )
     prompt_id = comfy.queue(workflow)
     print(
@@ -1443,6 +1521,10 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "mode": ctx["mode"],
             "feather": ctx["feather"],
             "padding": ctx["padding"],
+            "loras": [
+                {"name": name, "strength": strength}
+                for name, strength in (ctx.get("loras") or [])
+            ],
             "crop": [x0, y0, cw, ch],
             "crop_offset": [x0, y0],
             "crop_size": [cw, ch],
@@ -1579,7 +1661,15 @@ def main() -> None:
         default=None,
         help="original filename to record with --reference",
     )
+    ap.add_argument(
+        "--lora",
+        action="append",
+        default=[],
+        metavar="NAME=STRENGTH",
+        help="user LoRA to apply (repeatable, max 10, strength 0..1)",
+    )
     args = ap.parse_args()
+    loras = parse_lora_args(args.lora)
 
     cfg = load_config(args.config)
     profile_name = args.profile or cfg.get("app", {}).get("default_profile", "flux3_klein")
@@ -1654,6 +1744,7 @@ def main() -> None:
             "vae": vae,
             "lora": lora,
             "lora_strength": lora_strength,
+            "loras": loras,
         }
         if args.sessions_dir:
             cfg.setdefault("app", {})["sessions_dir"] = str(args.sessions_dir)
@@ -1730,6 +1821,7 @@ def main() -> None:
         comfy.require("UnetLoaderGGUF", "unet_name", unet)
         comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
+        loras = validate_loras(comfy, loras)
         if profile_name == "krea2_edit":
             comfy.require_node("Krea2EditModelPatch")
             comfy.require_node("Krea2EditGroundedEncode")
@@ -1754,6 +1846,7 @@ def main() -> None:
             prefix="StableCraft",
             ref_boost=ref_boost,
             grounding_px=grounding_px,
+            loras=loras,
         )
         started = time.time()
         prompt_id = comfy.queue(workflow)

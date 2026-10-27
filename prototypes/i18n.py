@@ -146,10 +146,82 @@ EN: dict[str, str] = {
     "Image de référence : {path}": "Reference image: {path}",
     "Drag & drop Windows activé.": "Windows drag & drop enabled.",
     "Drag & drop indisponible : {error}": "Drag & drop unavailable: {error}",
+    "Fichier ignoré (format image attendu) : {name}": "File ignored (image format expected): {name}",
     "Session {session} : {error}": "Session {session}: {error}",
     "Annulation demandée…": "Cancellation requested…",
     "Config : {path}": "Config: {path}",
     "Clique ou dépose": "Click or drop",
+    # LoRA
+    "Activer les LoRA": "Enable LoRA",
+    "Gérer les LoRA…": "Manage LoRA…",
+    "LoRA — {profile}": "LoRA — {profile}",
+    "LoRA": "LoRA",
+    "LoRA Manager": "LoRA Manager",
+    "Sélectionner un LoRA": "Select a LoRA",
+    "Détails": "Details",
+    "Grille": "Grid",
+    "Charger plus": "Load more",
+    "Utiliser ce LoRA": "Use this LoRA",
+    "Vérification des LoRA…": "Checking LoRA…",
+    "{count}/{max} LoRA": "{count}/{max} LoRA",
+    "Introuvable dans ComfyUI.": "Not visible to ComfyUI.",
+    "Architecture {arch} — incompatible avec {profile}.": "Architecture {arch} — incompatible with {profile}.",
+    "Contient un text encoder — seule la partie modèle est appliquée.": "Contains a text encoder — only the model part is applied.",
+    "Maximum {max} LoRA par profil.": "Maximum {max} LoRA per profile.",
+    "Chargement de la liste…": "Loading list…",
+    "Chargement…": "Loading…",
+    "Aucun LoRA trouvé.": "No LoRA found.",
+    "Nom": "Name",
+    "Dossier": "Folder",
+    "incompatible": "incompatible",
+    "text encoder ignoré": "text encoder ignored",
+    "déjà utilisé": "already used",
+    "Chargement des miniatures… {done}/{total}": "Loading thumbnails… {done}/{total}",
+    "Sélectionne un LoRA.": "Select a LoRA.",
+    "Ce LoRA est déjà dans la liste.": "This LoRA is already in the list.",
+    "Ajouter un LoRA": "Add a LoRA",
+    "Ouvrir la page LoRA Manager": "Open the LoRA Manager page",
+    "Actualiser": "Refresh",
+    "Choisir…": "Choose…",
+    "ComfyUI/LoRA Manager indisponible : {error}": "ComfyUI/LoRA Manager unavailable: {error}",
+    "LoRA Manager indisponible — liste ComfyUI, sans miniatures.": (
+        "LoRA Manager unavailable — ComfyUI list, without thumbnails."
+    ),
+    "Erreur LoRA : {error}": "LoRA error: {error}",
+    "Aperçu": "Preview",
+    "Miniatures indisponibles : {error}": "Thumbnails unavailable: {error}",
+    "Les LoRA sont lus depuis ComfyUI. Aucun fichier n'est copié : utilise la page LoRA Manager pour ajouter ou organiser tes fichiers.": (
+        "LoRA are read from ComfyUI. Nothing is copied: use the LoRA Manager page "
+        "to add or organize your files."
+    ),
+    "Force": "Strength",
+    "Liste ComfyUI chargée : {count} LoRA visibles. La génération validera chaque nom.": (
+        "ComfyUI list loaded: {count} visible LoRA. Generation will validate each name."
+    ),
+    "Profil actuel : {profile}": "Current profile: {profile}",
+    "La liste et les miniatures viennent de ComfyUI LoRA Manager. Aucun fichier n'est copié.": (
+        "The list and thumbnails come from ComfyUI LoRA Manager. Nothing is copied."
+    ),
+    "Rechercher": "Search",
+    "Page {page}/{pages} · {total} LoRA": "Page {page}/{pages} · {total} LoRA",
+    "Aucun LoRA sélectionné. Clique sur « Ajouter un LoRA » pour en choisir un.": (
+        "No LoRA selected. Click “Add a LoRA” to choose one."
+    ),
+    "LoRA désactivés ({count} configurés)": "LoRA disabled ({count} configured)",
+    "LoRA activés.": "LoRA enabled.",
+    "LoRA désactivés.": "LoRA disabled.",
+    "Aucun LoRA — clique sur Gérer les LoRA…": "No LoRA — click Manage LoRA…",
+    "LoRA : {error}": "LoRA: {error}",
+    "Aucun LoRA actif — vérifie les cases dans Gérer…": (
+        "No active LoRA — check the boxes in Manage…"
+    ),
+    "{count} LoRA actifs · {details}": "{count} active LoRA · {details}",
+    "1 LoRA actif · {details}": "1 active LoRA · {details}",
+    "⚠ {label} semble destiné à {arch}, pas à {profile}.": (
+        "⚠ {label} looks intended for {arch}, not {profile}."
+    ),
+    "LoRA introuvable dans ComfyUI : {names}": "LoRA not visible to ComfyUI: {names}",
+    " et {count} autre(s)": " and {count} more",
     # Prompt guide
     "Guide de prompt": "Prompt guide",
     "Guide de prompt — StableCraft": "Prompt guide — StableCraft",

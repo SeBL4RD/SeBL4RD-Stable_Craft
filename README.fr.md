@@ -21,6 +21,8 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 - régénération possible même si la sélection a été perdue ;
 - **deux modes** : EDIT (image source) ou T2I (texte seul), EDIT par défaut ;
 - **image de référence par calque** (Krea 2, FLUX.3 Klein et Qwen Image 2.1) ;
+- **pile de LoRA par profil** (10 max, force 0–1) avec la liste et les miniatures du
+  LoRA Manager de ComfyUI ;
 - cinq profils : FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
   (base + LoRA), Krea 2 Identity Edit et Qwen Image 2.1 ;
 - gestionnaire de modèles à la demande (**Localiser** / **Télécharger**) et vérification
@@ -65,6 +67,10 @@ numéro de version figé.
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
+- Optionnel : le nœud custom
+  [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) pour la
+  liste et les miniatures des LoRA. Sans lui, StableCraft retombe sur la liste LoRA de
+  ComfyUI, sans miniatures.
 
 ### Modèles
 
@@ -241,6 +247,32 @@ Exemple :
 Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
 pratiques et des exemples.
 
+### LoRA
+
+- coche **Activer les LoRA** dans la fenêtre principale ; **Gérer les LoRA…** ouvre le
+  gestionnaire ;
+- jusqu'à **10 LoRA par profil**, chacun avec sa case activer/désactiver et une force de
+  **0.00 à 1.00** ;
+- **Choisir…** ouvre un sélecteur avec une vue **Détails** (nom + dossier court) et une
+  vue **Grille** avec miniatures ;
+- la liste et les aperçus viennent du nœud custom **LoRA Manager** de ComfyUI
+  (`http://<comfyui>/loras`). StableCraft ne copie jamais un LoRA : il utilise
+  uniquement les fichiers déjà visibles par ComfyUI (`models/loras` ou
+  `extra_model_paths.yaml`) ;
+- utilise **Ouvrir la page LoRA Manager** pour ajouter ou organiser tes fichiers, puis
+  **Actualiser** ;
+- le LoRA Manager sert des aperçus WebP ; StableCraft les convertit en petits PNG dans
+  `user/cache/lora_previews/` avec le Python de ComfyUI (Pillow). Aucun fichier de
+  modèle n'est copié ;
+- le gestionnaire avertit quand l'architecture d'un LoRA ne correspond pas au profil,
+  sans bloquer ;
+- la sélection est enregistrée par profil et copiée dans le `session.json` de chaque
+  calque, donc un ancien calque recharge ses propres LoRA ;
+- seuls les LoRA « model-only » sont appliqués (`LoraLoaderModelOnly`). Les poids de
+  text encoder sont ignorés ;
+- Krea 2 General Edit applique d'abord le LoRA du profil en EDIT, puis la pile
+  utilisateur ; en T2I, seule la pile utilisateur est appliquée.
+
 ### Aperçu
 
 - **Document** : le composite PhotoCraft après application.
@@ -294,6 +326,8 @@ Rien n'est stocké dans AppData.
     sessions/<id>/       # base, masque, référence, galerie
     logs/
     model_selection.json # quantification choisie par profil
+    lora_settings.json   # case maîtresse + pile de LoRA par profil
+    cache/lora_previews/ # miniatures PNG des LoRA (pas les modèles)
   models/                # modèles locaux, aucun poids versionné
 ```
 

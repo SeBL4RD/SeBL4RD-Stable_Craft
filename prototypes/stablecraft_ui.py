@@ -11,6 +11,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -39,6 +40,18 @@ from app_meta import (  # noqa: E402
 )
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
 from i18n import current_language, profile_text, set_language, tr  # noqa: E402
+from lora_store import (  # noqa: E402
+    MAX_LORAS,
+    active_items as active_lora_items,
+    compatibility as lora_compatibility,
+    family_label as lora_family_label,
+    load_settings as load_lora_settings,
+    normalize_item as normalize_lora_item,
+    profile_items as profile_lora_items,
+    save_settings as save_lora_settings,
+    set_profile_items as set_profile_lora_items,
+    signature as lora_signature,
+)
 from models_tools import (  # noqa: E402
     download_options,
     krea_node_status,
@@ -156,6 +169,13 @@ def short_error(exc: BaseException) -> str:
     return (text[0] if text else exc.__class__.__name__)[:90]
 
 
+def short_lora_label(value: object, limit: int = 24) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
+
+
 def version_tuple(value: str) -> tuple[int, ...]:
     parts: list[int] = []
     for part in str(value).lstrip("v").split("."):
@@ -200,6 +220,7 @@ class StableCraftApp(tk.Tk):
         self._drop_proc_ref: Any = None
         self._old_wndproc: Any = None
         self._drop_hwnd: int | None = None
+        self._drop_enabled = False
         self._win_user32: Any = None
         self._win_shell32: Any = None
         self.update_url = RELEASES_URL
@@ -212,6 +233,13 @@ class StableCraftApp(tk.Tk):
         self.models_error: str | None = None
         self._model_manager: Any = None
         self._closing = False
+        self.lora_settings = load_lora_settings()
+        self.lora_items: list[dict[str, Any]] = []
+        self.lora_enabled_var = tk.BooleanVar(
+            value=bool(self.lora_settings.get("enabled", True))
+        )
+        self.lora_manager: Any = None
+        self._lora_available: set[str] | None = None
 
         self.pc_ok = False
         self.comfy_ok = False
@@ -693,6 +721,65 @@ class StableCraftApp(tk.Tk):
         self._lock_scroll_wheel(self.quant_combo)
         self.quant_map: dict[str, str] = {}
 
+        lora_frame = self._section(main, "LORA")
+        lora_top = tk.Frame(lora_frame, bg=BG)
+        lora_top.pack(fill="x", pady=(4, 0))
+        self.lora_check = tk.Checkbutton(
+            lora_top,
+            text=tr("Activer les LoRA"),
+            variable=self.lora_enabled_var,
+            command=self._toggle_loras,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 9),
+        )
+        self.lora_check.pack(side="left")
+        self.lora_manage_btn = tk.Button(
+            lora_top,
+            text=tr("Gérer les LoRA…"),
+            command=self._open_lora_manager,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=3,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.lora_manage_btn.pack(side="right")
+        self.lora_summary = tk.Label(
+            lora_frame,
+            text="",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=420,
+            font=("Segoe UI", 9),
+        )
+        self.lora_summary.pack(fill="x", pady=(2, 0))
+        self.lora_hint = tk.Label(
+            lora_frame,
+            text="",
+            bg=BG,
+            fg=YELLOW,
+            anchor="w",
+            justify="left",
+            wraplength=420,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.lora_hint.pack(fill="x")
+        self.lora_hint.bind(
+            "<Button-1>", lambda _event: self._open_lora_manager()
+        )
+
         settings = self._section(main, "RÉGLAGES")
         grid = tk.Frame(settings, bg=BG)
         grid.pack(fill="x", pady=(4, 0))
@@ -1035,6 +1122,7 @@ class StableCraftApp(tk.Tk):
         self._populate_quantizations()
         self._update_mode_hint()
         self._update_reference_for_profile()
+        self._load_profile_loras()
         self._update_generate_state()
         self._check_models()
 
@@ -1125,6 +1213,7 @@ class StableCraftApp(tk.Tk):
                     self.neg_text.get("1.0", "end").strip() if self.neg_var.get() else ""
                 ),
                 "reference": reference.name if reference else None,
+                "loras": self._loras_signature(),
             }
         except (TypeError, ValueError):
             return None
@@ -1147,6 +1236,8 @@ class StableCraftApp(tk.Tk):
                     and int(generation.get("padding", -1)) == values["padding"]
                     and str(generation.get("reference") or "")
                     == str(values.get("reference") or "")
+                    and lora_signature(generation.get("loras") or [])
+                    == values["loras"]
                 )
             except (TypeError, ValueError):
                 continue
@@ -1385,6 +1476,8 @@ class StableCraftApp(tk.Tk):
                     self._handle_models(item[1], item[2], item[3], item[4])
                 elif kind == "log":
                     self._log(str(item[1]))
+                elif kind == "drop":
+                    self._on_dropped_file(str(item[1]))
                 elif kind == "preview":
                     self.preview_paths["document"] = str(item[1])
                     if self.preview_mode.get() == "document":
@@ -1951,6 +2044,145 @@ class StableCraftApp(tk.Tk):
         return None
 
     # ------------------------------------------------------------------
+    # LoRA
+    # ------------------------------------------------------------------
+
+    def _load_profile_loras(self) -> None:
+        self.lora_settings = load_lora_settings()
+        self.lora_enabled_var.set(bool(self.lora_settings.get("enabled", True)))
+        self.lora_items = profile_lora_items(self.lora_settings, self.profile_key)
+        self._update_lora_ui()
+
+    def _active_loras(self) -> list[dict[str, Any]]:
+        if not self.lora_enabled_var.get():
+            return []
+        return active_lora_items(self.lora_items)[:MAX_LORAS]
+
+    def _toggle_loras(self) -> None:
+        self.lora_settings = load_lora_settings()
+        self.lora_settings["enabled"] = bool(self.lora_enabled_var.get())
+        try:
+            save_lora_settings(self.lora_settings)
+        except Exception as exc:  # noqa: BLE001
+            self._log(tr("LoRA : {error}", error=short_error(exc)))
+        self._update_lora_ui()
+        self._log(
+            tr("LoRA activés.")
+            if self.lora_enabled_var.get()
+            else tr("LoRA désactivés.")
+        )
+
+    def _open_lora_manager(self) -> None:
+        if self.running:
+            return
+        from lora_manager import LoraManager  # noqa: PLC0415
+
+        if self.lora_manager is not None:
+            try:
+                if self.lora_manager.winfo_exists():
+                    self.lora_manager.deiconify()
+                    self.lora_manager.lift()
+                    self.lora_manager.focus_force()
+                    return
+            except tk.TclError:
+                pass
+            self.lora_manager = None
+        self.lora_manager = LoraManager(self)
+
+    def _apply_lora_items(self, items: list[dict[str, Any]]) -> None:
+        if self._closing:
+            return
+        normalized: list[dict[str, Any]] = []
+        for entry in items[:MAX_LORAS]:
+            value = normalize_lora_item(entry)
+            if value is not None:
+                normalized.append(value)
+        self.lora_items = normalized
+        self.lora_settings = load_lora_settings()
+        set_profile_lora_items(self.lora_settings, self.profile_key, normalized)
+        try:
+            save_lora_settings(self.lora_settings)
+        except Exception as exc:  # noqa: BLE001
+            self._log(tr("LoRA : {error}", error=short_error(exc)))
+        if self.session_id and self.session_data:
+            self.session_data["loras"] = copy.deepcopy(normalized)
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(tr("LoRA : {error}", error=short_error(exc)))
+        self._update_lora_ui()
+        self._update_generate_state()
+
+    def _loras_signature(self, items: list[dict[str, Any]] | None = None) -> str:
+        values = items if items is not None else self._active_loras()
+        return lora_signature(values)
+
+    def _update_lora_ui(self) -> None:
+        if self._closing or not hasattr(self, "lora_summary"):
+            return
+        enabled = bool(self.lora_enabled_var.get())
+        configured = len(self.lora_items)
+        active = self._active_loras() if enabled else []
+        if not enabled:
+            summary = tr("LoRA désactivés ({count} configurés)", count=configured)
+        elif not configured:
+            summary = tr("Aucun LoRA — clique sur Gérer les LoRA…")
+        elif not active:
+            summary = tr("Aucun LoRA actif — vérifie les cases dans Gérer…")
+        else:
+            details = " · ".join(
+                f"{short_lora_label(item.get('label'))} "
+                f"{float(item.get('strength', 0.0)):.2f}"
+                for item in active[:2]
+            )
+            if len(active) > 2:
+                details += tr(" et {count} autre(s)", count=len(active) - 2)
+            if len(active) == 1:
+                summary = tr("1 LoRA actif · {details}", details=details)
+            else:
+                summary = tr(
+                    "{count} LoRA actifs · {details}",
+                    count=len(active),
+                    details=details,
+                )
+        self.lora_summary.config(text=summary)
+
+        hints: list[str] = []
+        profile_label = self._profile_label()
+        for item in active:
+            family = str(item.get("arch") or "")
+            if lora_compatibility(self.profile_key, family) == "incompatible":
+                hints.append(
+                    tr(
+                        "⚠ {label} semble destiné à {arch}, pas à {profile}.",
+                        label=str(item.get("label") or "?"),
+                        arch=lora_family_label(family),
+                        profile=profile_label,
+                    )
+                )
+        if self._lora_available is not None:
+            missing = [
+                str(item.get("label") or "?")
+                for item in active
+                if str(item.get("name") or "").replace("\\", "/").casefold()
+                not in self._lora_available
+            ]
+            if missing:
+                hints.append(
+                    tr(
+                        "LoRA introuvable dans ComfyUI : {names}",
+                        names=", ".join(missing),
+                    )
+                )
+        self.lora_hint.config(text="\n".join(hints))
+        state = "disabled" if self.running else "normal"
+        try:
+            self.lora_check.config(state=state)
+            self.lora_manage_btn.config(state=state)
+        except tk.TclError:
+            pass
+
+    # ------------------------------------------------------------------
     # Prompt guide
     # ------------------------------------------------------------------
 
@@ -2111,12 +2343,13 @@ class StableCraftApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _enable_windows_drop(self) -> None:
-        if os.name != "nt":
+        if os.name != "nt" or self._closing or self._drop_enabled:
             return
-        try:
-            import ctypes
-            from ctypes import wintypes
+        import ctypes
+        from ctypes import wintypes
 
+        hwnd: int | None = None
+        try:
             user32 = ctypes.windll.user32
             shell32 = ctypes.windll.shell32
 
@@ -2176,19 +2409,13 @@ class StableCraftApp(tk.Tk):
                                 buffer,
                                 len(buffer),
                             ):
-                                dropped = buffer.value
-                                if (
-                                    not self._closing
-                                    and dropped.lower().endswith(
-                                        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
-                                    )
-                                ):
-                                    self.after(
-                                        0,
-                                        lambda value=dropped: self._set_reference_from_source(
-                                            Path(value)
-                                        ),
-                                    )
+                                # This runs inside a native window procedure.
+                                # Never call Tk here: after() re-enters Tcl
+                                # from the callback and crashes Python 3.11
+                                # with "PyEval_RestoreThread ... GIL is
+                                # released". Let _poll_queue handle it.
+                                if not self._closing:
+                                    self.queue.put(("drop", buffer.value))
                     finally:
                         shell32.DragFinish(wintypes.HANDLE(wparam))
                     return 0
@@ -2208,22 +2435,55 @@ class StableCraftApp(tk.Tk):
                 raise OSError("SetWindowLongPtrW a échoué")
             self._drop_proc_ref = callback
             self._old_wndproc = old
+            self._drop_enabled = True
             self._log("Drag & drop Windows activé.")
         except Exception as exc:  # noqa: BLE001
+            if hwnd is not None:
+                try:
+                    ctypes.windll.shell32.DragAcceptFiles(hwnd, False)
+                except Exception:  # noqa: BLE001
+                    pass
             self._log(tr("Drag & drop indisponible : {error}", error=short_error(exc)))
 
-    def _disable_windows_drop(self) -> None:
-        if self._drop_hwnd is None or self._win_user32 is None:
+    def _on_dropped_file(self, value: str) -> None:
+        if self._closing:
             return
+        path = Path(value)
+        if path.suffix.lower() not in (
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".bmp",
+            ".tif",
+            ".tiff",
+        ):
+            self._log(
+                tr(
+                    "Fichier ignoré (format image attendu) : {name}",
+                    name=path.name,
+                )
+            )
+            return
+        self._set_reference_from_source(path)
+
+    def _disable_windows_drop(self) -> None:
+        if not self._drop_enabled or self._drop_hwnd is None or self._win_user32 is None:
+            return
+        self._drop_enabled = False
+        try:
+            if self._win_shell32 is not None:
+                self._win_shell32.DragAcceptFiles(self._drop_hwnd, False)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             if self._old_wndproc:
                 self._win_user32.SetWindowLongPtrW(
                     self._drop_hwnd, -4, self._old_wndproc
                 )
-            if self._win_shell32 is not None:
-                self._win_shell32.DragAcceptFiles(self._drop_hwnd, False)
         except Exception:  # noqa: BLE001
             pass
+        self._drop_hwnd = None
 
     # ------------------------------------------------------------------
     # Sessions / gallery
@@ -2277,6 +2537,7 @@ class StableCraftApp(tk.Tk):
             self.mode_var.set("edit")
             self._last_mode = "edit"
             self._update_mode_hint()
+            self._load_profile_loras()
         if session_id:
             try:
                 self.session_data = self.session_store.load(session_id)
@@ -2296,6 +2557,7 @@ class StableCraftApp(tk.Tk):
             # `_restore_session_fields` deliberately leaves the seed field alone:
             # the seed used by a generation is shown in the gallery hint, and the
             # user's field must stay on -1 unless they typed a value themselves.
+            self._load_profile_loras()
             self._restore_session_fields(self.session_data)
 
         if session_id:
@@ -2307,6 +2569,7 @@ class StableCraftApp(tk.Tk):
         else:
             self._draw_reference_tile()
         self._update_reference_for_profile()
+        self._update_lora_ui()
         self._update_generate_state()
         self._check_models()
 
@@ -2330,6 +2593,21 @@ class StableCraftApp(tk.Tk):
         self.feather_var.set(str(generation.get("feather", 10)))
         self.steps_var.set(str(generation.get("steps", 16)))
         self.cfg_var.set(str(generation.get("cfg", 1.0)))
+        source = None
+        if isinstance(sdata.get("loras"), list):
+            source = sdata["loras"]
+        elif isinstance(generation.get("loras"), list):
+            # Sessions created from the CLI may only carry the active stack in
+            # the generation entry.
+            source = generation["loras"]
+        if source is not None:
+            restored: list[dict[str, Any]] = []
+            for entry in source[:MAX_LORAS]:
+                value = normalize_lora_item(entry)
+                if value is not None:
+                    restored.append(value)
+            self.lora_items = restored
+            self._update_lora_ui()
 
     def _set_result_preview(self, index: int | None) -> None:
         path: Path | None = None
@@ -2583,6 +2861,12 @@ class StableCraftApp(tk.Tk):
                     command += ["--reference-name", self.reference_name]
         if negative:
             command += ["--negative", negative]
+        for item in self._active_loras():
+            name = str(item.get("name") or "")
+            if not name:
+                continue
+            strength = max(0.0, min(1.0, float(item.get("strength", 1.0))))
+            command += ["--lora", f"{name}={strength:.2f}"]
         self._start_bridge(
             command,
             tr("Régénération en cours…") if reuse else tr("Génération en cours…"),
@@ -2622,6 +2906,7 @@ class StableCraftApp(tk.Tk):
         self.progress.start(12)
         self.progress_label.config(text=label, fg=YELLOW)
         self.cancel_btn.config(state="normal")
+        self._update_lora_ui()
         self._log("")
         self._log("$ " + " ".join(Path(part).name if i == 0 else part for i, part in enumerate(command)))
         self.proc_reader = threading.Thread(target=self._read_process, daemon=True)
@@ -2658,6 +2943,7 @@ class StableCraftApp(tk.Tk):
 
     def _finish(self, code: int) -> None:
         self.running = False
+        loras_before_reload = copy.deepcopy(self.lora_items)
         self.progress.stop()
         self.cancel_btn.config(state="disabled")
         session_id = self.pending_session_id
@@ -2670,6 +2956,18 @@ class StableCraftApp(tk.Tk):
             self._load_session(session_id, force=True)
         else:
             self._update_generate_state()
+        if self.session_data is not None:
+            if "loras" not in self.session_data:
+                # The bridge records only the active stack in the generation.
+                # Keep the full UI stack (including disabled entries) for the
+                # layer snapshot.
+                self.lora_items = loras_before_reload
+            self.session_data["loras"] = copy.deepcopy(self.lora_items)
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(tr("LoRA : {error}", error=short_error(exc)))
+        self._update_lora_ui()
         if code == 0 and not self.last_error:
             self.progress_label.config(
                 text=tr("Terminé — calque StableCraft prêt."), fg=GREEN

@@ -21,6 +21,8 @@ on your own GPU, with ComfyUI as the generation engine.
 - regeneration works even after the selection is lost;
 - **two modes**: EDIT (source image) or T2I (text only), EDIT by default;
 - **per-layer reference image** (Krea 2, FLUX.3 Klein and Qwen Image 2.1);
+- **per-profile LoRA stack** (up to 10, strength 0–1) with the ComfyUI LoRA Manager
+  list and thumbnails;
 - five profiles: FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
   (base + LoRA), Krea 2 Identity Edit and Qwen Image 2.1;
 - on-demand model manager (**Locate** / **Download**) and automatic check for the
@@ -64,6 +66,10 @@ checked through the commands exposed by each build, not through a fixed version 
 - For Krea 2: the custom node
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` to load GGUF UNet models.
+- Optional: the
+  [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) custom node
+  for the browsable LoRA list and thumbnails. Without it, StableCraft falls back to
+  ComfyUI's own LoRA list, without thumbnails.
 
 ### Models
 
@@ -240,6 +246,27 @@ Example:
 The **Guide** button next to `PROMPT` opens a non-blocking window with best practices
 and examples.
 
+### LoRA
+
+- check **Enable LoRA** in the main window; **Manage LoRA…** opens the manager;
+- up to **10 LoRA per profile**, each with its own on/off checkbox and a strength from
+  **0.00 to 1.00**;
+- **Choose…** opens a picker with a **Details** view (name + short folder) and a
+  **Grid** view with thumbnails;
+- the list and previews come from the ComfyUI **LoRA Manager** custom node
+  (`http://<comfyui>/loras`). StableCraft never copies a LoRA: it only uses files
+  ComfyUI already sees (`models/loras` or `extra_model_paths.yaml`);
+- use **Open the LoRA Manager page** to add or organize files, then **Refresh**;
+- the LoRA Manager serves WebP previews; StableCraft converts them to small PNGs in
+  `user/cache/lora_previews/` with ComfyUI's Python (Pillow). No model file is copied;
+- the manager warns when a LoRA's architecture does not match the current profile, but
+  does not block it;
+- the LoRA set is stored per profile and snapshotted in each layer's `session.json`, so
+  an old layer reloads its own set;
+- model-only LoRA are applied (`LoraLoaderModelOnly`). Text-encoder weights are ignored;
+- Krea 2 General Edit applies its profile LoRA first in EDIT, then the user stack; T2I
+  uses the user stack only.
+
 ### Models and custom node
 
 - missing files are listed with **Locate** (use an existing file) and **Download**
@@ -276,6 +303,8 @@ Nothing is stored in AppData.
     sessions/<id>/       # base, mask, reference, gallery
     logs/
     model_selection.json # selected quantization per profile
+    lora_settings.json   # master switch + LoRA stack per profile
+    cache/lora_previews/ # PNG LoRA thumbnails (not model files)
   models/                # local models, no weights in git
 ```
 
