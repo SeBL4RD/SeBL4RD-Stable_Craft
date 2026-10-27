@@ -43,6 +43,8 @@ BORDER = "#3a3a44"
 
 CREATE_NO_WINDOW = 0x08000000
 PICKER_PAGE_SIZE = 40
+PREVIEW_SIZE = 160
+ROW_THUMB_SIZE = 84
 
 
 def _short(text: str, limit: int) -> str:
@@ -50,6 +52,130 @@ def _short(text: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: max(1, limit - 1)].rstrip() + "…"
+
+
+def preview_source(item: dict[str, Any], endpoint: str) -> dict[str, str]:
+    """Return a local file or allowed URL for a LoRA preview.
+
+    The LoRA Manager can point at remote CivitAI previews. Do not download
+    those from a metered connection; only the configured ComfyUI host is
+    allowed.
+    """
+    preview_url = str(item.get("preview_url") or "").strip()
+    if preview_url:
+        if preview_url.startswith(("http://", "https://")):
+            url = preview_url
+        elif preview_url.startswith("/"):
+            url = endpoint + preview_url
+        else:
+            url = endpoint + "/" + preview_url
+        endpoint_host = urlparse(endpoint).netloc
+        preview_host = urlparse(url).netloc
+        if preview_host and endpoint_host and preview_host != endpoint_host:
+            # Remote preview: use a local copy when the LoRA Manager left one
+            # next to the model file, otherwise skip the download.
+            preview_file = str(item.get("preview_file") or "").strip()
+            return {"file": preview_file} if preview_file else {}
+        return {"url": url}
+    preview_file = str(item.get("preview_file") or "").strip()
+    if preview_file:
+        return {"file": preview_file}
+    return {}
+
+
+def start_preview_conversion(
+    app: Any,
+    jobs: list[dict[str, str]],
+    target_queue: "queue.Queue[tuple[Any, ...]]",
+    holder: dict[str, Any],
+) -> str | None:
+    """Run ``lora_previews.py`` in a background process.
+
+    Results are pushed to ``target_queue`` as ``("thumb", key, ok, value)``,
+    followed by ``("thumbs_done",)`` or ``("thumb_error", message)``. Returns
+    an error message when the helper cannot be started.
+    """
+    if not jobs:
+        return None
+    python, error = app._comfy_python() if app is not None else (None, "app")
+    if error or not python:
+        return error or "Python"
+    helper = Path(__file__).resolve().parent / "lora_previews.py"
+    if not helper.exists():
+        return str(helper)
+
+    def work() -> None:
+        jobs_path = PREVIEW_CACHE_DIR / f"jobs_{os.getpid()}_{time.time_ns()}.json"
+        proc: subprocess.Popen[str] | None = None
+        try:
+            PREVIEW_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            jobs_path.write_text(
+                json.dumps(jobs, ensure_ascii=False), encoding="utf-8"
+            )
+            proc = subprocess.Popen(
+                [
+                    python,
+                    str(helper),
+                    "--jobs",
+                    str(jobs_path),
+                    "--cache-dir",
+                    str(PREVIEW_CACHE_DIR),
+                    "--size",
+                    str(PREVIEW_SIZE),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            holder["proc"] = proc
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                key = str(payload.get("key") or "")
+                if not key:
+                    continue
+                if payload.get("ok"):
+                    target_queue.put(
+                        ("thumb", key, True, str(preview_cache_path(key)))
+                    )
+                else:
+                    target_queue.put(
+                        ("thumb", key, False, str(payload.get("error") or "?"))
+                    )
+            proc.wait()
+            if proc.returncode not in (0, None):
+                target_queue.put(
+                    ("thumb_error", f"lora_previews.py exit {proc.returncode}")
+                )
+            else:
+                target_queue.put(("thumbs_done",))
+        except Exception as exc:  # noqa: BLE001
+            target_queue.put(("thumb_error", str(exc)))
+        finally:
+            try:
+                jobs_path.unlink()
+            except OSError:
+                pass
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+            holder["proc"] = None
+
+    holder["proc"] = None
+    threading.Thread(target=work, daemon=True).start()
+    return None
 
 
 class LoraManager(tk.Toplevel):
@@ -73,6 +199,14 @@ class LoraManager(tk.Toplevel):
         self._availability_error: str | None = None
         self._row_vars: list[dict[str, Any]] = []
         self._picker: LoraPicker | None = None
+        self._thumb_images: dict[str, tk.PhotoImage] = {}
+        self._thumb_labels: dict[str, tk.Label] = {}
+        self._pending_thumbs: set[str] = set()
+        self._thumb_failed: set[str] = set()
+        self._thumbs_running = False
+        self._thumb_holder: dict[str, Any] = {}
+        self._thumb_total = 0
+        self._thumb_done = 0
 
         self.title(
             tr(
@@ -217,6 +351,7 @@ class LoraManager(tk.Toplevel):
         for child in self.rows_frame.winfo_children():
             child.destroy()
         self._row_vars = []
+        self._thumb_labels = {}
         if not self.items:
             tk.Label(
                 self.rows_frame,
@@ -240,6 +375,7 @@ class LoraManager(tk.Toplevel):
             state="disabled" if len(self.items) >= MAX_LORAS else "normal"
         )
         self._update_status()
+        self._ensure_row_thumbs()
 
     def _make_row(self, index: int, item: dict[str, Any]) -> None:
         row = tk.Frame(
@@ -251,7 +387,31 @@ class LoraManager(tk.Toplevel):
             highlightbackground=BORDER,
         )
         row.pack(fill="x", pady=(0, 6))
-        top = tk.Frame(row, bg=PANEL)
+        body = tk.Frame(row, bg=PANEL)
+        body.pack(fill="x")
+
+        thumb_frame = tk.Frame(body, bg="#111114", width=ROW_THUMB_SIZE, height=ROW_THUMB_SIZE)
+        thumb_frame.pack(side="left", padx=(0, 10), anchor="n")
+        thumb_frame.pack_propagate(False)
+        thumb_label = tk.Label(
+            thumb_frame,
+            text=tr("Aperçu"),
+            bg="#111114",
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        )
+        thumb_label.pack(expand=True, fill="both")
+        thumb_key = preview_cache_key(item)
+        if thumb_key:
+            self._thumb_labels[thumb_key] = thumb_label
+            cached = preview_cache_path(thumb_key)
+            if cached.exists():
+                self._load_row_thumb(thumb_key, str(cached))
+
+        content = tk.Frame(body, bg=PANEL)
+        content.pack(side="left", fill="x", expand=True)
+
+        top = tk.Frame(content, bg=PANEL)
         top.pack(fill="x")
         enabled_var = tk.BooleanVar(value=bool(item.get("enabled", True)))
         tk.Checkbutton(
@@ -266,7 +426,7 @@ class LoraManager(tk.Toplevel):
         ).pack(side="left")
         name_label = tk.Label(
             top,
-            text=_short(str(item.get("label") or "?"), 52),
+            text=_short(str(item.get("label") or "?"), 48),
             bg=PANEL,
             fg=FG,
             anchor="w",
@@ -276,7 +436,7 @@ class LoraManager(tk.Toplevel):
         folder = str(item.get("folder") or "")
         tk.Label(
             top,
-            text=_short(folder, 30) if folder else "—",
+            text=_short(folder, 20) if folder else "—",
             bg=PANEL,
             fg=MUTED,
             anchor="w",
@@ -289,7 +449,7 @@ class LoraManager(tk.Toplevel):
             side="right", padx=(0, 6)
         )
 
-        bottom = tk.Frame(row, bg=PANEL)
+        bottom = tk.Frame(content, bg=PANEL)
         bottom.pack(fill="x", pady=(6, 0))
         tk.Label(
             bottom,
@@ -332,13 +492,13 @@ class LoraManager(tk.Toplevel):
         warning = self._row_warning(item)
         if warning:
             tk.Label(
-                row,
+                content,
                 text=warning,
                 bg=PANEL,
                 fg=YELLOW,
                 anchor="w",
                 justify="left",
-                wraplength=760,
+                wraplength=660,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(4, 0))
 
@@ -352,6 +512,70 @@ class LoraManager(tk.Toplevel):
                 "name": name_label,
             }
         )
+
+    # ------------------------------------------------------------------
+    # Row thumbnails
+    # ------------------------------------------------------------------
+
+    def _ensure_row_thumbs(self) -> None:
+        if self._closed or self._thumbs_running:
+            return
+        jobs: list[dict[str, str]] = []
+        for item in self.items:
+            key = preview_cache_key(item)
+            if not key:
+                continue
+            cached = preview_cache_path(key)
+            if cached.exists():
+                self._load_row_thumb(key, str(cached))
+                continue
+            if key in self._pending_thumbs or key in self._thumb_failed:
+                continue
+            source = preview_source(item, self.api.endpoint)
+            if not source:
+                continue
+            jobs.append({"key": key, **source})
+            self._pending_thumbs.add(key)
+        if not jobs:
+            return
+        self._thumbs_running = True
+        self._thumb_total = len(jobs)
+        self._thumb_done = 0
+        error = start_preview_conversion(
+            self.app, jobs, self._queue, self._thumb_holder
+        )
+        if error:
+            self._thumbs_running = False
+            for job in jobs:
+                self._pending_thumbs.discard(job["key"])
+            self.status.config(
+                text=tr("Miniatures indisponibles : {error}", error=error),
+                fg=YELLOW,
+            )
+
+    def _load_row_thumb(self, key: str, path: str) -> None:
+        label = self._thumb_labels.get(key)
+        if label is None:
+            return
+        image = self._thumb_images.get(key)
+        if image is None:
+            try:
+                full = tk.PhotoImage(file=path)
+            except Exception:  # noqa: BLE001
+                return
+            longest = max(full.width(), full.height())
+            factor = max(1, (longest + ROW_THUMB_SIZE - 1) // ROW_THUMB_SIZE)
+            image = full.subsample(factor, factor) if factor > 1 else full
+            self._thumb_images[key] = image
+        label.config(image=image, text="")
+
+    def _handle_row_thumb(self, key: str, ok: bool) -> None:
+        self._pending_thumbs.discard(key)
+        self._thumb_done += 1
+        if ok:
+            self._load_row_thumb(key, str(preview_cache_path(key)))
+        else:
+            self._thumb_failed.add(key)
 
     def _toggle_item(self, index: int, var: tk.BooleanVar) -> None:
         if 0 <= index < len(self.items):
@@ -409,11 +633,47 @@ class LoraManager(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _load_availability(self) -> None:
+        names: list[str] = []
         try:
             names = self.api.comfy_names()
             self._queue.put(("availability", names, None))
         except Exception as exc:  # noqa: BLE001
             self._queue.put(("availability", None, str(exc)))
+        # Items saved before preview metadata was persisted (or picked while the
+        # LoRA Manager was offline) still deserve their thumbnail.
+        try:
+            patches = self._preview_patches(names)
+        except Exception:  # noqa: BLE001
+            patches = {}
+        if patches:
+            self._queue.put(("previews", patches))
+
+    def _preview_patches(self, names: list[str]) -> dict[str, dict[str, Any]]:
+        missing = {
+            Path(str(item.get("label") or "")).stem.casefold()
+            for item in self.items
+            if not (item.get("preview_url") or item.get("preview_file"))
+        }
+        if not missing:
+            return {}
+        patches: dict[str, dict[str, Any]] = {}
+        for page in range(1, 6):
+            data = self.api.list_loras(page, 100, "")
+            for raw in data.get("items", []):
+                # The LoRA Manager reports `file_name` without its extension.
+                label = Path(
+                    str(raw.get("file_path") or raw.get("file_name") or "")
+                ).stem.casefold()
+                if label not in missing or label in patches:
+                    continue
+                value = normalize_api_item(raw, names)
+                if value is not None:
+                    patches[label] = value
+            if len(patches) >= len(missing):
+                break
+            if page >= int(data.get("total_pages", 1) or 1):
+                break
+        return patches
 
     def _refresh(self) -> None:
         self.status.config(text=tr("Vérification des LoRA…"), fg=MUTED)
@@ -542,6 +802,43 @@ class LoraManager(tk.Toplevel):
                         self.app._lora_available = set(self._available)
                     self._rebuild_rows()
                     self.app._update_lora_ui()
+                elif kind == "previews":
+                    changed = False
+                    for entry in self.items:
+                        if entry.get("preview_url") or entry.get("preview_file"):
+                            continue
+                        match = item[1].get(
+                            Path(str(entry.get("label") or "")).stem.casefold()
+                        )
+                        if not match:
+                            continue
+                        for field in (
+                            "file_path",
+                            "preview_url",
+                            "preview_file",
+                            "modified",
+                            "arch",
+                            "architecture",
+                        ):
+                            if match.get(field):
+                                entry[field] = match[field]
+                        changed = True
+                    if changed:
+                        self._rebuild_rows()
+                elif kind == "thumb":
+                    self._handle_row_thumb(str(item[1]), bool(item[2]))
+                elif kind == "thumbs_done":
+                    self._thumbs_running = False
+                    self._thumb_done = self._thumb_total
+                    self._update_status()
+                    self._ensure_row_thumbs()
+                elif kind == "thumb_error":
+                    self._thumbs_running = False
+                    self._pending_thumbs.clear()
+                    self.status.config(
+                        text=tr("Miniatures indisponibles : {error}", error=str(item[1])),
+                        fg=YELLOW,
+                    )
         except queue.Empty:
             pass
         if not self._closed:
@@ -566,6 +863,12 @@ class LoraManager(tk.Toplevel):
         if self._closed:
             return
         self._closed = True
+        proc = self._thumb_holder.get("proc")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
         try:
             self.grab_release()
         except tk.TclError:
@@ -611,8 +914,9 @@ class LoraPicker(tk.Toplevel):
         self._thumb_images: dict[str, tk.PhotoImage] = {}
         self._thumb_keys: dict[str, str] = {}
         self._pending_thumbs: set[str] = set()
+        self._thumb_failed: set[str] = set()
         self._thumbs_running = False
-        self._thumb_proc: subprocess.Popen[str] | None = None
+        self._thumb_holder: dict[str, Any] = {}
         self._thumb_total = 0
         self._thumb_done = 0
         self._fallback = False
@@ -776,7 +1080,7 @@ class LoraPicker(tk.Toplevel):
         self._update_view_buttons()
         self._render_view()
         if self.view == "grid":
-            self._start_thumbnails(self.items)
+            self._start_thumbnails()
 
     # ------------------------------------------------------------------
     # Loading
@@ -897,15 +1201,13 @@ class LoraPicker(tk.Toplevel):
                     self._handle_thumb(item[1], bool(item[2]), str(item[3]))
                 elif kind == "thumbs_done":
                     self._thumbs_running = False
-                    self._thumb_proc = None
                     self._update_footer()
                     if self.selected_name:
                         self._update_selection_status()
                     if self.view == "grid" and not self._closed:
-                        self._start_thumbnails(self.items)
+                        self._start_thumbnails()
                 elif kind == "thumb_error":
                     self._thumbs_running = False
-                    self._thumb_proc = None
                     self._pending_thumbs.clear()
                     self.status.config(
                         text=tr("Miniatures indisponibles : {error}", error=str(item[1])),
@@ -951,7 +1253,7 @@ class LoraPicker(tk.Toplevel):
         if self.selected_name:
             self._update_selection_status()
         if self.view == "grid":
-            self._start_thumbnails(self.items)
+            self._start_thumbnails()
 
     def _item_by_name(self, name: str) -> dict[str, Any] | None:
         target = str(name or "").casefold()
@@ -1246,29 +1548,7 @@ class LoraPicker(tk.Toplevel):
     # Thumbnails
     # ------------------------------------------------------------------
 
-    def _thumb_source(self, item: dict[str, Any]) -> dict[str, str]:
-        preview_url = str(item.get("preview_url") or "").strip()
-        if preview_url:
-            if preview_url.startswith(("http://", "https://")):
-                url = preview_url
-            elif preview_url.startswith("/"):
-                url = self.api.endpoint + preview_url
-            else:
-                url = self.api.endpoint + "/" + preview_url
-            # The LoRA Manager can point at remote CivitAI previews. Do not
-            # download those from a metered connection; only the configured
-            # ComfyUI host is allowed.
-            endpoint_host = urlparse(self.api.endpoint).netloc
-            preview_host = urlparse(url).netloc
-            if preview_host and endpoint_host and preview_host != endpoint_host:
-                return {}
-            return {"url": url}
-        preview_file = str(item.get("preview_file") or "").strip()
-        if preview_file:
-            return {"file": preview_file}
-        return {}
-
-    def _start_thumbnails(self, items: list[dict[str, Any]] | None = None) -> None:
+    def _start_thumbnails(self) -> None:
         if self._thumbs_running or self._closed:
             return
         jobs: list[dict[str, str]] = []
@@ -1281,113 +1561,38 @@ class LoraPicker(tk.Toplevel):
             if path.exists():
                 self._load_thumb(key, str(path))
                 continue
-            if key in self._pending_thumbs:
+            if key in self._pending_thumbs or key in self._thumb_failed:
                 continue
-            source = self._thumb_source(item)
+            source = preview_source(item, self.api.endpoint)
             if not source:
                 continue
             jobs.append({"key": key, **source})
             self._pending_thumbs.add(key)
         if not jobs:
             return
-        python, error = self.app._comfy_python() if self.app is not None else (None, "app")
-        if error or not python:
-            self.status.config(
-                text=tr("Miniatures indisponibles : {error}", error=error or "Python"),
-                fg=YELLOW,
-            )
-            for job in jobs:
-                self._pending_thumbs.discard(job["key"])
-            return
-        helper = Path(__file__).resolve().parent / "lora_previews.py"
-        if not helper.exists():
-            self.status.config(
-                text=tr("Miniatures indisponibles : {error}", error=str(helper)),
-                fg=YELLOW,
-            )
-            for job in jobs:
-                self._pending_thumbs.discard(job["key"])
-            return
         self._thumbs_running = True
         self._thumb_total = len(jobs)
         self._thumb_done = 0
         self._update_thumb_status()
-
-        def work() -> None:
-            jobs_path = PREVIEW_CACHE_DIR / f"jobs_{os.getpid()}_{time.time_ns()}.json"
-            proc: subprocess.Popen[str] | None = None
-            try:
-                PREVIEW_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                jobs_path.write_text(
-                    json.dumps(jobs, ensure_ascii=False), encoding="utf-8"
-                )
-                proc = subprocess.Popen(
-                    [
-                        python,
-                        str(helper),
-                        "--jobs",
-                        str(jobs_path),
-                        "--cache-dir",
-                        str(PREVIEW_CACHE_DIR),
-                        "--size",
-                        "160",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
-                )
-                self._thumb_proc = proc
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    key = str(payload.get("key") or "")
-                    if not key:
-                        continue
-                    if payload.get("ok"):
-                        self._queue.put(
-                            ("thumb", key, True, str(preview_cache_path(key)))
-                        )
-                    else:
-                        self._queue.put(
-                            ("thumb", key, False, str(payload.get("error") or "?"))
-                        )
-                proc.wait()
-                if proc.returncode not in (0, None):
-                    self._queue.put(
-                        ("thumb_error", f"lora_previews.py exit {proc.returncode}")
-                    )
-                else:
-                    self._queue.put(("thumbs_done",))
-            except Exception as exc:  # noqa: BLE001
-                self._queue.put(("thumb_error", str(exc)))
-            finally:
-                try:
-                    jobs_path.unlink()
-                except OSError:
-                    pass
-                if proc is not None and proc.poll() is None:
-                    try:
-                        proc.terminate()
-                    except OSError:
-                        pass
-
-        threading.Thread(target=work, daemon=True).start()
+        error = start_preview_conversion(
+            self.app, jobs, self._queue, self._thumb_holder
+        )
+        if error:
+            self._thumbs_running = False
+            for job in jobs:
+                self._pending_thumbs.discard(job["key"])
+            self.status.config(
+                text=tr("Miniatures indisponibles : {error}", error=error),
+                fg=YELLOW,
+            )
 
     def _handle_thumb(self, key: str, ok: bool, value: str) -> None:
         self._pending_thumbs.discard(key)
         self._thumb_done += 1
         if ok:
             self._load_thumb(key, value)
+        else:
+            self._thumb_failed.add(key)
         self._update_thumb_status()
 
     def _load_thumb(self, key: str, path: str) -> None:
@@ -1443,9 +1648,10 @@ class LoraPicker(tk.Toplevel):
         if self._closed:
             return
         self._closed = True
-        if self._thumb_proc is not None and self._thumb_proc.poll() is None:
+        proc = self._thumb_holder.get("proc")
+        if proc is not None and proc.poll() is None:
             try:
-                self._thumb_proc.terminate()
+                proc.terminate()
             except OSError:
                 pass
         try:

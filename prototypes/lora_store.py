@@ -119,6 +119,19 @@ def normalize_item(item: object) -> dict[str, Any] | None:
     }
     if item.get("has_text_encoder"):
         result["has_text_encoder"] = True
+    # Preview metadata is kept so the manager can show the thumbnail again on
+    # the next launch without querying the LoRA Manager API again. The cache
+    # key depends on file_path/modified, so they must survive a round-trip too.
+    architecture = str(item.get("architecture") or "").strip()
+    if architecture:
+        result["architecture"] = architecture
+    for field in ("file_path", "preview_url", "preview_file"):
+        value = str(item.get(field) or "").strip()
+        if value:
+            result[field] = value
+    modified = item.get("modified")
+    if modified not in (None, "", 0):
+        result["modified"] = modified
     return result
 
 

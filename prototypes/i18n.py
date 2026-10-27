@@ -122,8 +122,8 @@ EN: dict[str, str] = {
     ),
     # Reference
     "Disponible en mode EDIT uniquement.": "Available in EDIT mode only.",
-    "Disponible sur Krea 2, FLUX.3 Klein et Qwen Image 2.1.": (
-        "Available for Krea 2, FLUX.3 Klein and Qwen Image 2.1."
+    "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1.": (
+        "Available for Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1."
     ),
     "Krea 2 utilise la référence en EDIT ; en T2I, passe en EDIT pour une génération guidée par l'image.": (
         "Krea 2 uses references in EDIT; switch to EDIT for image-guided generation."
@@ -269,9 +269,9 @@ EN: dict[str, str] = {
     "Qwen Image 2.1 les appelle <image1> et <image2> dans son prompt.": (
         "Qwen Image 2.1 calls them <image1> and <image2> in its prompt."
     ),
-    "En T2I, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT.": (
-        "In T2I, FLUX.3 Klein and Qwen Image 2.1 use the reference as image 1 to "
-        "guide a new image. Krea 2 uses references in EDIT."
+    "En T2I, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT.": (
+        "In T2I, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1 use the "
+        "reference as image 1 to guide a new image. Krea 2 uses references in EDIT."
     ),
     "La référence n'est active que si la case est cochée et qu'une image est chargée. Elle n'est jamais collée : elle sert d'inspiration au modèle.": (
         "The reference is active only when the box is checked and an image is "
@@ -290,9 +290,8 @@ EN: dict[str, str] = {
     "• Pour un vêtement, demande la couleur/matière ; pour un accessoire, décris sa position.": (
         "• For clothing, ask for color/material; for an accessory, describe its position."
     ),
-    "• Krea 2, FLUX.3 Klein et Qwen Image 2.1 acceptent la référence. FLUX.2 Klein 9B ne la propose pas.": (
-        "• Krea 2, FLUX.3 Klein and Qwen Image 2.1 accept references. "
-        "FLUX.2 Klein 9B does not."
+    "• Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 acceptent la référence.": (
+        "• Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1 accept references."
     ),
     "• Si le résultat copie trop la référence, précise « only » / « keep unchanged » dans le prompt.": (
         "• If the result copies the reference too much, add “only” / “keep unchanged” "

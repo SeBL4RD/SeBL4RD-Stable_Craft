@@ -84,8 +84,14 @@ SUPPORTED_PROFILES = {
     "krea2_edit",
     QWEN_PROFILE,
 }
-REFERENCE_PROFILES = {"krea2_edit", "krea2_general_edit", "flux3_klein", QWEN_PROFILE}
-T2I_REFERENCE_PROFILES = {"flux3_klein", QWEN_PROFILE}
+REFERENCE_PROFILES = {
+    "krea2_edit",
+    "krea2_general_edit",
+    "flux3_klein",
+    "flux2_klein_9b",
+    QWEN_PROFILE,
+}
+T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
 
 
 DEFAULTS: dict[str, Any] = {
@@ -1678,7 +1684,9 @@ class StableCraftApp(tk.Tk):
 
     def _reference_help(self) -> str:
         if self.profile_key not in REFERENCE_PROFILES:
-            return tr("Disponible sur Krea 2, FLUX.3 Klein et Qwen Image 2.1.")
+            return tr(
+                "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1."
+            )
         if self._mode() == "t2i":
             if self.profile_key in KREA_PROFILES:
                 return tr(
@@ -1686,7 +1694,9 @@ class StableCraftApp(tk.Tk):
                     "pour une génération guidée par l'image."
                 )
             return tr("La référence guide la génération T2I.")
-        return tr("Disponible sur Krea 2, FLUX.3 Klein et Qwen Image 2.1.")
+        return tr(
+            "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1."
+        )
 
     def _update_reference_for_profile(self) -> None:
         supported = self._reference_supported()
@@ -2296,9 +2306,9 @@ class StableCraftApp(tk.Tk):
         add("Image 2 = l'image de référence que tu as ajoutée.", "body")
         add("Qwen Image 2.1 les appelle <image1> et <image2> dans son prompt.", "body")
         add(
-            "En T2I, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme "
-            "image 1 pour guider une nouvelle image. Krea 2 utilise la référence "
-            "en EDIT.",
+            "En T2I, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la "
+            "référence comme image 1 pour guider une nouvelle image. Krea 2 "
+            "utilise la référence en EDIT.",
             "body",
         )
         add(
@@ -2327,7 +2337,7 @@ class StableCraftApp(tk.Tk):
         add("• Un objet seul, détouré ou sur un fond simple, est plus facile à transférer.", "body")
         add("• Une référence avec beaucoup de fond peut être confondue avec la scène.", "body")
         add("• Pour un vêtement, demande la couleur/matière ; pour un accessoire, décris sa position.", "body")
-        add("• Krea 2, FLUX.3 Klein et Qwen Image 2.1 acceptent la référence. FLUX.2 Klein 9B ne la propose pas.", "body")
+        add("• Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 acceptent la référence.", "body")
         add("• Si le résultat copie trop la référence, précise « only » / « keep unchanged » dans le prompt.", "body")
 
         add("4. Rappel", "h2")

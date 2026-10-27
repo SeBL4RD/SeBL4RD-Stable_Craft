@@ -49,8 +49,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
-REFERENCE_PROFILES = {"krea2_edit", "krea2_general_edit", "flux3_klein", QWEN_PROFILE}
-T2I_REFERENCE_PROFILES = {"flux3_klein", QWEN_PROFILE}
+REFERENCE_PROFILES = {
+    "krea2_edit",
+    "krea2_general_edit",
+    "flux3_klein",
+    "flux2_klein_9b",
+    QWEN_PROFILE,
+}
+T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
 REFERENCE_INSTRUCTION = (
     "Image 1 is the scene to edit. Image 2 is the reference image. "
     "Use image 2 only for the requested detail, and keep image 1's scene, "
@@ -386,12 +392,13 @@ def build_workflow(
             )
             return workflow
 
-        if profile == "flux2_klein_9b" and reference_image:
-            raise ComfyError(
-                "FLUX.2 Klein 9B does not support a reference image, including T2I."
-            )
-
         if profile in {"flux3_klein", "flux2_klein_9b"}:
+            flux2_reference = profile == "flux2_klein_9b" and reference_image
+            text = (
+                f"{T2I_REFERENCE_INSTRUCTION}{prompt}"
+                if flux2_reference
+                else prompt
+            )
             workflow, model = start()
             clip_type = "flux3" if profile == "flux3_klein" else "flux2"
             workflow.update(
@@ -403,7 +410,7 @@ def build_workflow(
                     "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
                     "4": {
                         "class_type": "CLIPTextEncode",
-                        "inputs": {"clip": ["2", 0], "text": prompt},
+                        "inputs": {"clip": ["2", 0], "text": text},
                     },
                     "5": {
                         "class_type": "CLIPTextEncode",
@@ -438,6 +445,39 @@ def build_workflow(
                     },
                 }
             )
+            if flux2_reference:
+                workflow.update(
+                    {
+                        "10": {
+                            "class_type": "LoadImage",
+                            "inputs": {"image": reference_image},
+                        },
+                        "11": {
+                            "class_type": "ImageScaleToTotalPixels",
+                            "inputs": {
+                                "image": ["10", 0],
+                                "upscale_method": "lanczos",
+                                "megapixels": 1.0,
+                                "resolution_steps": 1,
+                            },
+                        },
+                        "12": {
+                            "class_type": "VAEEncode",
+                            "inputs": {"pixels": ["11", 0], "vae": ["3", 0]},
+                        },
+                        "13": {
+                            "class_type": "ReferenceLatent",
+                            "inputs": {"conditioning": ["4", 0], "latent": ["12", 0]},
+                        },
+                        "14": {
+                            "class_type": "ReferenceLatent",
+                            "inputs": {"conditioning": ["5", 0], "latent": ["12", 0]},
+                        },
+                    }
+                )
+                workflow["7"]["inputs"].update(
+                    {"positive": ["13", 0], "negative": ["14", 0]}
+                )
             return workflow
 
         if profile in KREA_PROFILES:
@@ -636,11 +676,7 @@ def build_workflow(
         return workflow
 
     if profile == "flux2_klein_9b":
-        if reference_image:
-            raise ComfyError(
-                "L'image de référence est disponible pour Krea 2, FLUX.3 Klein "
-                "et Qwen Image 2.1, pas pour FLUX.2 Klein 9B."
-            )
+        text = f"{REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
         workflow, model = start()
         workflow.update(
             {
@@ -651,7 +687,7 @@ def build_workflow(
                 "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
                 "4": {
                     "class_type": "CLIPTextEncode",
-                    "inputs": {"clip": ["2", 0], "text": prompt},
+                    "inputs": {"clip": ["2", 0], "text": text},
                 },
                 "5": {
                     "class_type": "CLIPTextEncode",
@@ -708,6 +744,43 @@ def build_workflow(
                 },
             }
         )
+        if reference_image:
+            # Chain a second reference latent: image 1 stays the scene crop,
+            # image 2 is the reference. ComfyUI's ReferenceLatent appends the
+            # latent, which is how the FLUX.2 Klein edit model takes several
+            # references.
+            workflow.update(
+                {
+                    "15": {
+                        "class_type": "LoadImage",
+                        "inputs": {"image": reference_image},
+                    },
+                    "16": {
+                        "class_type": "ImageScaleToTotalPixels",
+                        "inputs": {
+                            "image": ["15", 0],
+                            "upscale_method": "lanczos",
+                            "megapixels": 1.0,
+                            "resolution_steps": 1,
+                        },
+                    },
+                    "17": {
+                        "class_type": "VAEEncode",
+                        "inputs": {"pixels": ["16", 0], "vae": ["3", 0]},
+                    },
+                    "18": {
+                        "class_type": "ReferenceLatent",
+                        "inputs": {"conditioning": ["9", 0], "latent": ["17", 0]},
+                    },
+                    "19": {
+                        "class_type": "ReferenceLatent",
+                        "inputs": {"conditioning": ["11", 0], "latent": ["17", 0]},
+                    },
+                }
+            )
+            workflow["12"]["inputs"].update(
+                {"positive": ["18", 0], "negative": ["19", 0]}
+            )
         return workflow
 
     if profile in KREA_PROFILES:
@@ -1435,8 +1508,8 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         if args.reference:
             if ctx["profile_name"] not in REFERENCE_PROFILES:
                 raise SystemExit(
-                    "L'image de référence est disponible pour Krea 2, FLUX.3 Klein "
-                    "et Qwen Image 2.1, pas pour ce profil."
+                    "L'image de référence est disponible pour Krea 2, FLUX.2 Klein 9B, "
+                    "FLUX.3 Klein et Qwen Image 2.1, pas pour ce profil."
                 )
             if (
                 ctx["mode"] == "t2i"
@@ -1654,7 +1727,7 @@ def main() -> None:
         "--reference",
         type=Path,
         default=None,
-        help="reference image for the current session (Krea 2, FLUX.3 and Qwen 2.1)",
+        help="reference image for the current session (Krea 2, FLUX.2/3 Klein, Qwen 2.1)",
     )
     ap.add_argument(
         "--reference-name",

@@ -6,7 +6,7 @@ StableCraft is a companion app for PhotoCraft: draw a lasso around an area, desc
 the change, and the result arrives as a **new masked layer**. Everything runs locally
 on your own GPU, with ComfyUI as the generation engine.
 
-![Version](https://img.shields.io/badge/version-0.2.3-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.4-3b82f6)
 ![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-6b7280)
 ![License](https://img.shields.io/badge/license-MIT-8b5cf6)
@@ -20,7 +20,7 @@ on your own GPU, with ComfyUI as the generation engine.
 - **persistent gallery per layer**: regenerate, compare, switch generations;
 - regeneration works even after the selection is lost;
 - **two modes**: EDIT (source image) or T2I (text only), EDIT by default;
-- **per-layer reference image** (Krea 2, FLUX.3 Klein and Qwen Image 2.1);
+- **per-layer reference image** (Krea 2, FLUX.2/3 Klein and Qwen Image 2.1);
 - **per-profile LoRA stack** (up to 10, strength 0–1) with the ComfyUI LoRA Manager
   list and thumbnails;
 - five profiles: FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
@@ -232,10 +232,10 @@ lasso.
 - check **Use a reference image**;
 - click the thumbnail or drop an image;
 - the reference belongs to the layer and reloads when you return to it;
-- supported by **Krea 2**, **FLUX.3 Klein** and **Qwen Image 2.1**;
+- supported by **Krea 2**, **FLUX.2 Klein 9B**, **FLUX.3 Klein** and **Qwen Image 2.1**;
 - in **EDIT**, the model receives **image 1 = scene** and **image 2 = reference**;
-- in **T2I**, FLUX.3 Klein and Qwen Image 2.1 use the reference as image 1 to guide
-  a new image. Krea 2 uses references in EDIT;
+- in **T2I**, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1 use the reference as
+  image 1 to guide a new image. Krea 2 uses references in EDIT;
 - describe in the prompt what you take from the reference.
 
 Example:

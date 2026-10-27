@@ -6,7 +6,7 @@ StableCraft est une application compagne pour PhotoCraft : on entoure une zone a
 lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
 Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de génération.
 
-![Version](https://img.shields.io/badge/version-0.2.3-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.4-3b82f6)
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
@@ -20,7 +20,7 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 - **galerie persistante par calque** : régénérer, comparer, changer de génération ;
 - régénération possible même si la sélection a été perdue ;
 - **deux modes** : EDIT (image source) ou T2I (texte seul), EDIT par défaut ;
-- **image de référence par calque** (Krea 2, FLUX.3 Klein et Qwen Image 2.1) ;
+- **image de référence par calque** (Krea 2, FLUX.2/3 Klein et Qwen Image 2.1) ;
 - **pile de LoRA par profil** (10 max, force 0–1) avec la liste et les miniatures du
   LoRA Manager de ComfyUI ;
 - cinq profils : FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
@@ -233,10 +233,10 @@ nouvelle scène, refais un lasso.
 - coche **Utiliser une image de référence** ;
 - clique sur la vignette ou dépose une image ;
 - la référence est propre au calque et se recharge quand tu reviens dessus ;
-- compatible **Krea 2**, **FLUX.3 Klein** et **Qwen Image 2.1** ;
+- compatible **Krea 2**, **FLUX.2 Klein 9B**, **FLUX.3 Klein** et **Qwen Image 2.1** ;
 - en **EDIT**, le modèle reçoit **image 1 = scène** et **image 2 = référence** ;
-- en **T2I**, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme image 1
-  pour guider une nouvelle image. Krea 2 utilise la référence en EDIT ;
+- en **T2I**, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence
+  comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT ;
 - décris dans le prompt ce que tu prends de la référence.
 
 Exemple :
