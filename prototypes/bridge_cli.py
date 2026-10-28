@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import os
 import random
 import sys
@@ -37,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
@@ -259,6 +260,29 @@ def clip_loader_for(text_encoder: str) -> str:
 
 def unet_loader_for(unet: str) -> str:
     return "UnetLoaderGGUF" if unet.lower().endswith(".gguf") else "UNETLoader"
+
+
+def fit_generation_size(
+    width: int, height: int, megapixels: float = 1.0, step: int = 16
+) -> tuple[int, int]:
+    """Return a ~1 MP generation size with the same aspect ratio as the crop.
+
+    Qwen Image 2.1's text encoder returns an empty latent at ``resolution``
+    squared whenever no reference image is connected. Sampling that square
+    latent and then compositing it into a 16:9 selection stretches the image.
+    """
+    if width <= 0 or height <= 0:
+        return 1024, 1024
+    scale = math.sqrt(max(0.01, megapixels) * 1024 * 1024 / (width * height))
+    gen_w = max(step, round(width * scale / step) * step)
+    gen_h = max(step, round(height * scale / step) * step)
+    # Extreme panoramas would exceed Qwen's comfortable sampling size.
+    longest = max(gen_w, gen_h)
+    if longest > 2048:
+        factor = 2048 / longest
+        gen_w = max(step, round(gen_w * factor / step) * step)
+        gen_h = max(step, round(gen_h * factor / step) * step)
+    return gen_w, gen_h
 
 
 def build_workflow(
@@ -546,6 +570,7 @@ def build_workflow(
                 if reference_image
                 else prompt
             )
+            gen_w, gen_h = fit_generation_size(width, height)
             workflow, model = start()
             workflow.update(
                 {
@@ -563,6 +588,22 @@ def build_workflow(
                             "resolution": 1024,
                         },
                     },
+                    "5": {
+                        # Qwen Image 2.1 uses a 64-channel latent; the text
+                        # encoder returns the matching empty latent on output 2.
+                        # That latent is square, so resize it to the crop ratio
+                        # instead of stretching the decoded image afterwards.
+                        # LatentUpscale assumes an 8x VAE, while Qwen uses 16x:
+                        # halving the requested pixel size gives the right shape.
+                        "class_type": "LatentUpscale",
+                        "inputs": {
+                            "samples": ["4", 2],
+                            "upscale_method": "nearest-exact",
+                            "width": max(8, gen_w // 2),
+                            "height": max(8, gen_h // 2),
+                            "crop": "disabled",
+                        },
+                    },
                     "6": {
                         "class_type": "QwenImage21Cache",
                         "inputs": {"model": model, "device": "auto", "dtype": "default"},
@@ -578,9 +619,7 @@ def build_workflow(
                             "scheduler": "simple",
                             "positive": ["4", 0],
                             "negative": ["4", 1],
-                            # Qwen Image 2.1 uses a 64-channel latent; the text
-                            # encoder returns the matching empty latent on output 2.
-                            "latent_image": ["4", 2],
+                            "latent_image": ["5", 0],
                             "denoise": 1.0,
                         },
                     },
@@ -1459,7 +1498,12 @@ def comfy_generate(
     finally:
         comfy.cleanup(image)
     if result.size != (width, height):
-        result = result.resize((width, height), Image.LANCZOS)
+        # Never stretch: crop to the target ratio, then resize. Models should
+        # already generate at the crop ratio, so this only trims a few pixels
+        # from rounding, but it also protects against a square fallback.
+        result = ImageOps.fit(
+            result, (width, height), method=Image.LANCZOS, centering=(0.5, 0.5)
+        )
     return result
 
 
