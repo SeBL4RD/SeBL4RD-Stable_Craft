@@ -219,6 +219,23 @@ de la session reste l'image d'origine : repasser en EDIT sur le même calque uti
 toujours cette scène, jamais l'image T2I précédente. Pour repartir de l'image T2I comme
 nouvelle scène, refais un lasso.
 
+### Sampler, scheduler et denoise
+
+- **Sampler** et **Scheduler** sont disponibles dans les **Réglages**. Les valeurs
+  viennent de ComfyUI (`KSampler`), et la valeur par défaut de chaque profil est lue
+  dans `config.toml` (`sampler` / `scheduler`). `euler` + `simple` reste la base
+  recommandée pour les profils distillés ; les autres combinaisons sont autorisées.
+- **Denoise** n'apparaît qu'en **EDIT**, et n'est appliqué qu'à **FLUX.2 Klein 9B** :
+  ce profil part du latent du crop source, donc une valeur inférieure à 1.0 conserve
+  davantage l'image d'origine. `1.0` = édition complète ; `0.8–1.0` est une plage
+  raisonnable.
+- Pour les autres profils, et pour tous les T2I, le denoise est forcé à **1.0** : ils
+  partent d'un latent vide (utilisé seulement pour sa forme), donc un denoise partiel
+  partirait de zéros bruités et produirait des artefacts. Le champ est désactivé avec
+  une explication.
+- Sampler, scheduler et denoise sont enregistrés par génération dans `session.json` et
+  restaurés avec le calque ; les modifier invalide la détection de doublon.
+
 ### Régénérer et galerie
 
 - Même sélection → **Régénérer** met à jour le **même calque** et ajoute une vignette.

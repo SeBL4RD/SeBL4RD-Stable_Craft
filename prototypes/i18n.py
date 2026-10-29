@@ -122,6 +122,14 @@ EN: dict[str, str] = {
     ),
     # Reference
     "Disponible en mode EDIT uniquement.": "Available in EDIT mode only.",
+    "1.0 = édition complète. En dessous, le résultat conserve davantage l'image source ; 0.8–1.0 recommandé avec FLUX.2 Klein.": (
+        "1.0 = full edit. Below that, the result keeps more of the source image; "
+        "0.8–1.0 recommended with FLUX.2 Klein."
+    ),
+    "Fixé à 1.0 : ce modèle part d'un latent vide ; un denoise partiel produirait des artefacts.": (
+        "Fixed at 1.0: this model samples from an empty latent; partial denoise "
+        "would produce artifacts."
+    ),
     "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1.": (
         "Available for Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1."
     ),

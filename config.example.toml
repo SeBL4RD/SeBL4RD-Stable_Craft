@@ -90,6 +90,9 @@ steps = 4
 cfg = 1.0
 sampler = "euler"
 scheduler = "simple"
+# EDIT uniquement : 1.0 = édition complète, <1.0 conserve davantage la source.
+# Ignoré (forcé à 1.0) pour les autres profils et en T2I.
+denoise = 1.0
 context_padding = 96
 feather = 10
 

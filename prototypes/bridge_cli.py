@@ -58,6 +58,10 @@ REFERENCE_PROFILES = {
     QWEN_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
+# Only FLUX.2 Klein EDIT feeds the source crop as the sampling latent. The other
+# profiles sample from an empty latent (shape only), so denoise < 1 would start
+# from partially noised zeros instead of the source and produce artifacts.
+DENOISE_PROFILES = {"flux2_klein_9b"}
 REFERENCE_INSTRUCTION = (
     "Image 1 is the scene to edit. Image 2 is the reference image. "
     "Use image 2 only for the requested detail, and keep image 1's scene, "
@@ -296,6 +300,9 @@ def build_workflow(
     vae: str,
     steps: int,
     cfg: float,
+    sampler: str = "euler",
+    scheduler: str = "simple",
+    denoise: float = 1.0,
     seed: int,
     width: int,
     height: int,
@@ -312,6 +319,9 @@ def build_workflow(
         raise ComfyError(f"unknown generation mode {mode!r}")
     if mode == "edit" and not image_name:
         raise ComfyError("le mode EDIT nécessite une image source")
+    denoise = max(0.0, min(1.0, float(denoise)))
+    if mode != "edit" or profile not in DENOISE_PROFILES:
+        denoise = 1.0
 
     def start(apply_lora: bool = False) -> tuple[dict[str, Any], list[Any]]:
         unet_inputs: dict[str, Any] = {"unet_name": unet}
@@ -396,12 +406,12 @@ def build_workflow(
                             "seed": seed,
                             "steps": steps,
                             "cfg": cfg,
-                            "sampler_name": "euler",
-                            "scheduler": "simple",
+                            "sampler_name": sampler,
+                            "scheduler": scheduler,
                             "positive": ["7", 0],
                             "negative": ["7", 1],
                             "latent_image": ["7", 2],
-                            "denoise": 1.0,
+                            "denoise": denoise,
                         },
                     },
                     "9": {
@@ -451,12 +461,12 @@ def build_workflow(
                             "seed": seed,
                             "steps": steps,
                             "cfg": cfg,
-                            "sampler_name": "euler",
-                            "scheduler": "simple",
+                            "sampler_name": sampler,
+                            "scheduler": scheduler,
                             "positive": ["4", 0],
                             "negative": ["5", 0],
                             "latent_image": ["6", 0],
-                            "denoise": 1.0,
+                            "denoise": denoise,
                         },
                     },
                     "8": {
@@ -544,12 +554,12 @@ def build_workflow(
                             "seed": seed,
                             "steps": steps,
                             "cfg": cfg,
-                            "sampler_name": "euler",
-                            "scheduler": "simple",
+                            "sampler_name": sampler,
+                            "scheduler": scheduler,
                             "positive": ["4", 0],
                             "negative": ["5", 0],
                             "latent_image": ["6", 0],
-                            "denoise": 1.0,
+                            "denoise": denoise,
                         },
                     },
                     "8": {
@@ -615,12 +625,12 @@ def build_workflow(
                             "seed": seed,
                             "steps": steps,
                             "cfg": cfg,
-                            "sampler_name": "euler",
-                            "scheduler": "simple",
+                            "sampler_name": sampler,
+                            "scheduler": scheduler,
                             "positive": ["4", 0],
                             "negative": ["4", 1],
                             "latent_image": ["5", 0],
-                            "denoise": 1.0,
+                            "denoise": denoise,
                         },
                     },
                     "8": {
@@ -688,12 +698,12 @@ def build_workflow(
                         "seed": seed,
                         "steps": steps,
                         "cfg": cfg,
-                        "sampler_name": "euler",
-                        "scheduler": "simple",
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
                         "positive": ["7", 0],
                         "negative": ["7", 1],
                         "latent_image": ["7", 2],
-                        "denoise": 1.0,
+                        "denoise": denoise,
                     },
                 },
                 "9": {
@@ -765,12 +775,12 @@ def build_workflow(
                         "seed": seed,
                         "steps": steps,
                         "cfg": cfg,
-                        "sampler_name": "euler",
-                        "scheduler": "simple",
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
                         "positive": ["9", 0],
                         "negative": ["11", 0],
                         "latent_image": ["8", 0],
-                        "denoise": 1.0,
+                        "denoise": denoise,
                     },
                 },
                 "13": {
@@ -877,12 +887,12 @@ def build_workflow(
                         "seed": seed,
                         "steps": steps,
                         "cfg": cfg,
-                        "sampler_name": "euler",
-                        "scheduler": "simple",
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
                         "positive": ["8", 0],
                         "negative": ["9", 0],
                         "latent_image": ["6", 0],
-                        "denoise": 1.0,
+                        "denoise": denoise,
                     },
                 },
                 "11": {
@@ -950,12 +960,12 @@ def build_workflow(
                         "seed": seed,
                         "steps": steps,
                         "cfg": cfg,
-                        "sampler_name": "euler",
-                        "scheduler": "simple",
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
                         "positive": ["5", 0],
                         "negative": ["5", 1],
                         "latent_image": ["5", 2],
-                        "denoise": 1.0,
+                        "denoise": denoise,
                     },
                 },
                 "8": {
@@ -1347,6 +1357,9 @@ def create_session(
             "feather": ctx["feather"],
             "steps": ctx["steps"],
             "cfg": ctx["cfg_scale"],
+            "sampler": ctx["sampler"],
+            "scheduler": ctx["scheduler"],
+            "denoise": ctx["denoise"],
         },
         "generations": [],
         "current": -1,
@@ -1419,6 +1432,21 @@ def validate_loras(
     return normalized
 
 
+def validate_sampling(comfy: ComfyClient, sampler: str, scheduler: str) -> None:
+    samplers = comfy.options("KSampler", "sampler_name")
+    if sampler not in samplers:
+        raise ComfyError(
+            f"Sampler inconnu : {sampler}.\n"
+            f"Disponibles : {', '.join(samplers[:20]) or '(aucun)'}"
+        )
+    schedulers = comfy.options("KSampler", "scheduler")
+    if scheduler not in schedulers:
+        raise ComfyError(
+            f"Scheduler inconnu : {scheduler}.\n"
+            f"Disponibles : {', '.join(schedulers) or '(aucun)'}"
+        )
+
+
 def comfy_generate(
     ctx: dict[str, Any],
     comfy: ComfyClient,
@@ -1433,6 +1461,9 @@ def comfy_generate(
     mode = ctx["mode"]
     profile = ctx["profile_name"]
     ctx["loras"] = validate_loras(comfy, list(ctx.get("loras") or []))
+    sampler = str(ctx.get("sampler") or "euler")
+    scheduler = str(ctx.get("scheduler") or "simple")
+    validate_sampling(comfy, sampler, scheduler)
     comfy.require(unet_loader_for(ctx["unet"]), "unet_name", ctx["unet"])
     comfy.require(clip_loader_for(ctx["text_encoder"]), "clip_name", ctx["text_encoder"])
     comfy.require("VAELoader", "vae_name", ctx["vae"])
@@ -1469,6 +1500,9 @@ def comfy_generate(
         vae=ctx["vae"],
         steps=ctx["steps"],
         cfg=ctx["cfg_scale"],
+        sampler=sampler,
+        scheduler=scheduler,
+        denoise=float(ctx.get("denoise", 1.0)),
         seed=seed,
         width=width,
         height=height,
@@ -1627,6 +1661,9 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "feather": ctx["feather"],
             "steps": ctx["steps"],
             "cfg": ctx["cfg_scale"],
+            "sampler": ctx["sampler"],
+            "scheduler": ctx["scheduler"],
+            "denoise": ctx["denoise"],
         }
         generation = {
             "prompt": prompt,
@@ -1634,6 +1671,9 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "seed": seed,
             "steps": ctx["steps"],
             "cfg": ctx["cfg_scale"],
+            "sampler": ctx["sampler"],
+            "scheduler": ctx["scheduler"],
+            "denoise": ctx["denoise"],
             "profile": ctx["profile_name"],
             "mode": ctx["mode"],
             "feather": ctx["feather"],
@@ -1757,6 +1797,14 @@ def main() -> None:
     ap.add_argument("--feather", type=int, default=None)
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--cfg", type=float, default=None)
+    ap.add_argument("--sampler", default=None, help="KSampler sampler_name")
+    ap.add_argument("--scheduler", default=None, help="KSampler scheduler")
+    ap.add_argument(
+        "--denoise",
+        type=float,
+        default=None,
+        help="EDIT only, 0..1 (FLUX.2 Klein only; forced to 1.0 elsewhere)",
+    )
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true", help="only save the composite and crop")
     ap.add_argument("--no-apply", action="store_true", help="generate but do not insert into PhotoCraft")
@@ -1810,6 +1858,19 @@ def main() -> None:
     feather = args.feather if args.feather is not None else int(pcfg.get("feather", 10))
     steps = args.steps if args.steps is not None else int(pcfg.get("steps", manifest["settings"]["steps"]))
     cfg_scale = args.cfg if args.cfg is not None else float(pcfg.get("cfg", manifest["settings"]["cfg"]))
+    settings = manifest.get("settings", {})
+    sampler = args.sampler or str(
+        pcfg.get("sampler", settings.get("sampler", "euler"))
+    )
+    scheduler = args.scheduler or str(
+        pcfg.get("scheduler", settings.get("scheduler", "simple"))
+    )
+    denoise = (
+        args.denoise
+        if args.denoise is not None
+        else float(pcfg.get("denoise", settings.get("denoise", 1.0)))
+    )
+    denoise = max(0.0, min(1.0, denoise))
     ref_boost = float(pcfg.get("ref_boost", manifest.get("settings", {}).get("ref_boost", 4.0)))
     grounding_px = int(pcfg.get("grounding_px", manifest.get("settings", {}).get("grounding_px", 768)))
 
@@ -1827,6 +1888,8 @@ def main() -> None:
         )
     )
     mode = args.mode or "edit"
+    if mode != "edit" or profile_name not in DENOISE_PROFILES:
+        denoise = 1.0
 
     if args.reference and not (args.session_mode or args.session):
         raise SystemExit(
@@ -1854,6 +1917,9 @@ def main() -> None:
             "feather": feather,
             "steps": steps,
             "cfg_scale": cfg_scale,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
             "ref_boost": ref_boost,
             "grounding_px": grounding_px,
             "unet": unet,
@@ -1938,6 +2004,7 @@ def main() -> None:
         comfy.require("UnetLoaderGGUF", "unet_name", unet)
         comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
+        validate_sampling(comfy, sampler, scheduler)
         loras = validate_loras(comfy, loras)
         if profile_name == "krea2_edit":
             comfy.require_node("Krea2EditModelPatch")
@@ -1957,6 +2024,9 @@ def main() -> None:
             vae=vae,
             steps=steps,
             cfg=cfg_scale,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=denoise,
             seed=seed,
             width=cw,
             height=ch,
@@ -1967,7 +2037,10 @@ def main() -> None:
         )
         started = time.time()
         prompt_id = comfy.queue(workflow)
-        print(f"ComfyUI:   queued {prompt_id} (seed {seed}, {steps} steps, cfg {cfg_scale})")
+        print(
+            f"ComfyUI:   queued {prompt_id} (seed {seed}, {steps} steps, "
+            f"cfg {cfg_scale}, {sampler}/{scheduler}, denoise {denoise:.2f})"
+        )
         entry = comfy.wait(prompt_id)
         outputs = entry.get("outputs", {})
         images = []

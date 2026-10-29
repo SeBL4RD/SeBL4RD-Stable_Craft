@@ -92,6 +92,69 @@ REFERENCE_PROFILES = {
     QWEN_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
+# Only FLUX.2 Klein EDIT starts from the source crop latent. Other profiles
+# sample from an empty latent, where denoise < 1 produces artifacts.
+DENOISE_PROFILES = {"flux2_klein_9b"}
+
+# Fallback lists, replaced by ComfyUI's /object_info when it is reachable.
+FALLBACK_SAMPLERS = [
+    "euler",
+    "euler_cfg_pp",
+    "euler_ancestral",
+    "euler_ancestral_cfg_pp",
+    "heun",
+    "heunpp2",
+    "exp_heun_2_x0",
+    "exp_heun_2_x0_sde",
+    "dpm_2",
+    "dpm_2_ancestral",
+    "lms",
+    "dpm_fast",
+    "dpm_adaptive",
+    "dpmpp_2s_ancestral",
+    "dpmpp_2s_ancestral_cfg_pp",
+    "dpmpp_sde",
+    "dpmpp_sde_gpu",
+    "dpmpp_2m",
+    "dpmpp_2m_cfg_pp",
+    "dpmpp_2m_sde",
+    "dpmpp_2m_sde_gpu",
+    "dpmpp_2m_sde_heun",
+    "dpmpp_2m_sde_heun_gpu",
+    "dpmpp_3m_sde",
+    "dpmpp_3m_sde_gpu",
+    "ddpm",
+    "lcm",
+    "ipndm",
+    "ipndm_v",
+    "deis",
+    "cfgpp_ud10_ab",
+    "res_multistep",
+    "res_multistep_cfg_pp",
+    "res_multistep_ancestral",
+    "res_multistep_ancestral_cfg_pp",
+    "gradient_estimation",
+    "gradient_estimation_cfg_pp",
+    "er_sde",
+    "seeds_2",
+    "seeds_3",
+    "sa_solver",
+    "sa_solver_pece",
+    "ddim",
+    "uni_pc",
+    "uni_pc_bh2",
+]
+FALLBACK_SCHEDULERS = [
+    "simple",
+    "sgm_uniform",
+    "karras",
+    "exponential",
+    "ddim_uniform",
+    "beta",
+    "normal",
+    "linear_quadratic",
+    "kl_optimal",
+]
 
 
 DEFAULTS: dict[str, Any] = {
@@ -238,6 +301,9 @@ class StableCraftApp(tk.Tk):
         self.missing_models: list[dict[str, Any]] = []
         self.models_error: str | None = None
         self._model_manager: Any = None
+        self._sampler_choices = list(FALLBACK_SAMPLERS)
+        self._scheduler_choices = list(FALLBACK_SCHEDULERS)
+        self._sampler_choices_loaded = False
         self._closing = False
         self.lora_settings = load_lora_settings()
         self.lora_items: list[dict[str, Any]] = []
@@ -795,6 +861,9 @@ class StableCraftApp(tk.Tk):
         self.feather_var = tk.StringVar(value="10")
         self.steps_var = tk.StringVar(value="16")
         self.cfg_var = tk.StringVar(value="1.0")
+        self.sampler_var = tk.StringVar(value="euler")
+        self.scheduler_var = tk.StringVar(value="simple")
+        self.denoise_var = tk.StringVar(value="1.00")
         self.seed_var = tk.StringVar(value="-1")
         fields = [
             ("Contexte (px)", self.padding_var, 0, 0, 0, 512, 16),
@@ -823,6 +892,58 @@ class StableCraftApp(tk.Tk):
                 widget = ttk.Spinbox(grid, from_=lo, to=hi, increment=step, textvariable=var)
             widget.grid(row=row, column=col + 1, sticky="ew", pady=2)
             self._lock_scroll_wheel(widget)
+
+        tk.Label(grid, text="Sampler", bg=BG, fg=MUTED, font=("Segoe UI", 9)).grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        self.sampler_combo = ttk.Combobox(
+            grid,
+            textvariable=self.sampler_var,
+            values=self._sampler_choices,
+            state="readonly",
+        )
+        self.sampler_combo.grid(row=3, column=1, columnspan=3, sticky="ew", pady=2)
+        self._lock_scroll_wheel(self.sampler_combo)
+
+        tk.Label(grid, text="Scheduler", bg=BG, fg=MUTED, font=("Segoe UI", 9)).grid(
+            row=4, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        self.scheduler_combo = ttk.Combobox(
+            grid,
+            textvariable=self.scheduler_var,
+            values=self._scheduler_choices,
+            state="readonly",
+        )
+        self.scheduler_combo.grid(row=4, column=1, columnspan=3, sticky="ew", pady=2)
+        self._lock_scroll_wheel(self.scheduler_combo)
+
+        self.denoise_label = tk.Label(
+            grid, text="Denoise", bg=BG, fg=MUTED, font=("Segoe UI", 9)
+        )
+        self.denoise_label.grid(row=5, column=0, sticky="w", padx=(0, 6), pady=2)
+        self.denoise_spin = ttk.Spinbox(
+            grid,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=self.denoise_var,
+            width=6,
+        )
+        self.denoise_spin.grid(row=5, column=1, sticky="w", pady=2)
+        self._lock_scroll_wheel(self.denoise_spin)
+        self.denoise_hint = tk.Label(
+            grid,
+            text="",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=400,
+            font=("Segoe UI", 8),
+        )
+        self.denoise_hint.grid(
+            row=6, column=0, columnspan=4, sticky="w", pady=(2, 0)
+        )
 
         actions = tk.Frame(main, bg=BG)
         actions.pack(fill="x", pady=(12, 0))
@@ -1080,6 +1201,7 @@ class StableCraftApp(tk.Tk):
         self._last_mode = mode
         self._update_mode_hint()
         self._update_reference_for_profile()
+        self._update_denoise_for_profile()
         self._update_generate_state()
         self._check_models()
 
@@ -1095,6 +1217,15 @@ class StableCraftApp(tk.Tk):
         self.feather_var.set(str(pcfg.get("feather", 10)))
         self.steps_var.set(str(pcfg.get("steps", settings.get("steps", 16))))
         self.cfg_var.set(str(pcfg.get("cfg", settings.get("cfg", 1.0))))
+        self.sampler_var.set(
+            str(pcfg.get("sampler", settings.get("sampler", "euler")))
+        )
+        self.scheduler_var.set(
+            str(pcfg.get("scheduler", settings.get("scheduler", "simple")))
+        )
+        self.denoise_var.set(
+            f"{float(pcfg.get('denoise', settings.get('denoise', 1.0))):.2f}"
+        )
         self.seed_var.set("-1")
         vram = profile.get("vram_gb")
         weights = profile.get("weights_gb")
@@ -1128,9 +1259,40 @@ class StableCraftApp(tk.Tk):
         self._populate_quantizations()
         self._update_mode_hint()
         self._update_reference_for_profile()
+        self._update_denoise_for_profile()
         self._load_profile_loras()
         self._update_generate_state()
         self._check_models()
+
+    def _update_denoise_for_profile(self) -> None:
+        if not hasattr(self, "denoise_spin"):
+            return
+        if self._mode() != "edit":
+            self.denoise_label.grid_remove()
+            self.denoise_spin.grid_remove()
+            self.denoise_hint.grid_remove()
+            return
+        self.denoise_label.grid()
+        self.denoise_spin.grid()
+        self.denoise_hint.grid()
+        supported = self.profile_key in DENOISE_PROFILES
+        self.denoise_spin.config(state="normal" if supported else "disabled")
+        if not supported:
+            self.denoise_var.set("1.00")
+        self.denoise_hint.config(
+            text=(
+                tr(
+                    "1.0 = édition complète. En dessous, le résultat conserve "
+                    "davantage l'image source ; 0.8–1.0 recommandé avec FLUX.2 Klein."
+                )
+                if supported
+                else tr(
+                    "Fixé à 1.0 : ce modèle part d'un latent vide ; un denoise "
+                    "partiel produirait des artefacts."
+                )
+            ),
+            fg=MUTED if supported else YELLOW,
+        )
 
     def _populate_quantizations(self) -> None:
         profile = self.manifest["profiles"].get(self.profile_key, {})
@@ -1206,10 +1368,18 @@ class StableCraftApp(tk.Tk):
     def _form_values(self) -> dict[str, Any] | None:
         try:
             reference = self._reference_active_path()
+            denoise = float(self.denoise_var.get().replace(",", "."))
+            if self._mode() != "edit" or self.profile_key not in DENOISE_PROFILES:
+                denoise = 1.0
+            if not self.sampler_var.get() or not self.scheduler_var.get():
+                return None
             return {
                 "seed": int(self.seed_var.get().strip()),
                 "steps": int(self.steps_var.get()),
                 "cfg": float(self.cfg_var.get().replace(",", ".")),
+                "sampler": self.sampler_var.get(),
+                "scheduler": self.scheduler_var.get(),
+                "denoise": denoise,
                 "padding": int(self.padding_var.get()),
                 "feather": int(self.feather_var.get()),
                 "profile": self.profile_key,
@@ -1239,6 +1409,13 @@ class StableCraftApp(tk.Tk):
                     and str(generation.get("negative", "")).strip() == values["negative"]
                     and int(generation.get("steps", -1)) == values["steps"]
                     and abs(float(generation.get("cfg", -1)) - values["cfg"]) < 1e-6
+                    and str(generation.get("sampler") or "euler") == values["sampler"]
+                    and str(generation.get("scheduler") or "simple")
+                    == values["scheduler"]
+                    and abs(
+                        float(generation.get("denoise", 1.0)) - values["denoise"]
+                    )
+                    < 1e-6
                     and int(generation.get("padding", -1)) == values["padding"]
                     and str(generation.get("reference") or "")
                     == str(values.get("reference") or "")
@@ -1469,6 +1646,15 @@ class StableCraftApp(tk.Tk):
                         add_missing("node", "EmptySD3LatentImage", "Nœud ComfyUI manquant.")
         except Exception as exc:  # noqa: BLE001
             error = short_error(exc)
+        if error is None and not self._sampler_choices_loaded:
+            try:
+                samplers = comfy_options(endpoint, "KSampler", "sampler_name")
+                schedulers = comfy_options(endpoint, "KSampler", "scheduler")
+            except Exception:  # noqa: BLE001
+                samplers, schedulers = [], []
+            if samplers and schedulers:
+                self._sampler_choices_loaded = True
+                self.queue.put(("samplers", samplers, schedulers))
         self.queue.put(("models", key, mode, missing, error))
 
     def _poll_queue(self) -> None:
@@ -1480,6 +1666,19 @@ class StableCraftApp(tk.Tk):
                     self._handle_status(item[1], item[2])
                 elif kind == "models":
                     self._handle_models(item[1], item[2], item[3], item[4])
+                elif kind == "samplers":
+                    samplers = [str(value) for value in item[1]]
+                    schedulers = [str(value) for value in item[2]]
+                    if samplers and schedulers:
+                        self._sampler_choices = samplers
+                        self._scheduler_choices = schedulers
+                        if hasattr(self, "sampler_combo"):
+                            self.sampler_combo.config(values=samplers)
+                            self.scheduler_combo.config(values=schedulers)
+                            if self.sampler_var.get() not in samplers:
+                                self.sampler_var.set(samplers[0])
+                            if self.scheduler_var.get() not in schedulers:
+                                self.scheduler_var.set(schedulers[0])
                 elif kind == "log":
                     self._log(str(item[1]))
                 elif kind == "drop":
@@ -1570,8 +1769,11 @@ class StableCraftApp(tk.Tk):
         else:
             self.doc_status.config(text=tr("Document : aucun"), fg=MUTED)
             self.sel_status.config(text=tr("Sélection : —"), fg=MUTED)
+        was_comfy = self.comfy_ok
         self.pc_ok = bool(pc["ok"])
         self.comfy_ok = bool(comfy["ok"])
+        if self.comfy_ok and not was_comfy and self.models_error is not None:
+            self._check_models()
         self.has_selection = bool(doc and doc.get("hasSelection"))
         self._update_generate_state()
 
@@ -2603,6 +2805,13 @@ class StableCraftApp(tk.Tk):
         self.feather_var.set(str(generation.get("feather", 10)))
         self.steps_var.set(str(generation.get("steps", 16)))
         self.cfg_var.set(str(generation.get("cfg", 1.0)))
+        if generation.get("sampler"):
+            self.sampler_var.set(str(generation["sampler"]))
+        if generation.get("scheduler"):
+            self.scheduler_var.set(str(generation["scheduler"]))
+        if "denoise" in generation:
+            self.denoise_var.set(f"{float(generation.get('denoise', 1.0)):.2f}")
+        self._update_denoise_for_profile()
         source = None
         if isinstance(sdata.get("loras"), list):
             source = sdata["loras"]
@@ -2853,6 +3062,14 @@ class StableCraftApp(tk.Tk):
             self.steps_var.get(),
             "--cfg",
             self.cfg_var.get(),
+            "--sampler",
+            self.sampler_var.get(),
+            "--scheduler",
+            self.scheduler_var.get(),
+        ]
+        if self._mode() == "edit":
+            command += ["--denoise", self.denoise_var.get()]
+        command += [
             "--seed",
             self.seed_var.get(),
             "--save-preview",
