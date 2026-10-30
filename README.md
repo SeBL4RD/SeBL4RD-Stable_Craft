@@ -218,6 +218,16 @@ remains the original image: switching back to EDIT on the same layer always uses
 scene, never the previous T2I image. To use the T2I image as a new scene, draw a new
 lasso.
 
+### Selection, layers and projects
+
+- A generation belongs to one **selection**: document + active layer + selection
+  bounds. A new lasso, a new layer created with **+**, or another project starts with
+  a clean prompt and clean settings.
+- Selecting an existing `StableCraft [id]` layer with its original selection restores
+  that layer's prompt, settings and gallery.
+- Sessions are tied to their document (name/path and size). Opening or copying another
+  project never imports the previous project's settings, even at the same resolution.
+
 ### Sampler, scheduler and denoise
 
 - **Sampler** and **Scheduler** are available in **Settings**. The values come from
@@ -285,6 +295,10 @@ and examples.
 
 ### Models and custom node
 
+- **Manage** next to the profile opens the model manager at any time, even when every
+  file is present. The **Profile files** rows show the current UNet, text encoder and
+  VAE, and let you switch between files already visible to ComfyUI or **Browse** for a
+  local file;
 - missing files are listed with **Locate** (use an existing file) and **Download**
   (with size, source and confirmation);
 - **Locate** accepts any supported filename (**GGUF or safetensors**): the file does
@@ -292,8 +306,9 @@ and examples.
   and keeps the selected file's real name. A file already inside a ComfyUI model folder is used in place,
   without copying it into the project. Select a standalone UNet/diffusion model, not
   an all-in-one checkpoint;
-- quantization choices are limited to **Q4_K_M**, **Q8_0** and **BF16** where the model
-  provides them;
+- quantization choices combine the **Q4_K_M**, **Q6_K**, **Q8_0**, **BF16** entries
+  from `models.json` with same-family UNet files that ComfyUI already sees, so a Q8
+  file downloaded outside StableCraft can still be selected;
 - downloaded files go to the project's `models/` folder and are added to ComfyUI's
   `extra_model_paths.yaml`;
 - after a file is located or downloaded, the manager offers to restart ComfyUI

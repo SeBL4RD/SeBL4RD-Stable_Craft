@@ -24,6 +24,9 @@ from models_tools import (
     install_krea_node,
     krea_node_status,
     latest_krea_release,
+    model_family_key,
+    resolve_filename,
+    same_model_file,
     set_selected_file,
     start_comfyui,
     stop_comfyui,
@@ -172,6 +175,9 @@ class ModelManager(tk.Toplevel):
         )
         self.summary.pack(fill="x", pady=(2, 6))
 
+        self.current_frame = tk.Frame(self.inner, bg=BG)
+        self.current_frame.pack(fill="x", pady=(0, 8))
+
         self.node_frame = tk.Frame(self.inner, bg=PANEL, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
         self.node_frame.pack(fill="x", pady=(0, 8))
         self.node_label = tk.Label(
@@ -286,6 +292,7 @@ class ModelManager(tk.Toplevel):
         for child in self.rows_frame.winfo_children():
             child.destroy()
         self._rows.clear()
+        self._refresh_current_files()
 
         if not self.app.models_checked:
             self.summary.config(text=tr("Vérification des modèles…"), fg=YELLOW)
@@ -321,6 +328,122 @@ class ModelManager(tk.Toplevel):
                 if self.app.comfy_ok
                 else tr("Démarrer ComfyUI")
             )
+
+    def _refresh_current_files(self) -> None:
+        if not hasattr(self, "current_frame") or self._closing:
+            return
+        for child in self.current_frame.winfo_children():
+            child.destroy()
+        profile = self.manifest["profiles"].get(self.profile_key, {})
+        pcfg = self.cfg.get("profiles", {}).get(self.profile_key, {})
+        files = profile.get("files", {})
+        cache = (
+            self.app._comfy_model_files
+            if self.app._comfy_model_files_key == self.profile_key
+            else {}
+        )
+        kinds = [kind for kind in ("unet", "text_encoder", "vae") if files.get(kind)]
+        if not kinds:
+            return
+        tk.Label(
+            self.current_frame,
+            text=tr("Fichiers du profil"),
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(fill="x", pady=(0, 3))
+        if not cache:
+            tk.Label(
+                self.current_frame,
+                text=tr(
+                    "ComfyUI hors ligne : Parcourir… permet de choisir un fichier local."
+                ),
+                bg=BG,
+                fg=YELLOW,
+                anchor="w",
+                justify="left",
+                wraplength=700,
+                font=("Segoe UI", 8),
+            ).pack(fill="x", pady=(0, 4))
+        for kind in kinds:
+            spec = files.get(kind) or {}
+            current = resolve_filename(self.profile_key, kind, pcfg, profile)
+            choices = [str(value) for value in (cache.get(kind) or [])]
+            if current:
+                family = model_family_key(current)
+                choices = [
+                    value for value in choices if model_family_key(value) == family
+                ]
+                if not any(same_model_file(value, current) for value in choices):
+                    choices.insert(0, current)
+            frame = tk.Frame(
+                self.current_frame,
+                bg=PANEL,
+                padx=10,
+                pady=8,
+                highlightthickness=1,
+                highlightbackground=BORDER,
+            )
+            frame.pack(fill="x", pady=(0, 6))
+            tk.Label(
+                frame,
+                text=KIND_LABELS.get(kind, kind),
+                bg=PANEL,
+                fg=FG,
+                anchor="w",
+                font=("Segoe UI", 9, "bold"),
+            ).pack(fill="x")
+            row = tk.Frame(frame, bg=PANEL)
+            row.pack(fill="x", pady=(3, 0))
+            variable = tk.StringVar(value=current or (choices[0] if choices else ""))
+            chooser = ttk.Combobox(
+                row,
+                textvariable=variable,
+                values=choices,
+                state="readonly",
+                width=48,
+            )
+            chooser.pack(side="left", fill="x", expand=True)
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                chooser.bind(sequence, lambda _event: "break")
+            self._button(
+                row,
+                tr("Appliquer"),
+                lambda k=kind, v=variable: self._apply_current_file(k, v.get()),
+                bg=PANEL_2,
+            ).pack(side="left", padx=(6, 0))
+            item = {
+                "kind": kind,
+                "label": KIND_LABELS.get(kind, kind),
+                "filename": current,
+                "folder": str(spec.get("folder", "") or ""),
+                "note": str(spec.get("note", "") or ""),
+                "options": [],
+            }
+            self._button(
+                row,
+                tr("Parcourir…"),
+                lambda i=item: self._locate(i),
+                bg=PANEL_2,
+            ).pack(side="left", padx=(4, 0))
+
+    def _apply_current_file(self, kind: str, filename: str) -> None:
+        if self.busy or not filename:
+            return
+        profile = self.manifest["profiles"].get(self.profile_key, {})
+        pcfg = self.cfg.get("profiles", {}).get(self.profile_key, {})
+        current = resolve_filename(self.profile_key, kind, pcfg, profile)
+        if same_model_file(filename, current):
+            return
+        set_selected_file(self.profile_key, kind, filename)
+        self.app._populate_quantizations()
+        self.status.config(
+            text=tr("Modèle sélectionné : {filename}", filename=filename),
+            fg=GREEN,
+        )
+        self.app._check_models()
+        self.refresh()
 
     def _add_missing_row(self, item: dict[str, Any]) -> None:
         kind = str(item.get("kind", "?"))

@@ -1344,6 +1344,7 @@ def create_session(
             "path": orig_doc.get("path"),
             "width": int(orig_doc["width"]),
             "height": int(orig_doc["height"]),
+            "index": int(orig_doc["index"]),
         },
         "selection": [int(v) for v in inspect["selectionBounds"]],
         "layer_name": session_layer_name(sid, prompt),

@@ -106,6 +106,14 @@ EN: dict[str, str] = {
     " · {weights} Go de poids": " · {weights} GB of weights",
     " · ~{vram} Go VRAM": " · ~{vram} GB VRAM",
     "Gérer les modèles": "Manage models",
+    "Gérer": "Manage",
+    "Fichiers du profil": "Profile files",
+    "Appliquer": "Apply",
+    "Parcourir…": "Browse…",
+    "Modèle sélectionné : {filename}": "Selected model: {filename}",
+    "ComfyUI hors ligne : Parcourir… permet de choisir un fichier local.": (
+        "ComfyUI offline: Browse… lets you pick a local file."
+    ),
     "Régénérer": "Regenerate",
     "Cette combinaison existe déjà (#{index}). Mets le seed à -1 ou change le prompt.": (
         "This combination already exists (#{index}). Set seed to -1 or change the prompt."

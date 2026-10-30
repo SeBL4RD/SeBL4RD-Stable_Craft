@@ -46,6 +46,35 @@ KIND_LABELS = {
     "node": "Custom node",
 }
 
+_QUANT_SUFFIX = re.compile(
+    r"(?i)(?:[-_.](?:q\d+[a-z0-9]*(?:[_-][a-z0-9]+)*|bf16|fp16|fp32|"
+    r"f16|f32|fp8(?:[_-][a-z0-9]+)*|w4a8|w8a8|int8|int4))$"
+)
+
+
+def model_family_key(value: object) -> str:
+    """Strip a quantization suffix so Q4/Q8 variants share one family."""
+    stem = Path(str(value or "").replace("\\", "/")).stem
+    while True:
+        stripped = _QUANT_SUFFIX.sub("", stem)
+        if stripped == stem:
+            break
+        stem = stripped
+    return stem.casefold()
+
+
+def quantization_label(value: object) -> str:
+    stem = Path(str(value or "").replace("\\", "/")).stem
+    match = _QUANT_SUFFIX.search(stem)
+    return match.group(0).lstrip("-_. ") if match else ""
+
+
+def same_model_file(left: object, right: object) -> bool:
+    return (
+        Path(str(left or "").replace("\\", "/")).name.casefold()
+        == Path(str(right or "").replace("\\", "/")).name.casefold()
+    )
+
 
 def human_size(size: int | None) -> str:
     if not size:

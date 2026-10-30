@@ -219,6 +219,17 @@ de la session reste l'image d'origine : repasser en EDIT sur le même calque uti
 toujours cette scène, jamais l'image T2I précédente. Pour repartir de l'image T2I comme
 nouvelle scène, refais un lasso.
 
+### Sélection, calques et projets
+
+- Une génération appartient à une **sélection** : document + calque actif + limites de
+  sélection. Un nouveau lasso, un nouveau calque créé avec **+**, ou un autre projet
+  repart avec un prompt et des réglages propres.
+- Sélectionner un calque `StableCraft [id]` existant avec sa sélection d'origine restaure
+  son prompt, ses réglages et sa galerie.
+- Les sessions sont liées à leur document (nom/chemin et taille). Ouvrir ou copier un
+  autre projet n'importe jamais les réglages du projet précédent, même à résolution
+  identique.
+
 ### Sampler, scheduler et denoise
 
 - **Sampler** et **Scheduler** sont disponibles dans les **Réglages**. Les valeurs
@@ -297,6 +308,10 @@ pratiques et des exemples.
 
 ### Modèles et nœud custom
 
+- **Gérer**, à droite du profil, ouvre le gestionnaire à tout moment, même quand tous
+  les fichiers sont présents. Les lignes **Fichiers du profil** montrent l'UNet, le
+  text encoder et le VAE courants, et permettent de passer à un fichier déjà visible
+  par ComfyUI ou d'en choisir un avec **Parcourir…** ;
 - les fichiers manquants sont listés avec **Localiser** (utiliser un fichier existant)
   et **Télécharger** (taille, source et confirmation) ;
 - **Localiser** accepte n'importe quel nom de fichier supporté (**GGUF ou
@@ -306,8 +321,9 @@ pratiques et des exemples.
   déjà présent dans un dossier de modèles de ComfyUI est utilisé sur place, sans être
   recopié dans le projet. Choisis un UNet/modèle de diffusion seul, pas un checkpoint
   tout-en-un ;
-- les choix de quantification sont limités à **Q4_K_M**, **Q8_0** et **BF16** quand le
-  modèle les propose ;
+- les choix de quantification combinent les entrées **Q4_K_M**, **Q6_K**, **Q8_0**,
+  **BF16** de `models.json` avec les UNet de la même famille déjà visibles par ComfyUI :
+  un fichier Q8 téléchargé hors de StableCraft reste donc sélectionnable ;
 - les fichiers téléchargés vont dans `models/` et sont ajoutés à
   `extra_model_paths.yaml` de ComfyUI ;
 - après un fichier localisé ou téléchargé, le gestionnaire propose de redémarrer

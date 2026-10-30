@@ -56,7 +56,10 @@ from models_tools import (  # noqa: E402
     download_options,
     krea_node_status,
     latest_krea_release,
+    model_family_key,
+    quantization_label,
     resolve_filename,
+    same_model_file,
     set_selected_file,
 )
 from session_store import SessionStore, parse_session_id  # noqa: E402
@@ -304,6 +307,14 @@ class StableCraftApp(tk.Tk):
         self._sampler_choices = list(FALLBACK_SAMPLERS)
         self._scheduler_choices = list(FALLBACK_SCHEDULERS)
         self._sampler_choices_loaded = False
+        self._comfy_model_files: dict[str, list[str]] = {}
+        self._comfy_model_files_key: str | None = None
+        # A selection belongs to one document + layer + bounds. Keeping that
+        # context lets the UI reset the form instead of leaking the previous
+        # project's prompt/settings into a new project or a fresh layer.
+        self._context_ready = False
+        self._context_key: tuple[Any, ...] | None = None
+        self._context_selection: list[int] | None = None
         self._closing = False
         self.lora_settings = load_lora_settings()
         self.lora_items: list[dict[str, Any]] = []
@@ -751,15 +762,33 @@ class StableCraftApp(tk.Tk):
                 label += tr(" — bientôt")
             self.profile_labels.append(label)
             self.label_to_key[label] = key
+        profile_row = tk.Frame(prof_frame, bg=BG)
+        profile_row.pack(fill="x", pady=(4, 2))
         self.profile_combo = ttk.Combobox(
-            prof_frame,
+            profile_row,
             textvariable=self.profile_var,
             values=self.profile_labels,
             state="readonly",
         )
-        self.profile_combo.pack(fill="x", pady=(4, 2))
+        self.profile_combo.pack(side="left", fill="x", expand=True)
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
         self._lock_scroll_wheel(self.profile_combo)
+        self.profile_manage_btn = tk.Button(
+            profile_row,
+            text=tr("Gérer"),
+            command=self._open_model_manager,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=3,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.profile_manage_btn.pack(side="left", padx=(6, 0))
         self.profile_detail = tk.Label(prof_frame, text="", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
         self.profile_detail.pack(fill="x")
         self.profile_warning = tk.Label(
@@ -786,9 +815,9 @@ class StableCraftApp(tk.Tk):
             textvariable=self.quant_var,
             values=[],
             state="readonly",
-            width=14,
+            width=24,
         )
-        self.quant_combo.pack(side="left", padx=(6, 0))
+        self.quant_combo.pack(side="left", padx=(6, 0), fill="x", expand=True)
         self.quant_combo.bind("<<ComboboxSelected>>", self._on_quant_change)
         self._lock_scroll_wheel(self.quant_combo)
         self.quant_map: dict[str, str] = {}
@@ -979,22 +1008,6 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.cancel_btn.pack(side="left", padx=(8, 0))
-        self.models_btn = tk.Button(
-            actions,
-            text=tr("Modèles"),
-            command=self._open_model_manager,
-            bg=PANEL_2,
-            fg=FG,
-            activebackground=BORDER,
-            activeforeground=FG,
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=9,
-            font=("Segoe UI", 9),
-            cursor="hand2",
-        )
-        self.models_btn.pack(side="left", padx=(8, 0))
         self.action_hint = tk.Label(
             main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
         )
@@ -1205,27 +1218,70 @@ class StableCraftApp(tk.Tk):
         self._update_generate_state()
         self._check_models()
 
+    def _profile_settings(self, key: str) -> dict[str, Any]:
+        """Profile defaults from config.toml, then models.json, then the UI."""
+        profile = self.manifest["profiles"].get(key, {})
+        pcfg = self.cfg.get("profiles", {}).get(key, {})
+        settings = profile.get("settings", {})
+        return {
+            "padding": pcfg.get("context_padding", 96),
+            "feather": pcfg.get("feather", 10),
+            "steps": pcfg.get("steps", settings.get("steps", 16)),
+            "cfg": pcfg.get("cfg", settings.get("cfg", 1.0)),
+            "sampler": pcfg.get("sampler", settings.get("sampler", "euler")),
+            "scheduler": pcfg.get("scheduler", settings.get("scheduler", "simple")),
+            "denoise": pcfg.get("denoise", settings.get("denoise", 1.0)),
+        }
+
+    def _reset_generation_fields(self, *, clear_reference: bool = True) -> None:
+        """Clear the prompt/settings for a new selection or a new layer."""
+        if self.running:
+            return
+        values = self._profile_settings(self.profile_key)
+        self.prompt_text.delete("1.0", "end")
+        self.neg_text.delete("1.0", "end")
+        self.neg_var.set(False)
+        self._toggle_negative()
+        self.padding_var.set(str(values["padding"]))
+        self.feather_var.set(str(values["feather"]))
+        self.steps_var.set(str(values["steps"]))
+        self.cfg_var.set(str(values["cfg"]))
+        self.sampler_var.set(str(values["sampler"]))
+        self.scheduler_var.set(str(values["scheduler"]))
+        self.denoise_var.set(f"{float(values['denoise']):.2f}")
+        self.seed_var.set("-1")
+        self.mode_var.set("edit")
+        self._last_mode = "edit"
+        self._update_mode_hint()
+        self._update_denoise_for_profile()
+        if clear_reference:
+            self._clear_pending_reference()
+            self._clear_reference_ui()
+        self._update_generate_state()
+
     def _load_profile(self, key: str) -> None:
+        if self._model_manager is not None and getattr(
+            self._model_manager, "profile_key", None
+        ) != key:
+            try:
+                if self._model_manager.winfo_exists():
+                    self._model_manager.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            self._model_manager = None
         self.profile_key = key
         label = self._profile_label()
         if label:
             self.profile_var.set(label)
         profile = self.manifest["profiles"].get(key, {})
-        pcfg = self.cfg.get("profiles", {}).get(key, {})
-        settings = profile.get("settings", {})
-        self.padding_var.set(str(pcfg.get("context_padding", 96)))
-        self.feather_var.set(str(pcfg.get("feather", 10)))
-        self.steps_var.set(str(pcfg.get("steps", settings.get("steps", 16))))
-        self.cfg_var.set(str(pcfg.get("cfg", settings.get("cfg", 1.0))))
-        self.sampler_var.set(
-            str(pcfg.get("sampler", settings.get("sampler", "euler")))
-        )
-        self.scheduler_var.set(
-            str(pcfg.get("scheduler", settings.get("scheduler", "simple")))
-        )
-        self.denoise_var.set(
-            f"{float(pcfg.get('denoise', settings.get('denoise', 1.0))):.2f}"
-        )
+        values = self._profile_settings(key)
+        self.padding_var.set(str(values["padding"]))
+        self.feather_var.set(str(values["feather"]))
+        self.steps_var.set(str(values["steps"]))
+        self.cfg_var.set(str(values["cfg"]))
+        self.sampler_var.set(str(values["sampler"]))
+        self.scheduler_var.set(str(values["scheduler"]))
+        self.denoise_var.set(f"{float(values['denoise']):.2f}")
         self.seed_var.set("-1")
         vram = profile.get("vram_gb")
         weights = profile.get("weights_gb")
@@ -1299,25 +1355,74 @@ class StableCraftApp(tk.Tk):
         pcfg = self.cfg.get("profiles", {}).get(self.profile_key, {})
         spec = (profile.get("files") or {}).get("unet", {})
         options = spec.get("quantizations") or profile.get("quantizations") or []
+        current = resolve_filename(self.profile_key, "unet", pcfg, profile)
         self.quant_map = {}
-        if len(options) < 2:
+        if not current:
             if self.quant_frame.winfo_manager():
                 self.quant_frame.pack_forget()
             return
-        current = resolve_filename(self.profile_key, "unet", pcfg, profile)
         labels: list[str] = []
+
+        def add(filename: object, preferred: object = None) -> str:
+            value = str(filename or "").strip()
+            label = str(preferred or "").strip()
+            if not label:
+                label = quantization_label(value)
+            if not label:
+                label = tr(
+                    "Personnalisé : {filename}",
+                    filename=Path(value.replace("\\", "/")).name,
+                )
+            base = label
+            if label in self.quant_map and not same_model_file(
+                self.quant_map[label], value
+            ):
+                display_name = Path(value.replace("\\", "/")).name
+                label = f"{base} · {display_name}"
+            index = 2
+            while label in self.quant_map and not same_model_file(
+                self.quant_map[label], value
+            ):
+                label = f"{base} ({index})"
+                index += 1
+            if label not in self.quant_map:
+                self.quant_map[label] = value
+                labels.append(label)
+            return label
+
         for option in options:
-            filename = str(option.get("filename", "?"))
-            label = str(option.get("label", filename))
-            self.quant_map[label] = filename
-            labels.append(label)
-            if filename == current:
-                self.quant_var.set(label)
-        if not self.quant_var.get() or self.quant_var.get() not in labels:
-            custom = tr("Personnalisé : {filename}", filename=current)
-            self.quant_map[custom] = current
-            labels.insert(0, custom)
-            self.quant_var.set(custom)
+            add(option.get("filename", "?"), option.get("label"))
+
+        # ComfyUI knows about files downloaded outside StableCraft too. Show
+        # the same model family (Q4/Q8/BF16…) even when models.json has no
+        # quantization list for this profile.
+        family = model_family_key(current)
+        visible = (
+            self._comfy_model_files.get("unet", [])
+            if self._comfy_model_files_key == self.profile_key
+            else []
+        )
+        for filename in visible:
+            if same_model_file(filename, current):
+                continue
+            if model_family_key(filename) != family:
+                continue
+            add(filename)
+
+        current_label = next(
+            (
+                label
+                for label, filename in self.quant_map.items()
+                if same_model_file(filename, current)
+            ),
+            None,
+        )
+        if current_label is None:
+            current_label = add(current)
+        if current_label in labels:
+            labels.remove(current_label)
+            labels.insert(0, current_label)
+        self.quant_var.set(current_label)
         self.quant_combo.config(values=labels)
         if not self.quant_frame.winfo_manager():
             self.quant_frame.pack(fill="x", pady=(3, 0))
@@ -1327,11 +1432,14 @@ class StableCraftApp(tk.Tk):
         filename = self.quant_map.get(self.quant_var.get())
         if not filename:
             return
-        if filename == resolve_filename(
-            self.profile_key,
-            "unet",
-            self.cfg.get("profiles", {}).get(self.profile_key, {}),
-            self.manifest["profiles"].get(self.profile_key, {}),
+        if same_model_file(
+            filename,
+            resolve_filename(
+                self.profile_key,
+                "unet",
+                self.cfg.get("profiles", {}).get(self.profile_key, {}),
+                self.manifest["profiles"].get(self.profile_key, {}),
+            ),
         ):
             return
         set_selected_file(self.profile_key, "unet", filename)
@@ -1486,7 +1594,7 @@ class StableCraftApp(tk.Tk):
         radio_state = "disabled" if self.running else "normal"
         self.edit_radio.config(state=radio_state)
         self.t2i_radio.config(state=radio_state)
-        self.models_btn.config(state="disabled" if self.running else "normal")
+        self.profile_manage_btn.config(state="disabled" if self.running else "normal")
         if self.quant_frame.winfo_manager():
             self.quant_combo.config(state="disabled" if self.running else "readonly")
 
@@ -1518,6 +1626,7 @@ class StableCraftApp(tk.Tk):
                 "ok": False,
                 "text": tr("PhotoCraft : déconnecté"),
                 "doc": None,
+                "doc_index": None,
             }
             client = None
             try:
@@ -1536,12 +1645,14 @@ class StableCraftApp(tk.Tk):
                         "ok": True,
                         "text": tr("PhotoCraft : connecté"),
                         "doc": inspect,
+                        "doc_index": (ui.get("session") or {}).get("active"),
                     }
                 else:
                     pc = {
                         "ok": True,
                         "text": tr("PhotoCraft : connecté (aucun document)"),
                         "doc": None,
+                        "doc_index": None,
                     }
             except Exception as exc:  # noqa: BLE001 - status must never crash the UI
                 pc["text"] = tr("PhotoCraft : {error}", error=short_error(exc))
@@ -1615,18 +1726,49 @@ class StableCraftApp(tk.Tk):
                 }
             )
 
+        model_files: dict[str, list[str]] = {}
+
+        def visible_files(kind: str) -> list[str]:
+            loaders = {
+                "unet": (("UnetLoaderGGUF", "unet_name"), ("UNETLoader", "unet_name")),
+                "text_encoder": (
+                    ("CLIPLoader", "clip_name"),
+                    ("CLIPLoaderGGUF", "clip_name"),
+                ),
+                "vae": (("VAELoader", "vae_name"),),
+            }.get(kind, ())
+            found: list[str] = []
+            errors: list[Exception] = []
+            loaded = False
+            for loader, key_name in loaders:
+                try:
+                    options = comfy_options(endpoint, loader, key_name)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+                    continue
+                loaded = True
+                for option in options:
+                    if option not in found:
+                        found.append(option)
+            if not loaded and errors:
+                raise errors[0]
+            return found
+
         try:
             if key in SUPPORTED_PROFILES:
                 unet = resolve_filename(key, "unet", pcfg, profile)
                 clip = resolve_filename(key, "text_encoder", pcfg, profile)
                 vae = resolve_filename(key, "vae", pcfg, profile)
-                clip_loader = "CLIPLoaderGGUF" if clip.lower().endswith(".gguf") else "CLIPLoader"
-                unet_loader = "UnetLoaderGGUF" if unet.lower().endswith(".gguf") else "UNETLoader"
-                if unet not in comfy_options(endpoint, unet_loader, "unet_name"):
+                model_files = {
+                    "unet": visible_files("unet"),
+                    "text_encoder": visible_files("text_encoder"),
+                    "vae": visible_files("vae"),
+                }
+                if unet not in model_files["unet"]:
                     add_missing("unet", unet)
-                if clip not in comfy_options(endpoint, clip_loader, "clip_name"):
+                if clip not in model_files["text_encoder"]:
                     add_missing("text_encoder", clip)
-                if vae not in comfy_options(endpoint, "VAELoader", "vae_name"):
+                if vae not in model_files["vae"]:
                     add_missing("vae", vae)
                 if files.get("lora") and mode == "edit":
                     lora = resolve_filename(key, "lora", pcfg, profile)
@@ -1646,6 +1788,8 @@ class StableCraftApp(tk.Tk):
                         add_missing("node", "EmptySD3LatentImage", "Nœud ComfyUI manquant.")
         except Exception as exc:  # noqa: BLE001
             error = short_error(exc)
+        if error is None and model_files:
+            self.queue.put(("model_files", key, model_files))
         if error is None and not self._sampler_choices_loaded:
             try:
                 samplers = comfy_options(endpoint, "KSampler", "sampler_name")
@@ -1666,6 +1810,19 @@ class StableCraftApp(tk.Tk):
                     self._handle_status(item[1], item[2])
                 elif kind == "models":
                     self._handle_models(item[1], item[2], item[3], item[4])
+                elif kind == "model_files":
+                    self._comfy_model_files_key = str(item[1])
+                    self._comfy_model_files = {
+                        str(name): [str(value) for value in values]
+                        for name, values in (item[2] or {}).items()
+                    }
+                    self._populate_quantizations()
+                    if self._model_manager is not None:
+                        try:
+                            if self._model_manager.winfo_exists():
+                                self._model_manager.refresh()
+                        except Exception:  # noqa: BLE001
+                            pass
                 elif kind == "samplers":
                     samplers = [str(value) for value in item[1]]
                     schedulers = [str(value) for value in item[2]]
@@ -1721,19 +1878,20 @@ class StableCraftApp(tk.Tk):
         self.pc_status.config(text=pc["text"], fg=GREEN if pc["ok"] else RED)
         self.comfy_status.config(text=comfy["text"], fg=GREEN if comfy["ok"] else RED)
         doc = pc.get("doc")
-        self.current_selection = (
-            list(doc["selectionBounds"])
-            if doc and doc.get("hasSelection") and doc.get("selectionBounds")
-            else None
-        )
-        self._sync_session_from_doc(doc)
-        if self.reference_is_pending and self.current_selection:
-            if self.pending_reference_selection is None:
-                self.pending_reference_selection = list(self.current_selection)
-            elif not self._same_selection(
-                self.pending_reference_selection, self.current_selection
-            ):
-                self._clear_pending_reference()
+        if pc.get("ok"):
+            self.current_selection = (
+                list(doc["selectionBounds"])
+                if doc and doc.get("hasSelection") and doc.get("selectionBounds")
+                else None
+            )
+            self._sync_session_from_doc(doc, pc.get("doc_index"))
+            if self.reference_is_pending and self.current_selection:
+                if self.pending_reference_selection is None:
+                    self.pending_reference_selection = list(self.current_selection)
+                elif not self._same_selection(
+                    self.pending_reference_selection, self.current_selection
+                ):
+                    self._clear_pending_reference()
         if doc:
             self.doc_status.config(
                 text=tr(
@@ -1830,12 +1988,18 @@ class StableCraftApp(tk.Tk):
         if self._model_manager is not None:
             try:
                 if self._model_manager.winfo_exists():
-                    self._model_manager.deiconify()
-                    self._model_manager.lift()
-                    self._model_manager.focus_force()
-                    if hasattr(self._model_manager, "refresh"):
-                        self._model_manager.refresh()
-                    return
+                    if getattr(self._model_manager, "profile_key", None) != self.profile_key:
+                        # The window title and file rows are built for one
+                        # profile; recreate it instead of showing stale files.
+                        self._model_manager.destroy()
+                        self._model_manager = None
+                    else:
+                        self._model_manager.deiconify()
+                        self._model_manager.lift()
+                        self._model_manager.focus_force()
+                        if hasattr(self._model_manager, "refresh"):
+                            self._model_manager.refresh()
+                        return
             except Exception:  # noqa: BLE001
                 pass
         self._model_manager = ModelManager(self)
@@ -2710,7 +2874,53 @@ class StableCraftApp(tk.Tk):
                 return found
         return None
 
-    def _sync_session_from_doc(self, doc: dict[str, Any] | None) -> None:
+    @staticmethod
+    def _document_context(
+        doc: dict[str, Any] | None, doc_index: int | None
+    ) -> tuple[Any, ...] | None:
+        if not doc:
+            return None
+        return (
+            doc_index,
+            str(doc.get("name") or ""),
+            int(doc.get("width") or 0),
+            int(doc.get("height") or 0),
+            doc.get("activeLayer"),
+        )
+
+    @staticmethod
+    def _session_matches_document(
+        data: dict[str, Any],
+        doc: dict[str, Any] | None,
+        doc_index: int | None = None,
+    ) -> bool:
+        if not doc:
+            return False
+        stored = data.get("document")
+        if not isinstance(stored, dict):
+            return True  # very old session: keep the previous behaviour
+        stored_path = str(stored.get("path") or "").strip()
+        doc_path = str(doc.get("path") or "").strip()
+        if stored_path and doc_path:
+            return str(Path(stored_path)).casefold() == str(Path(doc_path)).casefold()
+        same_document = (
+            str(stored.get("name") or "") == str(doc.get("name") or "")
+            and int(stored.get("width") or 0) == int(doc.get("width") or 0)
+            and int(stored.get("height") or 0) == int(doc.get("height") or 0)
+        )
+        if not same_document:
+            return False
+        stored_index = stored.get("index")
+        if stored_index is not None and doc_index is not None:
+            try:
+                return int(stored_index) == int(doc_index)
+            except (TypeError, ValueError):
+                return True
+        return True
+
+    def _sync_session_from_doc(
+        self, doc: dict[str, Any] | None, doc_index: int | None = None
+    ) -> None:
         if self.running:
             return
         sid: str | None = None
@@ -2729,13 +2939,38 @@ class StableCraftApp(tk.Tk):
                     data = self.session_store.load(sid)
                 except Exception:  # noqa: BLE001
                     data = None
-            stored = data.get("selection") if data else None
-            if stored and not self._same_selection(stored, self.current_selection):
-                # A new lasso means a new session/layer: leave the old gallery
-                # behind even while its layer is still the active one.
+            if data and not self._session_matches_document(data, doc, doc_index):
+                # The same layer name can exist in a copied/another project.
+                # Never import that project's prompt/settings here.
                 sid = None
+            else:
+                stored = data.get("selection") if data else None
+                if stored and not self._same_selection(
+                    stored, self.current_selection
+                ):
+                    # A new lasso means a new session/layer: leave the old
+                    # gallery behind even while its layer is still active.
+                    sid = None
+
+        context = self._document_context(doc, doc_index)
+        selection = list(self.current_selection) if self.current_selection else None
+        selection_changed = selection is not None and (
+            self._context_selection is None
+            or not self._same_selection(selection, self._context_selection)
+        )
+        changed = self._context_ready and (
+            context != self._context_key or selection_changed
+        )
+        self._context_ready = True
+        self._context_key = context
+        self._context_selection = selection
+
         if sid != self.session_id:
             self._load_session(sid)
+        elif changed and sid is None:
+            # Same blank layer while the selection changed, or one blank layer
+            # replaced another: this is a new selection, not the previous one.
+            self._reset_generation_fields()
 
     def _load_session(self, session_id: str | None, force: bool = False) -> None:
         if session_id == self.session_id and not force:
@@ -2750,6 +2985,9 @@ class StableCraftApp(tk.Tk):
             self._last_mode = "edit"
             self._update_mode_hint()
             self._load_profile_loras()
+            # Never carry the previous layer's prompt/settings into a new
+            # selection. The reference is cleared by the block below.
+            self._reset_generation_fields(clear_reference=False)
         if session_id:
             try:
                 self.session_data = self.session_store.load(session_id)

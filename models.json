@@ -239,8 +239,31 @@
           "folder": "unet",
           "size": 7259460736,
           "sha256": "665b636aecc29ba05ded98a6e6863408a98eec225e08896b449b4e0ba03895b3",
-          "download_url": null,
-          "note": "Krea 2 Turbo avec Identity Edit LoRA déjà intégré (aucun LoRA séparé à charger). Arch qwen_image, chargeable par UnetLoaderGGUF."
+          "download_url": "https://huggingface.co/ChrisColeTech/krea2-turbo-edit-GGUF/resolve/main/split/gguf/krea2_turbo_edit-Q4_K_M.gguf",
+          "note": "Krea 2 Turbo avec Identity Edit LoRA déjà intégré (aucun LoRA séparé à charger). Arch qwen_image, chargeable par UnetLoaderGGUF.",
+          "quantizations": [
+            {
+              "label": "Q4_K_M",
+              "filename": "krea2_turbo_edit-Q4_K_M.gguf",
+              "size": 7259460736,
+              "sha256": "665b636aecc29ba05ded98a6e6863408a98eec225e08896b449b4e0ba03895b3",
+              "download_url": "https://huggingface.co/ChrisColeTech/krea2-turbo-edit-GGUF/resolve/main/split/gguf/krea2_turbo_edit-Q4_K_M.gguf"
+            },
+            {
+              "label": "Q6_K",
+              "filename": "krea2_turbo_edit-Q6_K.gguf",
+              "size": 10583638304,
+              "sha256": "12495d0e1881510b780035200b7e4e260ba0653963b84a7e3726098489ffb5f2",
+              "download_url": "https://huggingface.co/ChrisColeTech/krea2-turbo-edit-GGUF/resolve/main/split/gguf/krea2_turbo_edit-Q6_K.gguf"
+            },
+            {
+              "label": "Q8_0",
+              "filename": "krea2_turbo_edit-Q8_0.gguf",
+              "size": 13705933952,
+              "sha256": "5a22cec08bf28e30b59194192ba3e060216cf31559861bfeb7eba5f62fc575b4",
+              "download_url": "https://huggingface.co/ChrisColeTech/krea2-turbo-edit-GGUF/resolve/main/split/gguf/krea2_turbo_edit-Q8_0.gguf"
+            }
+          ]
         },
         "text_encoder": {
           "filename": "qwen3vl_4b_fp8_scaled.safetensors",
