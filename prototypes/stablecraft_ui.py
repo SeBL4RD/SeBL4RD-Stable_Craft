@@ -239,6 +239,11 @@ def comfy_json(endpoint: str, path: str, timeout: float = 3.0) -> Any:
         return json.load(response)
 
 
+def comfy_node_exists(endpoint: str, node: str) -> bool:
+    info = comfy_json(endpoint, f"/object_info/{node}")
+    return isinstance(info, dict) and node in info
+
+
 def comfy_options(endpoint: str, node: str, key: str) -> list[str]:
     info = comfy_json(endpoint, f"/object_info/{node}")
     spec = info[node]["input"]["required"][key]
@@ -1821,26 +1826,24 @@ class StableCraftApp(tk.Tk):
                     "text_encoder": visible_files("text_encoder"),
                     "vae": visible_files("vae"),
                 }
-                if unet.lower().endswith(".gguf"):
-                    try:
-                        comfy_json(endpoint, "/object_info/UnetLoaderGGUF")
-                    except Exception:  # noqa: BLE001
-                        add_missing(
-                            "node",
-                            "ComfyUI-GGUF",
-                            "ComfyUI-GGUF est requis pour charger ce modèle GGUF. "
-                            "Installe le nœud puis redémarre ComfyUI.",
-                        )
-                if clip.lower().endswith(".gguf"):
-                    try:
-                        comfy_json(endpoint, "/object_info/CLIPLoaderGGUF")
-                    except Exception:  # noqa: BLE001
-                        add_missing(
-                            "node",
-                            "ComfyUI-GGUF",
-                            "ComfyUI-GGUF est requis pour charger ce text encoder GGUF. "
-                            "Installe le nœud puis redémarre ComfyUI.",
-                        )
+                if unet.lower().endswith(".gguf") and not comfy_node_exists(
+                    endpoint, "UnetLoaderGGUF"
+                ):
+                    add_missing(
+                        "node",
+                        "ComfyUI-GGUF",
+                        "ComfyUI-GGUF est requis pour charger ce modèle GGUF. "
+                        "Installe le nœud puis redémarre ComfyUI.",
+                    )
+                if clip.lower().endswith(".gguf") and not comfy_node_exists(
+                    endpoint, "CLIPLoaderGGUF"
+                ):
+                    add_missing(
+                        "node",
+                        "ComfyUI-GGUF",
+                        "ComfyUI-GGUF est requis pour charger ce text encoder GGUF. "
+                        "Installe le nœud puis redémarre ComfyUI.",
+                    )
                 if unet not in model_files["unet"]:
                     add_missing("unet", unet)
                 if clip not in model_files["text_encoder"]:
@@ -1854,14 +1857,10 @@ class StableCraftApp(tk.Tk):
                 needs_edit_nodes = mode == "edit" and key in KREA_PROFILES
                 if needs_edit_nodes or key == QWEN_PROFILE:
                     for node in profile.get("requires_nodes", []):
-                        try:
-                            comfy_json(endpoint, f"/object_info/{node}")
-                        except Exception:  # noqa: BLE001
+                        if not comfy_node_exists(endpoint, node):
                             add_missing("node", node, "Nœud ComfyUI manquant.")
                 if needs_edit_nodes or (key == "krea2_edit" and mode == "t2i"):
-                    try:
-                        comfy_json(endpoint, "/object_info/EmptySD3LatentImage")
-                    except Exception:  # noqa: BLE001
+                    if not comfy_node_exists(endpoint, "EmptySD3LatentImage"):
                         add_missing("node", "EmptySD3LatentImage", "Nœud ComfyUI manquant.")
         except Exception as exc:  # noqa: BLE001
             error = short_error(exc)
