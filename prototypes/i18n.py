@@ -107,6 +107,25 @@ EN: dict[str, str] = {
     " · ~{vram} Go VRAM": " · ~{vram} GB VRAM",
     "Gérer les modèles": "Manage models",
     "Gérer": "Manage",
+    "ComfyUI": "ComfyUI",
+    "ComfyUI externe": "External ComfyUI",
+    "ComfyUI est géré en externe. Redémarre-le depuis Desktop ou son propre lanceur.": (
+        "ComfyUI is managed externally. Restart it from Desktop or its own launcher."
+    ),
+    "Duplication de session impossible : {error}": (
+        "Could not separate the duplicated session: {error}"
+    ),
+    "Calque dupliqué séparé : {old} → {new}": (
+        "Duplicated layer separated: {old} → {new}"
+    ),
+    "ComfyUI est géré en externe. Redémarre-le depuis Desktop ou son propre lanceur pour voir les nouveaux fichiers ou nœuds.": (
+        "ComfyUI is managed externally. Restart it from Desktop or its own launcher "
+        "to see the new files or nodes."
+    ),
+    "Python du venv StableCraft introuvable. Crée-le avec install.sh ou installe requests et Pillow.": (
+        "StableCraft venv Python not found. Create it with install.sh or install "
+        "requests and Pillow."
+    ),
     "Fichiers du profil": "Profile files",
     "Appliquer": "Apply",
     "Parcourir…": "Browse…",

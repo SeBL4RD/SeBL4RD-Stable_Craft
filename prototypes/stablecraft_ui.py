@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app_meta import (  # noqa: E402
@@ -62,7 +62,12 @@ from models_tools import (  # noqa: E402
     same_model_file,
     set_selected_file,
 )
-from session_store import SessionStore, parse_session_id  # noqa: E402
+from platform_support import open_path  # noqa: E402
+from session_store import (  # noqa: E402
+    SessionStore,
+    parse_session_id,
+    session_layer_name,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -165,6 +170,8 @@ DEFAULTS: dict[str, Any] = {
         "language": "en",
         "default_profile": "flux3_klein",
         "sessions_dir": str(ROOT / "user" / "sessions"),
+        "python_ui": "",
+        "bridge_python": "",
     },
     "photocraft": {
         "control_host": "127.0.0.1",
@@ -174,6 +181,8 @@ DEFAULTS: dict[str, Any] = {
     },
     "comfyui": {
         "endpoint": "http://127.0.0.1:8188",
+        "manage": True,
+        "root": "",
         "python": "",
     },
     "models": {
@@ -315,6 +324,9 @@ class StableCraftApp(tk.Tk):
         self._context_ready = False
         self._context_key: tuple[Any, ...] | None = None
         self._context_selection: list[int] | None = None
+        self._last_layer_key: tuple[Any, ...] | None = None
+        self._session_retry_done: set[str] = set()
+        self._duplicate_split_failed: dict[tuple[int, int, str], float] = {}
         self._closing = False
         self.lora_settings = load_lora_settings()
         self.lora_items: list[dict[str, Any]] = []
@@ -411,7 +423,7 @@ class StableCraftApp(tk.Tk):
         style.map("TCheckbutton", background=[("active", BG)])
 
     def _text(self, parent: tk.Misc, height: int, font: tuple[str, int] | tuple[str, int, str] = ("Segoe UI", 10)) -> tk.Text:
-        return tk.Text(
+        text = tk.Text(
             parent,
             height=height,
             wrap="word",
@@ -427,6 +439,43 @@ class StableCraftApp(tk.Tk):
             highlightbackground=BORDER,
             highlightcolor=ACCENT,
         )
+        self._attach_text_resize_grip(text, height)
+        return text
+
+    def _attach_text_resize_grip(self, text: tk.Text, default_height: int) -> None:
+        """Windows-style grip in the bottom-right corner of a Text widget."""
+        grip = ttk.Sizegrip(text)
+        grip.place(relx=1.0, rely=1.0, anchor="se", x=-2, y=-2)
+        grip.configure(cursor="size_nw_se")
+        state = {"y": 0, "height": int(default_height)}
+
+        def line_height() -> int:
+            try:
+                font = tkfont.Font(font=text.cget("font"))
+                return max(1, int(font.metrics("linespace")))
+            except Exception:  # noqa: BLE001
+                return 16
+
+        def on_press(event: tk.Event) -> str:
+            state["y"] = int(event.y_root)
+            state["height"] = int(text.cget("height"))
+            return "break"
+
+        def on_drag(event: tk.Event) -> str:
+            delta = int(event.y_root) - state["y"]
+            lines = int(round(delta / line_height()))
+            new_height = max(1, state["height"] + lines)
+            if new_height != int(text.cget("height")):
+                text.configure(height=new_height)
+            return "break"
+
+        def on_reset(_event: tk.Event) -> str:
+            text.configure(height=int(default_height))
+            return "break"
+
+        grip.bind("<ButtonPress-1>", on_press)
+        grip.bind("<B1-Motion>", on_drag)
+        grip.bind("<Double-Button-1>", on_reset)
 
     def _lock_scroll_wheel(self, widget: tk.Misc) -> None:
         """Keep the wheel for page scrolling instead of changing the value."""
@@ -2889,34 +2938,147 @@ class StableCraftApp(tk.Tk):
         )
 
     @staticmethod
-    def _session_matches_document(
-        data: dict[str, Any],
-        doc: dict[str, Any] | None,
-        doc_index: int | None = None,
-    ) -> bool:
-        if not doc:
-            return False
-        stored = data.get("document")
-        if not isinstance(stored, dict):
-            return True  # very old session: keep the previous behaviour
-        stored_path = str(stored.get("path") or "").strip()
-        doc_path = str(doc.get("path") or "").strip()
-        if stored_path and doc_path:
-            return str(Path(stored_path)).casefold() == str(Path(doc_path)).casefold()
-        same_document = (
-            str(stored.get("name") or "") == str(doc.get("name") or "")
-            and int(stored.get("width") or 0) == int(doc.get("width") or 0)
-            and int(stored.get("height") or 0) == int(doc.get("height") or 0)
+    def _flatten_layers(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        flat: list[dict[str, Any]] = []
+        for layer in layers:
+            flat.append(layer)
+            flat.extend(StableCraftApp._flatten_layers(layer.get("children", [])))
+        return flat
+
+    @staticmethod
+    def _session_prompt_value(data: dict[str, Any]) -> str:
+        generations = data.get("generations", [])
+        current = int(data.get("current", -1))
+        if 0 <= current < len(generations):
+            return str(generations[current].get("prompt", "") or "")
+        return ""
+
+    def _rename_layer(self, layer_id: int, name: str) -> None:
+        pc_cfg = self.cfg["photocraft"]
+        token = read_token(Path(str(pc_cfg["control_token_file"])))
+        client = ControlClient(
+            str(pc_cfg["control_host"]),
+            int(pc_cfg["control_port"]),
+            token,
+            timeout=10.0,
         )
-        if not same_document:
-            return False
-        stored_index = stored.get("index")
-        if stored_index is not None and doc_index is not None:
+        try:
+            client.execute(
+                "layer.renameLayer", {"layer": int(layer_id), "name": name}
+            )
+        finally:
+            client.close_socket()
+
+    def _maybe_split_duplicate_session(
+        self,
+        doc: dict[str, Any] | None,
+        doc_index: int | None,
+        session_id: str,
+        active_layer: dict[str, Any],
+    ) -> str | None:
+        """Give a duplicated StableCraft layer its own session immediately."""
+        if not doc:
+            return None
+        prefix = f"StableCraft [{session_id}]"
+        layers = [
+            layer
+            for layer in self._flatten_layers(doc.get("layers", []))
+            if str(layer.get("name", "")).startswith(prefix)
+        ]
+        if len(layers) < 2:
+            return None
+        data = (
+            self.session_data
+            if session_id == self.session_id and self.session_data
+            else None
+        )
+        if data is None:
             try:
-                return int(stored_index) == int(doc_index)
-            except (TypeError, ValueError):
-                return True
-        return True
+                data = self.session_store.load(session_id)
+            except Exception:  # noqa: BLE001
+                return None
+        ids = {int(layer["id"]) for layer in layers}
+        canonical: int | None = None
+        try:
+            stored = int(data.get("layer_id"))
+            if stored in ids:
+                canonical = stored
+        except (TypeError, ValueError):
+            pass
+        if canonical is None:
+            named = [
+                layer
+                for layer in layers
+                if str(layer.get("name", "")) == str(data.get("layer_name", ""))
+            ]
+            canonical = (
+                int(named[0]["id"]) if len(named) == 1 else min(ids)
+            )
+        active = int(active_layer["id"])
+        if active == canonical:
+            if data.get("layer_id") != canonical:
+                data["layer_id"] = canonical
+                try:
+                    self.session_store.save(data)
+                except Exception:  # noqa: BLE001
+                    pass
+            return None
+
+        attempt = (int(doc_index) if doc_index is not None else -1, active, session_id)
+        failed_at = self._duplicate_split_failed.get(attempt)
+        if failed_at is not None and time.time() - failed_at < 30.0:
+            return None
+        if failed_at is not None:
+            self._duplicate_split_failed.pop(attempt, None)
+        new_id = self.session_store.new_id()
+        while self.session_store.directory(new_id).exists():
+            new_id = self.session_store.new_id()
+        cloned: dict[str, Any] | None = None
+        try:
+            self.session_store.clone_directory(session_id, new_id)
+            cloned = self.session_store.load(new_id)
+            cloned["id"] = new_id
+            cloned["layer_id"] = active
+            cloned["layer_name"] = session_layer_name(
+                new_id, self._session_prompt_value(cloned)
+            )
+            cloned["mask_channel"] = f"StableCraft Mask {new_id}"
+            cloned["document"] = {
+                "name": doc.get("name", ""),
+                "path": doc.get("path"),
+                "width": int(doc.get("width") or 0),
+                "height": int(doc.get("height") or 0),
+                "index": int(doc_index) if doc_index is not None else None,
+            }
+            self.session_store.save(cloned)
+            self._rename_layer(active, str(cloned["layer_name"]))
+        except Exception as exc:  # noqa: BLE001
+            self._duplicate_split_failed[attempt] = time.time()
+            if cloned is not None:
+                import shutil  # noqa: PLC0415
+
+                shutil.rmtree(
+                    self.session_store.directory(str(cloned["id"])),
+                    ignore_errors=True,
+                )
+            self._log(
+                tr(
+                    "Duplication de session impossible : {error}",
+                    error=short_error(exc),
+                )
+            )
+            return None
+        self.session_id = new_id
+        self.session_data = cloned
+        self._populate_gallery()
+        self._log(
+            tr(
+                "Calque dupliqué séparé : {old} → {new}",
+                old=session_id,
+                new=new_id,
+            )
+        )
+        return new_id
 
     def _sync_session_from_doc(
         self, doc: dict[str, Any] | None, doc_index: int | None = None
@@ -2924,10 +3086,55 @@ class StableCraftApp(tk.Tk):
         if self.running:
             return
         sid: str | None = None
+        layer: dict[str, Any] | None = None
         if doc:
             layer = self._find_layer(doc.get("layers", []), doc.get("activeLayer"))
             if layer:
                 sid = parse_session_id(str(layer.get("name", "")))
+        fresh_clone = False
+        if sid and layer:
+            split_id = self._maybe_split_duplicate_session(
+                doc, doc_index, sid, layer
+            )
+            if split_id:
+                sid = split_id
+                fresh_clone = True
+        layer_key = (
+            doc_index,
+            str(doc.get("name") or "") if doc else "",
+            str(doc.get("path") or "") if doc else "",
+            doc.get("activeLayer") if doc else None,
+        )
+        layer_changed = (
+            self._last_layer_key is None
+            or layer_key != self._last_layer_key
+        )
+        self._last_layer_key = layer_key
+
+        if (
+            sid
+            and sid == self.session_id
+            and self.session_data is None
+            and sid not in self._session_retry_done
+            and self.session_store.session_path(sid).exists()
+        ):
+            # The first load can happen while the bridge is still writing the
+            # session. Retry instead of staying on an empty gallery forever.
+            self._session_retry_done.add(sid)
+            self._load_session(sid, force=True)
+        elif (
+            sid
+            and layer_changed
+            and not fresh_clone
+            and sid == self.session_id
+            and self.session_data is not None
+        ):
+            # Two PhotoCraft layers can share the same session id after a
+            # duplicate. Reload the session when the active layer changes so
+            # unsaved prompt edits do not leak between them; the bridge splits
+            # the duplicate into a real session on the next generation.
+            self._load_session(sid, force=True)
+
         if sid and self.current_selection:
             data = (
                 self.session_data
@@ -2939,18 +3146,16 @@ class StableCraftApp(tk.Tk):
                     data = self.session_store.load(sid)
                 except Exception:  # noqa: BLE001
                     data = None
-            if data and not self._session_matches_document(data, doc, doc_index):
-                # The same layer name can exist in a copied/another project.
-                # Never import that project's prompt/settings here.
+            stored = data.get("selection") if data else None
+            if (
+                stored
+                and not self._same_selection(stored, self.current_selection)
+                and not layer_changed
+            ):
+                # A new lasso on the same layer means a new session. Selecting
+                # another layer (or reopening the saved project) must still
+                # show that layer's existing gallery.
                 sid = None
-            else:
-                stored = data.get("selection") if data else None
-                if stored and not self._same_selection(
-                    stored, self.current_selection
-                ):
-                    # A new lasso means a new session/layer: leave the old
-                    # gallery behind even while its layer is still active.
-                    sid = None
 
         context = self._document_context(doc, doc_index)
         selection = list(self.current_selection) if self.current_selection else None
@@ -3207,6 +3412,23 @@ class StableCraftApp(tk.Tk):
         self._start_bridge(command, f"Application de la génération #{index + 1}…")
 
     def _comfy_python(self) -> tuple[str | None, str | None]:
+        if os.name != "nt":
+            configured = (
+                os.environ.get("STABLECRAFT_BRIDGE_PYTHON")
+                or str(self.cfg.get("app", {}).get("bridge_python", "") or "")
+            )
+            candidates = [
+                configured,
+                str(ROOT / ".venv" / "bin" / "python"),
+                sys.executable,
+            ]
+            for candidate in candidates:
+                if candidate and Path(candidate).exists():
+                    return candidate, None
+            return None, tr(
+                "Python du venv StableCraft introuvable. "
+                "Crée-le avec install.sh ou installe requests et Pillow."
+            )
         python = os.environ.get("STABLECRAFT_COMFY_PYTHON") or str(
             self.cfg["comfyui"].get("python") or ""
         )
@@ -3606,7 +3828,7 @@ class StableCraftApp(tk.Tk):
 
     def _open_config(self) -> None:
         try:
-            os.startfile(str(self.config_path))  # type: ignore[attr-defined]
+            open_path(self.config_path)
         except Exception:  # noqa: BLE001
             self._log(tr("Config : {path}", path=self.config_path))
 

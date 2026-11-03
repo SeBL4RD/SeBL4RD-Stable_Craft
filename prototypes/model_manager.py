@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import queue
 import shutil
 import threading
@@ -14,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from i18n import profile_text, tr
+from platform_support import comfyui_app_dir, comfyui_manageable, open_path
 from models_tools import (
     FOLDER_FOR_KIND,
     KIND_LABELS,
@@ -323,11 +323,18 @@ class ModelManager(tk.Toplevel):
 
         self._update_restart_label()
         if hasattr(self, "restart_button"):
-            self.restart_button.config(
-                text=tr("Redémarrer ComfyUI")
-                if self.app.comfy_ok
-                else tr("Démarrer ComfyUI")
-            )
+            if not comfyui_manageable(self.cfg):
+                self.restart_button.config(
+                    text=tr("ComfyUI externe"),
+                    state="disabled",
+                )
+            else:
+                self.restart_button.config(
+                    text=tr("Redémarrer ComfyUI")
+                    if self.app.comfy_ok
+                    else tr("Démarrer ComfyUI"),
+                    state="normal",
+                )
 
     def _refresh_current_files(self) -> None:
         if not hasattr(self, "current_frame") or self._closing:
@@ -593,9 +600,9 @@ class ModelManager(tk.Toplevel):
             path = Path(configured)
             if path.exists():
                 return path
-        root = comfyui_root(self.cfg)
-        if root is not None:
-            path = root / "ComfyUI" / "models"
+        app_dir = comfyui_app_dir(comfyui_root(self.cfg))
+        if app_dir is not None:
+            path = app_dir / "models"
             if path.exists():
                 return path
         return None
@@ -1065,9 +1072,15 @@ class ModelManager(tk.Toplevel):
         self.node_link.config(
             text=tr("Page Releases") if status.get("needs_install") or status.get("needs_update") else ""
         )
-        self.restart_button.config(
-            text=tr("Démarrer ComfyUI") if not self.app.comfy_ok else tr("Redémarrer ComfyUI")
-        )
+        if comfyui_manageable(self.cfg):
+            self.restart_button.config(
+                text=tr("Démarrer ComfyUI")
+                if not self.app.comfy_ok
+                else tr("Redémarrer ComfyUI"),
+                state="normal",
+            )
+        else:
+            self.restart_button.config(text=tr("ComfyUI externe"), state="disabled")
 
     # ------------------------------------------------------------------
     # Restart / tasks
@@ -1077,6 +1090,11 @@ class ModelManager(tk.Toplevel):
         if self._needs_restart:
             self.restart_label.config(
                 text=tr(
+                    "ComfyUI est géré en externe. Redémarre-le depuis Desktop "
+                    "ou son propre lanceur pour voir les nouveaux fichiers ou nœuds."
+                )
+                if not comfyui_manageable(self.cfg)
+                else tr(
                     "ComfyUI doit être redémarré pour voir les nouveaux fichiers ou nœuds."
                 )
             )
@@ -1085,6 +1103,15 @@ class ModelManager(tk.Toplevel):
 
     def _maybe_restart_after_change(self) -> None:
         if not self._needs_restart or self.busy or self._closing:
+            return
+        if not comfyui_manageable(self.cfg):
+            self.status.config(
+                text=tr(
+                    "ComfyUI est géré en externe. Redémarre-le depuis Desktop "
+                    "ou son propre lanceur."
+                ),
+                fg=YELLOW,
+            )
             return
         question = (
             tr(
@@ -1106,6 +1133,15 @@ class ModelManager(tk.Toplevel):
 
     def _restart_comfyui(self, confirm: bool = True) -> None:
         if self.busy:
+            return
+        if not comfyui_manageable(self.cfg):
+            self.status.config(
+                text=tr(
+                    "ComfyUI est géré en externe. Redémarre-le depuis Desktop "
+                    "ou son propre lanceur."
+                ),
+                fg=YELLOW,
+            )
             return
         endpoint = str(self.cfg.get("comfyui", {}).get("endpoint", ""))
         host = (urllib.parse.urlparse(endpoint).hostname or "").lower()
@@ -1230,7 +1266,7 @@ class ModelManager(tk.Toplevel):
         path = self.app._model_store_dir()
         path.mkdir(parents=True, exist_ok=True)
         try:
-            os.startfile(str(path))  # type: ignore[attr-defined]
+            open_path(path)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(tr("Dossier des modèles"), str(exc), parent=self)
 

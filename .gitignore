@@ -34,3 +34,7 @@ Thumbs.db
 # Runtime test data
 .runtime/
 
+# Linux virtual environment
+.venv/
+venv/
+

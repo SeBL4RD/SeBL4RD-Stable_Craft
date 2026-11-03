@@ -53,17 +53,22 @@ numéro de version figé.
 
 ### Matériel
 
-- Windows 10/11 **x64**.
+- Windows 10/11 **x64**, ou Linux **x86_64**.
 - GPU **NVIDIA** seulement, pour le moment.
 - **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
 - En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
+- Sous Linux, AMD/ROCm peut fonctionner via ComfyUI mais n'est pas validé par
+  StableCraft.
 
 ### Logiciel
 
 - **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
-- **ComfyUI portable** (avec `python_embeded\python.exe`), récent : `0.42.1+`
-  pour Qwen Image 2.1 et les nœuds Krea 2.
-- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut).
+- **ComfyUI portable** sous Windows (avec `python_embeded\python.exe`), récent :
+  `0.42.1+` pour Qwen Image 2.1 et les nœuds Krea 2.
+- Sous Linux, **ComfyUI** via Comfy Desktop, une installation manuelle en venv, ou
+  `comfy-cli standalone`. Il n'existe pas de `python_embeded` Linux officiel.
+- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut sous Windows ;
+  Linux fournit Tkinter dans un paquet séparé).
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
@@ -81,7 +86,7 @@ Les poids ne sont **pas** fournis. Ils doivent être visibles par ComfyUI.
 | **FLUX.3 Klein** (défaut) | `flux-3-image-klein-Q8_0.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
 | **FLUX.2 Klein 9B** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
 | **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
-| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 disponibles) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (ou Q8_0) | `qwen3vl_8b_w4a8.safetensors` (ou INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
 
 Notes :
@@ -135,7 +140,85 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
   -ComfyEndpoint "http://127.0.0.1:12452"
 ```
 
-### Option 2 — manuel
+### Option 2 — installateur Linux (Debian/Ubuntu, Fedora/RHEL, Arch)
+
+Sous Linux, StableCraft utilise un **venv local**. Python 3.11+ et Tkinter sont
+obligatoires ; les distributions plus anciennes ne sont volontairement pas prises en
+charge.
+
+```bash
+bash install.sh
+```
+
+L'installateur vérifie Python/Tkinter, crée `.venv`, installe
+`prototypes/requirements.txt`, crée `config.toml` si nécessaire et ajoute un raccourci
+applicatif. Il ne télécharge aucun modèle et ne modifie pas ComfyUI.
+
+Équivalent manuel :
+
+```bash
+sudo apt install python3 python3-tk python3-venv      # Debian/Ubuntu
+# sudo dnf install python3 python3-tkinter            # Fedora/RHEL
+# sudo pacman -S python tk                            # Arch
+
+python3 -m venv .venv
+.venv/bin/pip install -r prototypes/requirements.txt
+cp config.example.toml config.toml
+bash StableCraft.sh
+```
+
+Dépendances Linux :
+
+| Distribution | Paquets |
+|---|---|
+| Debian / Ubuntu / Mint | `python3 python3-tk python3-venv` |
+| Fedora / RHEL / Rocky / Alma | `python3 python3-tkinter` |
+| Arch / Manjaro | `python tk` |
+
+Python **3.11+** est obligatoire car StableCraft utilise `tomllib`. Cela exclut
+Ubuntu 22.04 (Python 3.10) et RHEL 9 (Python 3.9) sans installation d'un Python plus
+récent.
+
+Sous Linux, ComfyUI est généralement géré en externe (Comfy Desktop ou son propre
+terminal). Configure :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = false
+```
+
+Puis démarre Comfy Desktop/ComfyUI toi-même. Si StableCraft doit démarrer ComfyUI,
+utilise `manage = true` et pointe l'installation :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = true
+root = "/home/seb/ComfyUI-Installs/ComfyUI"
+python = "/home/seb/ComfyUI-Installs/ComfyUI/.venv/bin/python"
+# Optionnel ; sinon <root>/ComfyUI/main.py ou <root>/main.py est utilisé.
+start_command = ""
+```
+
+PhotoCraft sous Linux :
+
+```toml
+[photocraft]
+executable = "/usr/bin/photocraft"
+control_port = 7990
+```
+
+L'AppImage, le `.deb`, le `.rpm`, le paquet Arch et le tarball fonctionnent. Préfère
+AppImage, `.deb`, `.rpm` ou tarball au Flatpak : le sandbox Flatpak peut bloquer
+l'accès au dossier `automation_root` de StableCraft.
+
+Avec Comfy Desktop, utilise son dossier de modèles partagé, ou renseigne
+`[comfyui] root` vers le dossier de l'instance pour que StableCraft ajoute
+`extra_model_paths.yaml`. Si ta version de Desktop ignore ce fichier, ajoute le dossier
+`models/` de StableCraft dans les réglages de Desktop.
+
+### Option 3 — manuel (Windows)
 
 ```powershell
 Copy-Item config.example.toml config.toml
@@ -173,26 +256,37 @@ Quand StableCraft démarre ComfyUI, il ajoute `--port <port de l'endpoint>` au b
 un, garde les deux ports identiques ; StableCraft écrit un avertissement dans le
 journal en cas de différence.
 
-Au lancement, `StableCraft.bat` :
+Au lancement, le lanceur :
 
 1. vérifie les chemins ;
-2. démarre ComfyUI si nécessaire, **sans ouvrir le navigateur** ;
+2. démarre ComfyUI si nécessaire et si `[comfyui] manage = true`, **sans ouvrir le
+   navigateur** ;
 3. démarre PhotoCraft avec le control channel si nécessaire ;
 4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
 5. ouvre l'interface.
 
-### Lancer le batch
+### Lancer l'application
 
-`StableCraft.bat` est un fichier batch Windows. Double-clique dessus, ou lance-le
+Windows : `StableCraft.bat` est un fichier batch. Double-clique dessus, ou lance-le
 avec :
 
 - **cmd.exe** : `StableCraft.bat`
 - **PowerShell** : `.\StableCraft.bat`
 - **Git Bash / MSYS** : `cmd //c StableCraft.bat`
 
-Ce n'est pas un script Linux/WSL. Le batch utilise `py -3` s'il est disponible,
-sinon `python` ; Python **3.11+** et **Tkinter** sont requis. Si aucun ne fonctionne,
-il affiche les instructions d'installation au lieu de se fermer sans explication.
+Le batch utilise `py -3` s'il est disponible, sinon `python` ; Python **3.11+** et
+**Tkinter** sont requis. Si aucun ne fonctionne, il affiche les instructions
+d'installation au lieu de se fermer sans explication.
+
+Linux :
+
+```bash
+./StableCraft.sh
+# ou : bash StableCraft.sh
+```
+
+Le script shell utilise `.venv/bin/python` s'il existe. Il n'utilise ni
+`python_embeded`, ni PowerShell, ni `cmd.exe`, ni le drag & drop Windows.
 
 Si la fenêtre se ferme immédiatement, lance le batch depuis cmd.exe ou PowerShell
 pour lire le message, puis consulte `user\logs\launcher.log`. Utilise l'installateur
@@ -208,7 +302,9 @@ modèles avec les actions **Localiser** et **Télécharger**.
 1. Ouvre une image dans PhotoCraft.
 2. Fais un **lasso** autour de la zone à modifier.
 3. Dans StableCraft : choisis le **mode** (EDIT par défaut, ou T2I), le profil,
-   écris le prompt, puis clique **Générer**.
+   écris le prompt, puis clique **Générer**. Fais glisser la poignée en bas à droite
+   de la zone de prompt (ou du prompt négatif) pour la redimensionner ; double-clique
+   sur la poignée pour revenir à la taille par défaut.
 4. Le résultat est ajouté comme **calque StableCraft** avec un masque.
 5. La galerie du calque apparaît sous le prompt.
 
@@ -255,6 +351,9 @@ nouvelle scène, refais un lasso.
 - Clique sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
 - Sélection perdue → sélectionne le calque `StableCraft [id]`, puis **Régénérer**.
 - Nouvelle sélection → nouvelle galerie et nouveau calque.
+- Dupliquer un calque `StableCraft [id]` dans PhotoCraft crée une session
+  indépendante pour le clone à sa prochaine génération : le prompt, les réglages et
+  l'historique du clone ne modifient plus le calque d'origine.
 
 ### Image de référence
 

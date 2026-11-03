@@ -8,7 +8,7 @@ on your own GPU, with ComfyUI as the generation engine.
 
 ![Version](https://img.shields.io/badge/version-0.2.6-3b82f6)
 ![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
-![Platform](https://img.shields.io/badge/platform-Windows%20x64-6b7280)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20Linux%20x64-6b7280)
 ![License](https://img.shields.io/badge/license-MIT-8b5cf6)
 
 **Repository:** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
@@ -52,17 +52,21 @@ checked through the commands exposed by each build, not through a fixed version 
 
 ### Hardware
 
-- Windows 10/11 **x64**.
+- Windows 10/11 **x64**, or Linux **x86_64**.
 - **NVIDIA** GPU only, for now.
 - **12 GB of VRAM** tested on an RTX 3080 Ti; 32 GB of RAM.
 - Below 12 GB of VRAM is not validated today.
+- On Linux, AMD/ROCm may work through ComfyUI but is not validated by StableCraft.
 
 ### Software
 
 - **PhotoCraft 0.16.0** or newer (portable or installed).
-- **ComfyUI portable** (with `python_embeded\python.exe`), recent enough:
+- **ComfyUI portable** on Windows (with `python_embeded\python.exe`), recent enough:
   `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes.
-- **Python 3.11+** with **Tkinter** (the python.org Windows installer includes it).
+- On Linux, **ComfyUI** from Comfy Desktop, a manual venv install, or `comfy-cli
+  standalone`. There is no official Linux `python_embeded`.
+- **Python 3.11+** with **Tkinter** (the python.org Windows installer includes it;
+  Linux distributions provide it in a separate package).
 - For Krea 2: the custom node
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` to load GGUF UNet models.
@@ -81,7 +85,7 @@ or download missing files on demand, with explicit confirmation.
 | **FLUX.3 Klein** (default) | `flux-3-image-klein-Q8_0.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
 | **FLUX.2 Klein 9B** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
 | **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
-| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 available) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (or Q8_0) | `qwen3vl_8b_w4a8.safetensors` (or INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
 
 Notes:
@@ -135,7 +139,82 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
   -ComfyEndpoint "http://127.0.0.1:12452"
 ```
 
-### Option 2 — manual
+### Option 2 — Linux installer (Debian/Ubuntu, Fedora/RHEL, Arch)
+
+StableCraft uses a **local venv** on Linux. Python 3.11+ and Tkinter are required;
+older distributions are intentionally not supported.
+
+```bash
+bash install.sh
+```
+
+The installer checks Python/Tkinter, creates `.venv`, installs
+`prototypes/requirements.txt`, creates `config.toml` if needed, and adds an
+application shortcut. It does **not** download models or modify ComfyUI.
+
+Manual equivalent:
+
+```bash
+sudo apt install python3 python3-tk python3-venv      # Debian/Ubuntu
+# sudo dnf install python3 python3-tkinter            # Fedora/RHEL
+# sudo pacman -S python tk                            # Arch
+
+python3 -m venv .venv
+.venv/bin/pip install -r prototypes/requirements.txt
+cp config.example.toml config.toml
+bash StableCraft.sh
+```
+
+Linux dependencies:
+
+| Distribution | Packages |
+|---|---|
+| Debian / Ubuntu / Mint | `python3 python3-tk python3-venv` |
+| Fedora / RHEL / Rocky / Alma | `python3 python3-tkinter` |
+| Arch / Manjaro | `python tk` |
+
+Python **3.11+** is mandatory because StableCraft uses `tomllib`. This excludes
+Ubuntu 22.04 (Python 3.10) and RHEL 9 (Python 3.9) unless a newer Python is installed.
+
+On Linux, ComfyUI is usually managed externally (Comfy Desktop or its own terminal).
+Set:
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = false
+```
+
+Then start Comfy Desktop/ComfyUI yourself. If StableCraft should start ComfyUI, use
+`manage = true` and point to the install:
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = true
+root = "/home/seb/ComfyUI-Installs/ComfyUI"
+python = "/home/seb/ComfyUI-Installs/ComfyUI/.venv/bin/python"
+# Optional; otherwise <root>/ComfyUI/main.py or <root>/main.py is used.
+start_command = ""
+```
+
+PhotoCraft on Linux:
+
+```toml
+[photocraft]
+executable = "/usr/bin/photocraft"
+control_port = 7990
+```
+
+The AppImage, `.deb`, `.rpm`, Arch package and tarball all work. Prefer AppImage,
+`.deb`, `.rpm` or tarball over Flatpak when possible: the Flatpak sandbox can block
+access to StableCraft's `automation_root`.
+
+When using Comfy Desktop, use its shared models folder, or set `[comfyui] root` to the
+instance folder so StableCraft can add `extra_model_paths.yaml`. If Desktop ignores
+that file on your version, add StableCraft's `models/` folder in Desktop's settings.
+
+### Option 3 — manual (Windows)
 
 ```powershell
 Copy-Item config.example.toml config.toml
@@ -173,25 +252,36 @@ When StableCraft starts ComfyUI, it adds `--port <endpoint port>` to the
 batch already has one, keep it identical to `endpoint`; StableCraft logs a warning
 when the two ports differ.
 
-When launched, `StableCraft.bat`:
+When launched, the launcher:
 
 1. checks the required paths;
-2. starts ComfyUI when needed, **without opening a browser**;
+2. starts ComfyUI when needed and `[comfyui] manage = true`, **without opening a
+   browser**;
 3. starts PhotoCraft with the control channel when needed;
 4. cleans temporary StableCraft files from “Open Recent”;
 5. opens the UI.
 
-### Launching the batch
+### Launching the app
 
-`StableCraft.bat` is a Windows batch file. Double-click it, or run it with:
+Windows: `StableCraft.bat` is a batch file. Double-click it, or run it with:
 
 - **cmd.exe**: `StableCraft.bat`
 - **PowerShell**: `.\StableCraft.bat`
 - **Git Bash / MSYS**: `cmd //c StableCraft.bat`
 
-It is not a Linux/WSL script. The batch uses `py -3` when available, otherwise
-`python`; Python **3.11+** and **Tkinter** are required. If neither works, it prints
-the installation instructions instead of closing silently.
+The batch uses `py -3` when available, otherwise `python`; Python **3.11+** and
+**Tkinter** are required. If neither works, it prints the installation instructions
+instead of closing silently.
+
+Linux:
+
+```bash
+./StableCraft.sh
+# or: bash StableCraft.sh
+```
+
+The shell script uses `.venv/bin/python` when present. It does not use
+`python_embeded`, PowerShell, `cmd.exe` or Windows drag & drop.
 
 If the window closes immediately, run the batch from cmd.exe or PowerShell to read
 the message, then check `user\logs\launcher.log`. Use the python.org installer (not
@@ -207,7 +297,8 @@ installation: the UI reports them and **Generate** opens the model manager with
 1. Open an image in PhotoCraft.
 2. Draw a **lasso** around the area to edit.
 3. In StableCraft: choose the **mode** (EDIT by default, or T2I), the profile,
-   write the prompt, then click **Generate**.
+   write the prompt, then click **Generate**. Drag the bottom-right grip of the
+   prompt/negative-prompt box to resize it; double-click the grip to reset it.
 4. The result is added as a **StableCraft layer** with a mask.
 5. The layer gallery appears under the prompt.
 
@@ -252,6 +343,9 @@ lasso.
 - Click a thumbnail to apply that generation without running ComfyUI again.
 - Selection lost → select the `StableCraft [id]` layer, then **Regenerate**.
 - New selection → new gallery and new layer.
+- Duplicating a `StableCraft [id]` layer in PhotoCraft creates an independent
+  session for the clone on its next generation: prompts/settings/history no longer
+  overwrite the original layer.
 
 ### Reference image
 
