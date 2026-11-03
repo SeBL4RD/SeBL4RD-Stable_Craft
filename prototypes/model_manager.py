@@ -77,6 +77,11 @@ class ModelManager(tk.Toplevel):
         self._needs_restart = False
         self._rows: list[dict[str, Any]] = []
         self._last_locate_dirs: dict[str, Path] = {}
+        self._pending_restart: set[tuple[str, str]] = getattr(
+            app, "pending_model_restart", set()
+        )
+        if not hasattr(app, "pending_model_restart"):
+            app.pending_model_restart = self._pending_restart
 
         self.title(
             tr(
@@ -294,6 +299,23 @@ class ModelManager(tk.Toplevel):
         self._rows.clear()
         self._refresh_current_files()
 
+        missing = list(self.app.missing_models)
+        if self.app.models_checked and not self.app.models_error:
+            self._pending_restart = {
+                (kind, filename)
+                for kind, filename in self._pending_restart
+                if any(
+                    str(item.get("kind")) == kind
+                    and same_model_file(item.get("filename"), filename)
+                    for item in missing
+                )
+            }
+        pending = [
+            item for item in missing if self._is_pending_restart(item)
+        ]
+        pending_ids = {id(item) for item in pending}
+        missing = [item for item in missing if id(item) not in pending_ids]
+
         if not self.app.models_checked:
             self.summary.config(text=tr("Vérification des modèles…"), fg=YELLOW)
         elif self.app.models_error:
@@ -304,22 +326,33 @@ class ModelManager(tk.Toplevel):
                 ),
                 fg=YELLOW,
             )
-        elif not self.app.missing_models:
-            self.summary.config(
-                text=tr("Tous les fichiers requis sont visibles par ComfyUI."),
-                fg=GREEN,
-            )
-        else:
+        elif missing:
             self.summary.config(
                 text=tr(
                     "{count} fichier(s) manquant(s). Tu peux localiser un fichier existant "
                     "ou le télécharger avec ton accord.",
-                    count=len(self.app.missing_models),
+                    count=len(missing),
                 ),
                 fg=RED,
             )
-            for item in self.app.missing_models:
+            for item in missing:
                 self._add_missing_row(item)
+        elif pending:
+            self.summary.config(
+                text=tr(
+                    "{count} fichier(s) téléchargé(s). Redémarre ComfyUI pour "
+                    "qu'il les voie.",
+                    count=len(pending),
+                ),
+                fg=YELLOW,
+            )
+            for item in pending:
+                self._add_pending_row(item)
+        else:
+            self.summary.config(
+                text=tr("Tous les fichiers requis sont visibles par ComfyUI."),
+                fg=GREEN,
+            )
 
         self._update_restart_label()
         if hasattr(self, "restart_button"):
@@ -364,7 +397,8 @@ class ModelManager(tk.Toplevel):
             tk.Label(
                 self.current_frame,
                 text=tr(
-                    "ComfyUI hors ligne : Parcourir… permet de choisir un fichier local."
+                    "ComfyUI hors ligne : Choisir un fichier… permet de sélectionner "
+                    "un fichier local."
                 ),
                 bg=BG,
                 fg=YELLOW,
@@ -377,6 +411,20 @@ class ModelManager(tk.Toplevel):
             spec = files.get(kind) or {}
             current = resolve_filename(self.profile_key, kind, pcfg, profile)
             choices = [str(value) for value in (cache.get(kind) or [])]
+            missing_current = any(
+                str(item.get("kind")) == kind
+                and same_model_file(item.get("filename"), current)
+                for item in self.app.missing_models
+            )
+            if (
+                current
+                and self.app.models_checked
+                and not self.app.models_error
+                and missing_current
+            ):
+                # Missing files already get their own Locate/Download row.
+                # Do not duplicate them in the profile-file selector.
+                continue
             if current:
                 family = model_family_key(current)
                 choices = [
@@ -430,7 +478,7 @@ class ModelManager(tk.Toplevel):
             }
             self._button(
                 row,
-                tr("Parcourir…"),
+                tr("Choisir un fichier…"),
                 lambda i=item: self._locate(i),
                 bg=PANEL_2,
             ).pack(side="left", padx=(4, 0))
@@ -452,12 +500,85 @@ class ModelManager(tk.Toplevel):
         self.app._check_models()
         self.refresh()
 
+    def _is_pending_restart(self, item: dict[str, Any]) -> bool:
+        kind = str(item.get("kind"))
+        filename = item.get("filename")
+        if any(
+            pending_kind == kind and same_model_file(pending_file, filename)
+            for pending_kind, pending_file in self._pending_restart
+        ):
+            return True
+        # The file may have been downloaded before this manager (or the UI) was
+        # reopened. If it exists in StableCraft's model store but ComfyUI does
+        # not see it yet, it is waiting for a restart, not missing.
+        if not filename:
+            return False
+        folder = FOLDER_FOR_KIND.get(kind)
+        if not folder:
+            return False
+        path = self.app._model_store_dir() / folder / Path(str(filename)).name
+        return path.exists()
+
+    def _add_pending_row(self, item: dict[str, Any]) -> None:
+        kind = str(item.get("kind", "?"))
+        filename = str(item.get("filename", "?"))
+        frame = tk.Frame(
+            self.rows_frame,
+            bg=PANEL,
+            padx=10,
+            pady=8,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        frame.pack(fill="x", pady=(0, 6))
+        tk.Label(
+            frame,
+            text=tr(
+                "{label} · {filename} — téléchargé, redémarrage requis",
+                label=KIND_LABELS.get(kind, kind),
+                filename=filename,
+            ),
+            bg=PANEL,
+            fg=YELLOW,
+            anchor="w",
+            justify="left",
+            wraplength=680,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(fill="x")
+        tk.Label(
+            frame,
+            text=tr(
+                "Redémarre ComfyUI pour que ce fichier devienne visible."
+            ),
+            bg=PANEL,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=680,
+            font=("Segoe UI", 8),
+        ).pack(fill="x", pady=(2, 0))
+        if comfyui_manageable(self.cfg):
+            self._button(
+                frame,
+                tr("Redémarrer ComfyUI"),
+                self._restart_comfyui,
+                bg=PANEL_2,
+            ).pack(anchor="w", pady=(5, 0))
+        self._rows.append(
+            {
+                "item": item,
+                "frame": frame,
+                "option_var": None,
+                "option_by_label": {},
+            }
+        )
+
     def _add_missing_row(self, item: dict[str, Any]) -> None:
         kind = str(item.get("kind", "?"))
         filename = str(item.get("filename", "?"))
         options: list[dict[str, Any]] = list(item.get("options") or [])
         label = str(item.get("label", kind))
-        title = label if len(options) > 1 else f"{label} · {filename}"
+        title = f"{label} · {filename}"
         frame = tk.Frame(
             self.rows_frame,
             bg=PANEL,
@@ -832,6 +953,10 @@ class ModelManager(tk.Toplevel):
         except Exception:  # noqa: BLE001
             pass
 
+    def _mark_pending_restart(self, kind: str, filename: str) -> None:
+        self._pending_restart.add((kind, filename))
+        self._needs_restart = True
+
     def _use_local_file(
         self,
         path: Path,
@@ -847,8 +972,8 @@ class ModelManager(tk.Toplevel):
                 return
         name = selected_name or path.name
         set_selected_file(self.app.profile_key, kind, name)
+        self._mark_pending_restart(kind, name)
         self._refresh_quantizations()
-        self._needs_restart = True
         self.status.config(
             text=tr(
                 "{filename} est sélectionné. Redémarre ComfyUI pour qu'il le voie.",
@@ -874,8 +999,8 @@ class ModelManager(tk.Toplevel):
         if error:
             raise RuntimeError(error)
         set_selected_file(self.app.profile_key, kind, destination.name)
+        self._mark_pending_restart(kind, destination.name)
         self._refresh_quantizations()
-        self._needs_restart = True
         return tr("Déplacé : {filename}", filename=destination.name)
 
     def _copy_and_select(
@@ -892,8 +1017,8 @@ class ModelManager(tk.Toplevel):
         if error:
             raise RuntimeError(error)
         set_selected_file(self.app.profile_key, kind, destination.name)
+        self._mark_pending_restart(kind, destination.name)
         self._refresh_quantizations()
-        self._needs_restart = True
         return tr("Copié : {filename}", filename=destination.name)
 
     def _download(
@@ -956,12 +1081,12 @@ class ModelManager(tk.Toplevel):
                     parent=self,
                 ):
                     set_selected_file(self.app.profile_key, str(item.get("kind")), filename)
+                    self._mark_pending_restart(str(item.get("kind")), filename)
                     self._refresh_quantizations()
                     changed, error = ensure_extra_model_paths(self.cfg)
                     if error:
                         messagebox.showerror(tr("Chemins ComfyUI"), error, parent=self)
                         return
-                    self._needs_restart = True
                     self.refresh()
                     return
             elif not messagebox.askyesno(
@@ -984,8 +1109,8 @@ class ModelManager(tk.Toplevel):
             if error:
                 raise RuntimeError(error)
             set_selected_file(self.app.profile_key, str(item.get("kind")), filename)
+            self._mark_pending_restart(str(item.get("kind")), filename)
             self._refresh_quantizations()
-            self._needs_restart = True
             return tr("Téléchargé : {filename}", filename=filename)
 
         self._run_task(tr("Téléchargement de {filename}…", filename=filename), work)

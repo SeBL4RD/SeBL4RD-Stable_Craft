@@ -421,11 +421,16 @@ pratiques et des exemples.
 ### Modèles et nœud custom
 
 - **Gérer**, à droite du profil, ouvre le gestionnaire à tout moment, même quand tous
-  les fichiers sont présents. Les lignes **Fichiers du profil** montrent l'UNet, le
-  text encoder et le VAE courants, et permettent de passer à un fichier déjà visible
-  par ComfyUI ou d'en choisir un avec **Parcourir…** ;
-- les fichiers manquants sont listés avec **Localiser** (utiliser un fichier existant)
-  et **Télécharger** (taille, source et confirmation) ;
+  les fichiers sont présents. Les lignes **Fichiers du profil** ne montrent que les
+  fichiers déjà visibles par ComfyUI ; utilise la liste + **Appliquer** pour changer,
+  ou **Choisir un fichier…** pour un fichier local ;
+- les fichiers manquants sont listés séparément avec **Localiser** (utiliser un fichier
+  existant) et **Télécharger** (taille, source et confirmation). Un fichier manquant
+  n'est pas répété dans le sélecteur du profil ;
+- après un téléchargement/copie, le gestionnaire affiche clairement **téléchargé,
+  redémarrage requis** au lieu de le laisser dans la liste des fichiers manquants.
+  Redémarre ComfyUI depuis le gestionnaire (ou manuellement si `manage = false`) pour
+  le rendre visible ;
 - **Localiser** accepte n'importe quel nom de fichier supporté (**GGUF ou
   safetensors**) : il n'a pas besoin de correspondre au nom attendu dans
   `models.json`. La boîte de dialogue s'ouvre dans le dossier `models` de ComfyUI et

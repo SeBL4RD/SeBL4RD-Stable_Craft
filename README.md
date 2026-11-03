@@ -403,11 +403,15 @@ and examples.
 ### Models and custom node
 
 - **Manage** next to the profile opens the model manager at any time, even when every
-  file is present. The **Profile files** rows show the current UNet, text encoder and
-  VAE, and let you switch between files already visible to ComfyUI or **Browse** for a
+  file is present. The **Profile files** rows show only files ComfyUI already sees;
+  use the dropdown + **Apply** to switch between them, or **Choose a file…** for a
   local file;
-- missing files are listed with **Locate** (use an existing file) and **Download**
-  (with size, source and confirmation);
+- missing files are listed separately with **Locate** (use an existing file) and
+  **Download** (with size, source and confirmation). A missing file is not repeated in
+  the profile-file selector;
+- after a download/copy, the manager clearly shows **downloaded, restart required**
+  instead of keeping it in the missing list. Restart ComfyUI from the manager (or
+  externally when `manage = false`) to make it visible;
 - **Locate** accepts any supported filename (**GGUF or safetensors**): the file does
   not need to match the name in `models.json`. It starts in ComfyUI's `models` folder
   and keeps the selected file's real name. A file already inside a ComfyUI model folder is used in place,

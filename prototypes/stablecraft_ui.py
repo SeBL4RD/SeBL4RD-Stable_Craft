@@ -323,6 +323,7 @@ class StableCraftApp(tk.Tk):
         # A selection belongs to one document + layer + bounds. Keeping that
         # context lets the UI reset the form instead of leaking the previous
         # project's prompt/settings into a new project or a fresh layer.
+        self.pending_model_restart: set[tuple[str, str]] = set()
         self._context_ready = False
         self._context_key: tuple[Any, ...] | None = None
         self._context_selection: list[int] | None = None
@@ -448,7 +449,7 @@ class StableCraftApp(tk.Tk):
         """Windows-style grip in the bottom-right corner of a Text widget."""
         grip = ttk.Sizegrip(text)
         grip.place(relx=1.0, rely=1.0, anchor="se", x=-2, y=-2)
-        grip.configure(cursor="size_nw_se")
+        grip.configure(cursor="bottom_right_corner")
         state = {"y": 0, "height": int(default_height)}
 
         def line_height() -> int:

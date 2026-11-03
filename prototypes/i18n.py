@@ -129,9 +129,22 @@ EN: dict[str, str] = {
     "Fichiers du profil": "Profile files",
     "Appliquer": "Apply",
     "Parcourir…": "Browse…",
+    "Choisir un fichier…": "Choose a file…",
     "Modèle sélectionné : {filename}": "Selected model: {filename}",
     "ComfyUI hors ligne : Parcourir… permet de choisir un fichier local.": (
         "ComfyUI offline: Browse… lets you pick a local file."
+    ),
+    "ComfyUI hors ligne : Choisir un fichier… permet de sélectionner un fichier local.": (
+        "ComfyUI offline: Choose a file… lets you select a local file."
+    ),
+    "{count} fichier(s) téléchargé(s). Redémarre ComfyUI pour qu'il les voie.": (
+        "{count} file(s) downloaded. Restart ComfyUI so it can see them."
+    ),
+    "{label} · {filename} — téléchargé, redémarrage requis": (
+        "{label} · {filename} — downloaded, restart required"
+    ),
+    "Redémarre ComfyUI pour que ce fichier devienne visible.": (
+        "Restart ComfyUI so this file becomes visible."
     ),
     "Régénérer": "Regenerate",
     "Cette combinaison existe déjà (#{index}). Mets le seed à -1 ou change le prompt.": (
