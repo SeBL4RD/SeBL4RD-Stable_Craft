@@ -195,8 +195,19 @@ manage = true
 root = "/home/seb/ComfyUI-Installs/ComfyUI"
 python = "/home/seb/ComfyUI-Installs/ComfyUI/.venv/bin/python"
 # Optional; otherwise <root>/ComfyUI/main.py or <root>/main.py is used.
+# Do not put the Python binary here; use a .sh script if you need one.
 start_command = ""
+# Open a visible terminal for ComfyUI (falls back to the log without a display).
+open_console = true
+# Extra arguments for main.py. On a CPU-only VM/without CUDA:
+# extra_args = ["--cpu"]
+extra_args = []
 ```
+
+`start_command` must be empty, a shell script, or a `.py` entrypoint, not the
+Python interpreter itself. `open_console` opens the desktop terminal when a
+graphical session is available; otherwise StableCraft writes
+`user/logs/comfyui.log`.
 
 PhotoCraft on Linux:
 
@@ -247,10 +258,12 @@ If ComfyUI listens on another port, change `endpoint`:
 endpoint = "http://127.0.0.1:12452"
 ```
 
-When StableCraft starts ComfyUI, it adds `--port <endpoint port>` to the
-`start_command` batch when the batch does not already contain a `--port`. If the
-batch already has one, keep it identical to `endpoint`; StableCraft logs a warning
-when the two ports differ.
+On Windows, when StableCraft starts ComfyUI, it adds `--port <endpoint port>` to
+the `start_command` batch when the batch does not already contain a `--port`. If
+the batch already has one, keep it identical to `endpoint`; StableCraft logs a
+warning when the two ports differ. On Linux, leave `start_command` empty:
+StableCraft runs `main.py` and adds `--port`, `--disable-auto-launch` and
+`extra_args`.
 
 When launched, the launcher:
 

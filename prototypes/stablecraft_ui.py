@@ -182,6 +182,8 @@ DEFAULTS: dict[str, Any] = {
     "comfyui": {
         "endpoint": "http://127.0.0.1:8188",
         "manage": True,
+        "open_console": True,
+        "extra_args": [],
         "root": "",
         "python": "",
     },

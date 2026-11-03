@@ -43,7 +43,7 @@ from platform_support import (  # noqa: E402
     comfyui_manageable,
     comfyui_main,
     comfyui_python,
-    comfyui_start_argv,
+    start_comfyui_process,
 )
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -609,31 +609,20 @@ def main() -> int:
                 show_error("StableCraft — ComfyUI", f"Impossible de lancer ComfyUI :\n{exc}")
                 return 1
         else:
-            argv, cwd = comfyui_start_argv(
-                cfg, comfy_python, comfy_root, start_command
-            )
-            if not argv:
-                show_error(
-                    "StableCraft — ComfyUI introuvable",
-                    "Impossible de trouver ComfyUI/main.py ou un start_command.\n\n"
-                    "Renseigne [comfyui] root, python et start_command dans config.toml, "
-                    "ou mets [comfyui] manage = false si ComfyUI est lancé séparément.",
-                )
-                return 1
             log(f"ComfyUI n'écoute pas sur {comfy_host}:{comfy_port}; démarrage…")
-            comfy_log = LOG_DIR / "comfyui.log"
-            comfy_log.parent.mkdir(parents=True, exist_ok=True)
             try:
-                with comfy_log.open("a", encoding="utf-8") as log_file:
-                    subprocess.Popen(
-                        argv,
-                        cwd=str(cwd),
-                        stdout=log_file,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,
-                    )
+                start_comfyui_process(
+                    cfg,
+                    comfy_python,
+                    comfy_root,
+                    start_command,
+                    log_path=LOG_DIR / "comfyui.log",
+                )
             except Exception as exc:  # noqa: BLE001
-                show_error("StableCraft — ComfyUI", f"Impossible de lancer ComfyUI :\n{exc}")
+                show_error(
+                    "StableCraft — ComfyUI",
+                    f"Impossible de lancer ComfyUI :\n{exc}",
+                )
                 return 1
         if not wait_port(comfy_host, comfy_port, 240, "ComfyUI"):
             show_error(

@@ -58,7 +58,15 @@ root = ""
 # Lanceur ComfyUI.
 # Windows : vide = <root>/run_nvidia_gpu.bat
 # Linux   : vide = <root>/main.py ou <root>/ComfyUI/main.py, avec [comfyui] python.
+# Ne mets PAS le binaire Python ici : laisse vide pour lancer main.py, ou donne
+# un script .sh. Exemple : start_command = "/home/seb/ComfyUI/start.sh"
 start_command = ""
+# Linux : ouvrir ComfyUI dans une fenêtre de terminal visible.
+# false = lancer en arrière-plan, sortie dans user/logs/comfyui.log.
+open_console = true
+# Arguments supplémentaires passés à ComfyUI main.py.
+# Pour une VM sans GPU NVIDIA : extra_args = ["--cpu"]
+extra_args = []
 # Python de ComfyUI.
 # Windows : vide = <root>/python_embeded/python.exe (obligatoire pour le bridge).
 # Linux   : vide = <root>/.venv/bin/python, venv/bin/python, etc.

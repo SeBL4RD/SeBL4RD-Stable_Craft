@@ -8,6 +8,7 @@ except psutil which is only needed to stop a process on Linux.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -93,7 +94,23 @@ def comfyui_start_argv(
     except Exception:  # noqa: BLE001
         pass
 
+    extra = section.get("extra_args", [])
+    if isinstance(extra, str):
+        extra_args = shlex.split(extra)
+    elif isinstance(extra, (list, tuple)):
+        extra_args = [str(value) for value in extra]
+    else:
+        extra_args = []
+
     if start_command is not None and start_command.exists():
+        name = start_command.name.lower()
+        if name.startswith(("python", "pypy")):
+            raise RuntimeError(
+                "[comfyui] start_command ne doit pas pointer vers l'interpréteur "
+                f"Python ({start_command}).\n"
+                "Laisse start_command vide pour utiliser main.py, ou donne un "
+                "script .sh."
+            )
         suffix = start_command.suffix.lower()
         if suffix in {".sh", ".bash"}:
             if os.access(start_command, os.X_OK):
@@ -105,7 +122,11 @@ def comfyui_start_argv(
         if suffix == ".py":
             if python is None:
                 return None, start_command.parent
-            return [str(python), str(start_command)], start_command.parent
+            argv = [str(python), str(start_command)]
+            if host in {"127.0.0.1", "localhost", "::1"}:
+                argv.extend(["--port", str(port), "--disable-auto-launch"])
+            argv.extend(extra_args)
+            return argv, start_command.parent
         if os.access(start_command, os.X_OK):
             return [str(start_command)], start_command.parent
         return None, start_command.parent
@@ -116,7 +137,64 @@ def comfyui_start_argv(
     argv = [str(python), str(main)]
     if host in {"127.0.0.1", "localhost", "::1"}:
         argv.extend(["--port", str(port), "--disable-auto-launch"])
+    argv.extend(extra_args)
     return argv, main.parent
+
+
+def _terminal_command(
+    argv: list[str], cwd: Path, log_path: Path | None
+) -> list[str] | None:
+    """Wrap a command in the desktop's terminal, if one is available."""
+    if IS_WINDOWS:
+        return None
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+
+    command = " ".join(shlex.quote(str(value)) for value in argv)
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        command = (
+            f"set -o pipefail; {command} 2>&1 | tee -a "
+            f"{shlex.quote(str(log_path))}; status=${{PIPESTATUS[0]}}"
+        )
+    else:
+        command = f"{command}; status=$?"
+    script = (
+        f"cd {shlex.quote(str(cwd))} && {command}; "
+        "if [ \"$status\" -ne 0 ] && [ \"$status\" -ne 130 ] && [ \"$status\" -ne 143 ]; then "
+        "echo; echo \"ComfyUI stopped (exit $status). Press Enter to close.\"; "
+        "read -r; fi; exit \"$status\""
+    )
+
+    specs = (
+        ("ptyxis", ["--"]),
+        ("gnome-terminal", ["--"]),
+        ("kgx", ["--"]),
+        ("konsole", ["-e"]),
+        ("xfce4-terminal", ["-x"]),
+        ("xterm", ["-e"]),
+        ("alacritty", ["-e"]),
+        ("kitty", ["--"]),
+        ("wezterm", ["start", "--"]),
+    )
+    for name, arguments in specs:
+        path = shutil.which(name)
+        if path:
+            return [path, *arguments, "bash", "-lc", script]
+
+    path = shutil.which("x-terminal-emulator")
+    if path:
+        real_name = Path(path).resolve().name
+        if real_name in {"ptyxis", "gnome-terminal", "kgx"}:
+            arguments = ["--"]
+        elif real_name == "xfce4-terminal":
+            arguments = ["-x"]
+        elif real_name == "konsole":
+            arguments = ["-e"]
+        else:
+            arguments = ["-e"]
+        return [path, *arguments, "bash", "-lc", script]
+    return None
 
 
 def start_comfyui_process(
@@ -133,6 +211,17 @@ def start_comfyui_process(
             "Impossible de trouver ComfyUI/main.py ou un start_command exécutable.\n"
             "Renseigne [comfyui] root, python et start_command dans config.toml."
         )
+    section = cfg.get("comfyui", {})
+    if bool(section.get("open_console", True)):
+        terminal = _terminal_command(argv, cwd, log_path)
+        if terminal is not None:
+            return subprocess.Popen(
+                terminal,
+                cwd=str(cwd),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
     log = None
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
