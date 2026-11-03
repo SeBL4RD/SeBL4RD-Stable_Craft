@@ -1756,6 +1756,11 @@ class StableCraftApp(tk.Tk):
         error: str | None = None
 
         def add_missing(kind: str, filename: str, note: str = "") -> None:
+            if any(
+                item.get("kind") == kind and item.get("filename") == filename
+                for item in missing
+            ):
+                return
             spec = files.get(kind, {}) if kind in files else {}
             missing.append(
                 {
@@ -1816,6 +1821,26 @@ class StableCraftApp(tk.Tk):
                     "text_encoder": visible_files("text_encoder"),
                     "vae": visible_files("vae"),
                 }
+                if unet.lower().endswith(".gguf"):
+                    try:
+                        comfy_json(endpoint, "/object_info/UnetLoaderGGUF")
+                    except Exception:  # noqa: BLE001
+                        add_missing(
+                            "node",
+                            "ComfyUI-GGUF",
+                            "ComfyUI-GGUF est requis pour charger ce modèle GGUF. "
+                            "Installe le nœud puis redémarre ComfyUI.",
+                        )
+                if clip.lower().endswith(".gguf"):
+                    try:
+                        comfy_json(endpoint, "/object_info/CLIPLoaderGGUF")
+                    except Exception:  # noqa: BLE001
+                        add_missing(
+                            "node",
+                            "ComfyUI-GGUF",
+                            "ComfyUI-GGUF est requis pour charger ce text encoder GGUF. "
+                            "Installe le nœud puis redémarre ComfyUI.",
+                        )
                 if unet not in model_files["unet"]:
                     add_missing("unet", unet)
                 if clip not in model_files["text_encoder"]:

@@ -108,6 +108,16 @@ EN: dict[str, str] = {
     "Gérer les modèles": "Manage models",
     "Gérer": "Manage",
     "ComfyUI": "ComfyUI",
+    "Page GitHub": "GitHub page",
+    "Installer {name} ?": "Install {name}?",
+    "Installer le nœud ComfyUI {name} depuis GitHub ?\n\nSes dépendances Python seront installées dans l'environnement de ComfyUI, puis un redémarrage sera nécessaire.": (
+        "Install the ComfyUI node {name} from GitHub?\n\nIts Python dependencies "
+        "will be installed in ComfyUI's environment, then a restart will be required."
+    ),
+    "Nœud {name} installé. Redémarre ComfyUI.": (
+        "Node {name} installed. Restart ComfyUI."
+    ),
+    "Installation de {name}…": "Installing {name}…",
     "ComfyUI externe": "External ComfyUI",
     "ComfyUI est géré en externe. Redémarre-le depuis Desktop ou son propre lanceur.": (
         "ComfyUI is managed externally. Restart it from Desktop or its own launcher."

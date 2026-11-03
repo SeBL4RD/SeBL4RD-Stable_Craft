@@ -448,7 +448,10 @@ pratiques et des exemples.
 - un fichier déjà dans `models/` est déplacé vers le sous-dossier attendu au lieu
   d'être copié à nouveau ;
 - le nœud **comfyui-krea2edit** est vérifié au démarrage et peut être installé ou mis à
-  jour depuis le gestionnaire.
+  jour depuis le gestionnaire ;
+- **ComfyUI-GGUF** est détecté quand un UNet/text encoder GGUF est sélectionné et peut
+  être installé en un clic **Installer** depuis le gestionnaire (puis redémarrer
+  ComfyUI).
 
 ## Langue
 

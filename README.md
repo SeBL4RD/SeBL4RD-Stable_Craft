@@ -427,7 +427,9 @@ and examples.
 - a file already inside `models/` is moved to the expected subfolder instead of being
   copied again;
 - the **comfyui-krea2edit** node is checked at startup and can be installed or updated
-  from the model manager.
+  from the model manager;
+- **ComfyUI-GGUF** is detected when a GGUF UNet/text encoder is selected and can be
+  installed with one **Install** click from the model manager (then restart ComfyUI).
 
 ### Preview
 

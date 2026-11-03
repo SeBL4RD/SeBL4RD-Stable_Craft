@@ -17,10 +17,12 @@ from platform_support import comfyui_app_dir, comfyui_manageable, open_path
 from models_tools import (
     FOLDER_FOR_KIND,
     KIND_LABELS,
+    NODE_SOURCES,
     comfyui_root,
     ensure_extra_model_paths,
     gguf_architecture,
     human_size,
+    install_custom_node,
     install_krea_node,
     krea_node_status,
     latest_krea_release,
@@ -96,10 +98,12 @@ class ModelManager(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build()
+        self._update_node_visibility()
         self.after(80, self._poll)
         self.app._check_models()
         self.refresh()
-        threading.Thread(target=self._check_node_async, daemon=True).start()
+        if self._is_krea_profile():
+            threading.Thread(target=self._check_node_async, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Layout
@@ -274,6 +278,21 @@ class ModelManager(tk.Toplevel):
     # Rows
     # ------------------------------------------------------------------
 
+    def _is_krea_profile(self) -> bool:
+        return any(
+            str(node).startswith("Krea2")
+            for node in self.profile.get("requires_nodes", [])
+        )
+
+    def _update_node_visibility(self) -> None:
+        if not hasattr(self, "node_frame"):
+            return
+        if self._is_krea_profile():
+            if not self.node_frame.winfo_manager():
+                self.node_frame.pack(fill="x", pady=(0, 8), before=self.rows_frame)
+        else:
+            self.node_frame.pack_forget()
+
     def _verify(self) -> None:
         self.status.config(text=tr("Vérification des modèles…"), fg=YELLOW)
         token = time.time()
@@ -294,6 +313,7 @@ class ModelManager(tk.Toplevel):
         if self._closing:
             return
         self.profile = self.manifest["profiles"].get(self.profile_key, {})
+        self._update_node_visibility()
         for child in self.rows_frame.winfo_children():
             child.destroy()
         self._rows.clear()
@@ -672,12 +692,24 @@ class ModelManager(tk.Toplevel):
         actions = tk.Frame(frame, bg=PANEL)
         actions.pack(side="right", padx=(8, 0), pady=(3, 0))
         if kind == "node":
-            tk.Label(
+            note = str(item.get("note", "")).lower()
+            if filename in NODE_SOURCES:
+                self._button(
+                    actions,
+                    tr("Installer"),
+                    lambda i=item: self._install_generic_node(i),
+                    bg=ACCENT,
+                ).pack(side="left", padx=(5, 0))
+                node_url = str(NODE_SOURCES[filename]["url"])
+            elif "gguf" in filename.lower() or "gguf" in note:
+                node_url = "https://github.com/city96/ComfyUI-GGUF"
+            else:
+                node_url = "https://github.com/lbouaraba/comfyui-krea2edit"
+            self._button(
                 actions,
-                text=tr("Voir le nœud Krea 2 ci-dessus ou mettre à jour ComfyUI."),
-                bg=PANEL,
-                fg=YELLOW,
-                font=("Segoe UI", 8),
+                tr("Page GitHub"),
+                lambda url=node_url: self._open_url(url),
+                bg=PANEL_2,
             ).pack(side="left", padx=(5, 0))
         else:
             self._button(
@@ -1124,6 +1156,36 @@ class ModelManager(tk.Toplevel):
         status = krea_node_status(self.cfg, latest)
         self.queue.put(("node_status", status, latest))
 
+    def _install_generic_node(self, item: dict[str, Any]) -> None:
+        if self.busy:
+            return
+        name = str(item.get("filename", ""))
+        if name not in NODE_SOURCES:
+            return
+        if not messagebox.askyesno(
+            tr("Installer {name} ?", name=name),
+            tr(
+                "Installer le nœud ComfyUI {name} depuis GitHub ?\n\n"
+                "Ses dépendances Python seront installées dans "
+                "l'environnement de ComfyUI, puis un redémarrage sera nécessaire.",
+                name=name,
+            ),
+            parent=self,
+        ):
+            return
+
+        def work(progress: Callable[[int, int], None]) -> str:
+            install_custom_node(self.cfg, name, progress=progress)
+            self._needs_restart = True
+            return tr(
+                "Nœud {name} installé. Redémarre ComfyUI.", name=name
+            )
+
+        self._run_task(
+            tr("Installation de {name}…", name=name),
+            work,
+        )
+
     def _install_node(self) -> None:
         if self.busy:
             return
@@ -1156,6 +1218,11 @@ class ModelManager(tk.Toplevel):
             return tr("Nœud Krea 2 v{version} installé.", version=version)
 
         self._run_task(tr("Installation du nœud Krea 2…"), work, refresh_node=True)
+
+    def _open_url(self, url: str) -> None:
+        import webbrowser  # noqa: PLC0415
+
+        webbrowser.open(url)
 
     def _open_node_release(self, _event: object = None) -> None:
         url = ""
@@ -1366,7 +1433,7 @@ class ModelManager(tk.Toplevel):
                     self.progress.config(mode="determinate", value=0)
                     self.status.config(text=str(item[1]), fg=GREEN)
                     self.app._log(str(item[1]))
-                    if item[2]:
+                    if item[2] and self._is_krea_profile():
                         threading.Thread(target=self._check_node_async, daemon=True).start()
                     self.app._check_models()
                     self.refresh()

@@ -39,6 +39,14 @@ KREA_NODE_REPO = "lbouaraba/comfyui-krea2edit"
 KREA_NODE_DIR = "comfyui-krea2edit"
 KREA_NODE_API = f"https://api.github.com/repos/{KREA_NODE_REPO}/releases/latest"
 
+NODE_SOURCES = {
+    "ComfyUI-GGUF": {
+        "repo": "city96/ComfyUI-GGUF",
+        "folder": "ComfyUI-GGUF",
+        "url": "https://github.com/city96/ComfyUI-GGUF",
+    },
+}
+
 FOLDER_FOR_KIND = {
     "unet": "unet",
     "lora": "loras",
@@ -684,6 +692,74 @@ def install_krea_node(
             archive.unlink()
         except OSError:
             pass
+
+
+def install_custom_node(
+    cfg: dict[str, Any],
+    name: str,
+    progress: Callable[[int, int], None] | None = None,
+) -> str:
+    """Install a small custom node from its GitHub main branch."""
+    spec = NODE_SOURCES.get(name)
+    if spec is None:
+        raise RuntimeError(f"Nœud inconnu : {name}")
+    app_dir = comfyui_app_dir(comfyui_root(cfg))
+    if app_dir is None:
+        raise RuntimeError("Dossier ComfyUI introuvable.")
+    destination = app_dir / "custom_nodes" / str(spec["folder"])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if not destination.exists():
+        repo = str(spec["repo"])
+        zip_url = f"https://github.com/{repo}/archive/refs/heads/main.zip"
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        archive = CACHE_DIR / f"{name}-main.zip"
+        download_file(zip_url, archive, progress=progress)
+        temp_dir = Path(
+            tempfile.mkdtemp(prefix=f"stablecraft-{name}-", dir=str(CACHE_DIR))
+        )
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                zf.extractall(temp_dir)
+            candidates = [p for p in temp_dir.iterdir() if p.is_dir()]
+            root = candidates[0] if candidates else None
+            if root is None or not (
+                (root / "__init__.py").exists() or (root / "nodes.py").exists()
+            ):
+                raise RuntimeError(f"L'archive du nœud {name} est invalide.")
+            shutil.copytree(root, destination)
+        except Exception:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            try:
+                archive.unlink()
+            except OSError:
+                pass
+
+    requirements = destination / "requirements.txt"
+    if requirements.exists():
+        python = comfyui_python(
+            comfyui_root(cfg),
+            str(cfg.get("comfyui", {}).get("python", "") or ""),
+        )
+        if python is None:
+            raise RuntimeError("Python de ComfyUI introuvable pour les dépendances.")
+        if progress is not None:
+            progress(0, 0)
+        result = subprocess.run(
+            [str(python), "-m", "pip", "install", "-r", str(requirements)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            raise RuntimeError(
+                f"Installation des dépendances de {name} impossible : "
+                f"{detail[-1] if detail else result.returncode}"
+            )
+    return str(spec["folder"])
 
 
 def wait_port(host: str, port: int, timeout: float = 1.0) -> bool:
