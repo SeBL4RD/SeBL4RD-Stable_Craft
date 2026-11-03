@@ -147,24 +147,32 @@ def _terminal_command(
     """Wrap a command in the desktop's terminal, if one is available."""
     if IS_WINDOWS:
         return None
+    if log_path is None:
+        return None
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return None
 
+    # Use a real script file: terminal emulators sometimes re-parse their
+    # arguments through a shell, which would expand $PIPESTATUS too early.
+    runtime = log_path.parent.parent / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    script_path = runtime / "comfyui-console.sh"
     command = " ".join(shlex.quote(str(value)) for value in argv)
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        command = (
-            f"set -o pipefail; {command} 2>&1 | tee -a "
-            f"{shlex.quote(str(log_path))}; status=${{PIPESTATUS[0]}}"
-        )
-    else:
-        command = f"{command}; status=$?"
     script = (
-        f"cd {shlex.quote(str(cwd))} && {command}; "
-        "if [ \"$status\" -ne 0 ] && [ \"$status\" -ne 130 ] && [ \"$status\" -ne 143 ]; then "
-        "echo; echo \"ComfyUI stopped (exit $status). Press Enter to close.\"; "
-        "read -r; fi; exit \"$status\""
+        "#!/usr/bin/env bash\n"
+        "set -o pipefail\n"
+        f"cd {shlex.quote(str(cwd))} || exit 1\n"
+        f"{command} 2>&1 | tee -a {shlex.quote(str(log_path))}\n"
+        "status=${PIPESTATUS[0]}\n"
+        "if [ \"$status\" -ne 0 ] && [ \"$status\" -ne 130 ] && [ \"$status\" -ne 143 ]; then\n"
+        "  echo\n"
+        "  echo \"ComfyUI stopped (exit $status). Press Enter to close.\"\n"
+        "  read -r\n"
+        "fi\n"
+        "exit \"$status\"\n"
     )
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o755)
 
     specs = (
         ("ptyxis", ["--"]),
@@ -180,7 +188,7 @@ def _terminal_command(
     for name, arguments in specs:
         path = shutil.which(name)
         if path:
-            return [path, *arguments, "bash", "-lc", script]
+            return [path, *arguments, "bash", str(script_path)]
 
     path = shutil.which("x-terminal-emulator")
     if path:
@@ -193,7 +201,7 @@ def _terminal_command(
             arguments = ["-e"]
         else:
             arguments = ["-e"]
-        return [path, *arguments, "bash", "-lc", script]
+        return [path, *arguments, "bash", str(script_path)]
     return None
 
 
