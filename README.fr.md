@@ -8,7 +8,7 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 
 ![Version](https://img.shields.io/badge/version-0.2.6-3b82f6)
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
-![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-6b7280)
+![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
 
 **Dépôt :** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
@@ -123,8 +123,9 @@ Double-clique sur **`InstallStableCraft.bat`** à la racine du projet.
 
 L'installateur configure **le dossier courant** : il détecte PhotoCraft et ComfyUI,
 crée `user\` et `models\`, écrit `config.toml` si nécessaire et ajoute un raccourci
-**StableCraft** sur votre bureau (et menu demarrer).
-Lancez votre raccourci StableCraft, il lancera ComfyUI, Photocraft et StableCraft.
+**StableCraft** sur votre bureau (et menu démarrer).
+Lance ton raccourci StableCraft : il lancera ComfyUI, PhotoCraft et StableCraft.
+Tu peux aussi double-cliquer sur **`StableCraft.bat`** à la racine du projet.
 
 Ou, en ligne de commande :
 
@@ -153,19 +154,6 @@ bash install.sh
 L'installateur vérifie Python/Tkinter, crée `.venv`, installe
 `prototypes/requirements.txt`, crée `config.toml` si nécessaire et ajoute un raccourci
 applicatif. Il ne télécharge aucun modèle et ne modifie pas ComfyUI.
-
-Équivalent manuel :
-
-```bash
-sudo apt install python3 python3-tk python3-venv      # Debian/Ubuntu
-# sudo dnf install python3 python3-tkinter            # Fedora/RHEL
-# sudo pacman -S python tk                            # Arch
-
-python3 -m venv .venv
-.venv/bin/pip install -r prototypes/requirements.txt
-cp config.example.toml config.toml
-bash StableCraft.sh
-```
 
 Dépendances Linux :
 
@@ -212,7 +200,17 @@ d'entrée `.py`, mais pas vers l'interpréteur Python. `open_console` ouvre le
 terminal du bureau quand une session graphique est disponible ; sinon
 StableCraft écrit dans `user/logs/comfyui.log`.
 
-PhotoCraft sous Linux :
+PhotoCraft sous Linux est détecté automatiquement depuis :
+
+- paquet Debian `.deb`, RPM Fedora/RHEL ou paquet Arch : `/usr/bin/photocraft` ;
+- Snap : `/snap/bin/photocraft` ;
+- exports Flatpak : `ai.storyteller.photocraft` ;
+- AppImage dans `~/Applications`, `~/Downloads`, `~/Desktop`, `~/bin`,
+  `~/.local/bin` ou `~` ;
+- tarball/manuel : `/usr/local/bin`, `~/.local/bin`, `~/bin`, `/opt/photocraft` ;
+- fichiers `.desktop` installés.
+
+Renseigne `executable` seulement si PhotoCraft est installé ailleurs :
 
 ```toml
 [photocraft]
@@ -229,15 +227,10 @@ Avec Comfy Desktop, utilise son dossier de modèles partagé, ou renseigne
 `extra_model_paths.yaml`. Si ta version de Desktop ignore ce fichier, ajoute le dossier
 `models/` de StableCraft dans les réglages de Desktop.
 
-### Option 3 — manuel (Windows)
+### Configuration
 
-```powershell
-Copy-Item config.example.toml config.toml
-.\StableCraft.bat
-```
-
-Le lanceur a besoin de `config.toml` ; le plus simple est de copier l'exemple. Les
-chemins peuvent rester vides si l'auto-détection suffit. Les chemins importants :
+L'installateur crée `config.toml` pour toi. Les chemins peuvent rester vides si
+l'auto-détection suffit. Les chemins importants :
 
 ```toml
 [photocraft]

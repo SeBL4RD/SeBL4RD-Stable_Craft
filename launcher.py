@@ -17,6 +17,7 @@ from __future__ import annotations
 import ctypes
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -127,6 +128,56 @@ def load_config() -> dict[str, Any] | None:
         return None
 
 
+def _photocraft_from_desktop_files() -> Path | None:
+    """Resolve PhotoCraft from installed .desktop launchers."""
+    home = Path.home()
+    roots = (
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path("/var/lib/snapd/desktop/applications"),
+        Path("/var/lib/flatpak/exports/share/applications"),
+        home / ".local" / "share" / "applications",
+        home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+    )
+    for root in roots:
+        if not root.exists():
+            continue
+        for desktop in sorted(root.glob("photocraft*.desktop")):
+            try:
+                lines = desktop.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                if not line.startswith("Exec="):
+                    continue
+                try:
+                    parts = shlex.split(line[5:].strip())
+                except ValueError:
+                    continue
+                if parts and parts[0] == "env":
+                    parts = parts[1:]
+                    while parts and "=" in parts[0]:
+                        parts = parts[1:]
+                if not parts:
+                    continue
+                candidate = parts[0]
+                if Path(candidate).name in {
+                    "flatpak",
+                    "snap",
+                    "sh",
+                    "bash",
+                    "env",
+                    "gtk-launch",
+                }:
+                    continue
+                if Path(candidate).is_absolute() and Path(candidate).exists():
+                    return Path(candidate)
+                found = shutil.which(candidate)
+                if found:
+                    return Path(found)
+    return None
+
+
 def find_photocraft(cfg: dict[str, Any]) -> tuple[Path | None, str | None]:
     configured = str(cfg.get("photocraft", {}).get("executable", "") or "")
     if configured:
@@ -141,20 +192,46 @@ def find_photocraft(cfg: dict[str, Any]) -> tuple[Path | None, str | None]:
             return Path(found), None
         home = Path.home()
         candidates = [
-            home / ".local" / "bin" / "photocraft",
+            # Debian .deb, Fedora/RHEL .rpm, Arch package and tarball.
             Path("/usr/bin/photocraft"),
             Path("/usr/local/bin/photocraft"),
+            # Snap.
+            Path("/snap/bin/photocraft"),
+            # Flatpak (system and user).
+            Path("/var/lib/flatpak/exports/bin/ai.storyteller.photocraft"),
+            home
+            / ".local"
+            / "share"
+            / "flatpak"
+            / "exports"
+            / "bin"
+            / "ai.storyteller.photocraft",
+            # Local tarball / manual install.
+            home / ".local" / "bin" / "photocraft",
+            home / "bin" / "photocraft",
             Path("/opt/photocraft/photocraft"),
+            Path("/opt/photocraft/bin/photocraft"),
+            Path("/usr/lib/photocraft/photocraft"),
         ]
         for candidate in candidates:
             if candidate.exists():
                 return candidate, None
+        desktop = _photocraft_from_desktop_files()
+        if desktop is not None:
+            return desktop, None
         for pattern in (
             "photocraft-*-linux-*.AppImage",
             "PhotoCraft*.AppImage",
             "photocraft*.AppImage",
         ):
-            for base in (home / "Applications", home / "Downloads", home):
+            for base in (
+                home / "Applications",
+                home / "Downloads",
+                home / "Desktop",
+                home / "bin",
+                home / ".local" / "bin",
+                home,
+            ):
                 if not base.exists():
                     continue
                 for found_path in base.glob(pattern):
@@ -678,7 +755,10 @@ def main() -> int:
             str(automation),
         ]
         try:
-            subprocess.Popen(args, cwd=str(photocraft.parent))
+            workdir = (
+                photocraft.parent if os.name == "nt" else Path.home()
+            )
+            subprocess.Popen(args, cwd=str(workdir))
         except Exception as exc:  # noqa: BLE001
             show_error("StableCraft — PhotoCraft", f"Impossible de lancer PhotoCraft :\n{exc}")
             return 1

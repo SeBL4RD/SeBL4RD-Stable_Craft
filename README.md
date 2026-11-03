@@ -8,7 +8,7 @@ on your own GPU, with ComfyUI as the generation engine.
 
 ![Version](https://img.shields.io/badge/version-0.2.6-3b82f6)
 ![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
-![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20Linux%20x64-6b7280)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![License](https://img.shields.io/badge/license-MIT-8b5cf6)
 
 **Repository:** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
@@ -125,6 +125,9 @@ creates `user\` and `models\`, writes `config.toml` when needed and adds a
 **StableCraft** shortcut. It does not copy anything to AppData or another folder, and
 does not download any model.
 
+Once installed, double-click **`StableCraft.bat`** at the repository root (or the
+**StableCraft** shortcut) to launch it.
+
 Command line:
 
 ```powershell
@@ -151,19 +154,6 @@ bash install.sh
 The installer checks Python/Tkinter, creates `.venv`, installs
 `prototypes/requirements.txt`, creates `config.toml` if needed, and adds an
 application shortcut. It does **not** download models or modify ComfyUI.
-
-Manual equivalent:
-
-```bash
-sudo apt install python3 python3-tk python3-venv      # Debian/Ubuntu
-# sudo dnf install python3 python3-tkinter            # Fedora/RHEL
-# sudo pacman -S python tk                            # Arch
-
-python3 -m venv .venv
-.venv/bin/pip install -r prototypes/requirements.txt
-cp config.example.toml config.toml
-bash StableCraft.sh
-```
 
 Linux dependencies:
 
@@ -209,7 +199,17 @@ Python interpreter itself. `open_console` opens the desktop terminal when a
 graphical session is available; otherwise StableCraft writes
 `user/logs/comfyui.log`.
 
-PhotoCraft on Linux:
+PhotoCraft on Linux is detected automatically from:
+
+- Debian `.deb`, Fedora/RHEL `.rpm`, Arch package: `/usr/bin/photocraft` ;
+- Snap: `/snap/bin/photocraft` ;
+- Flatpak exports: `ai.storyteller.photocraft` ;
+- AppImage in `~/Applications`, `~/Downloads`, `~/Desktop`, `~/bin`,
+  `~/.local/bin` or `~` ;
+- tarball/manual: `/usr/local/bin`, `~/.local/bin`, `~/bin`, `/opt/photocraft` ;
+- installed `.desktop` launchers.
+
+Set `executable` only when PhotoCraft is somewhere else:
 
 ```toml
 [photocraft]
@@ -225,15 +225,10 @@ When using Comfy Desktop, use its shared models folder, or set `[comfyui] root` 
 instance folder so StableCraft can add `extra_model_paths.yaml`. If Desktop ignores
 that file on your version, add StableCraft's `models/` folder in Desktop's settings.
 
-### Option 3 — manual (Windows)
+### Configuration
 
-```powershell
-Copy-Item config.example.toml config.toml
-.\StableCraft.bat
-```
-
-The launcher needs `config.toml`; the simplest path is to copy the example. Paths can
-stay empty when auto-detection is enough. The important paths are:
+The installer creates `config.toml` for you. Paths can stay empty when auto-detection
+is enough. The important paths are:
 
 ```toml
 [photocraft]
