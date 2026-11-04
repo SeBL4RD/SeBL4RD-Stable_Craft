@@ -8,7 +8,7 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 
 ![Version](https://img.shields.io/badge/version-0.2.6-3b82f6)
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
-![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64-6b7280)
+![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
 
 **Dépôt :** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
@@ -53,17 +53,22 @@ numéro de version figé.
 
 ### Matériel
 
-- Windows 10/11 **x64**.
+- Windows 10/11 **x64**, ou Linux **x86_64**.
 - GPU **NVIDIA** seulement, pour le moment.
 - **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
 - En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
+- Sous Linux, AMD/ROCm peut fonctionner via ComfyUI mais n'est pas validé par
+  StableCraft.
 
 ### Logiciel
 
 - **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
-- **ComfyUI portable** (avec `python_embeded\python.exe`), récent : `0.42.1+`
-  pour Qwen Image 2.1 et les nœuds Krea 2.
-- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut).
+- **ComfyUI portable** sous Windows (avec `python_embeded\python.exe`), récent :
+  `0.42.1+` pour Qwen Image 2.1 et les nœuds Krea 2.
+- Sous Linux, **ComfyUI** via Comfy Desktop, une installation manuelle en venv, ou
+  `comfy-cli standalone`. Il n'existe pas de `python_embeded` Linux officiel.
+- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut sous Windows ;
+  Linux fournit Tkinter dans un paquet séparé).
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
@@ -75,13 +80,15 @@ numéro de version figé.
 ### Modèles
 
 Les poids ne sont **pas** fournis. Ils doivent être visibles par ComfyUI.
+StableCraft peut localiser ou télécharger les fichiers manquants à la demande, avec
+confirmation explicite.
 
 | Profil | UNet | Text encoder | VAE | Steps / CFG |
 |---|---|---|---|---|
 | **FLUX.3 Klein** (défaut) | `flux-3-image-klein-Q8_0.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `flux2_vae.safetensors` | 16 / 1.0 |
 | **FLUX.2 Klein 9B** | `flux-2-klein-Distilled-9b-Q8_0.gguf` | `Qwen3-8B-Q4_K_M.gguf` | `flux2_vae.safetensors` | 4 / 1.0 |
 | **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
-| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
+| **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 disponibles) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (ou Q8_0) | `qwen3vl_8b_w4a8.safetensors` (ou INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
 
 Notes :
@@ -97,7 +104,7 @@ Notes :
   text encoder **Qwen3-VL-8B**, différents de Krea 2. Le modèle GGUF est proposé en
   Q4_K_M et Q8_0. Le text encoder officiel utilise **W4A8** par défaut
   (`qwen3vl_8b_w4a8.safetensors`, 6,3 Go) au lieu de l'int8 (9,35 Go) : même vision
-  encoder, support W4A8 natif dans ComfyUI, environ 3 Go économisés. Choisis **INT8**
+  encoder, support W4A8 natif dans ComfyUI, environ 3 Go économisés. Choisissez **INT8**
   dans le menu de téléchargement pour une fidélité maximale ;
 - le GGUF Qwen 2.1 doit contenir la métadonnée d'architecture `qwen_image` attendue par
   `UnetLoaderGGUF`. Les fichiers du dépôt **Unsloth** n'en ont pas et ne sont pas
@@ -110,16 +117,21 @@ Notes :
 - les licences des modèles s'appliquent (FLUX Kommunity, Krea Community, Qwen Research,
   etc.), séparément de la licence MIT du code.
 
+---
+
 ## Installation
 
-### Option 1 — installateur Windows (recommandé)
+StableCraft s'exécute depuis le dossier du projet.
 
-Double-clique sur **`InstallStableCraft.bat`** à la racine du projet.
+### Installation Windows
+
+Double-cliquez sur **`InstallStableCraft.bat`** à la racine du projet.
 
 L'installateur configure **le dossier courant** : il détecte PhotoCraft et ComfyUI,
 crée `user\` et `models\`, écrit `config.toml` si nécessaire et ajoute un raccourci
-**StableCraft** sur votre bureau (et menu demarrer).
-Lancez votre raccourci StableCraft, il lancera ComfyUI, Photocraft et StableCraft.
+**StableCraft** sur votre bureau (et menu démarrer).
+Lancez votre raccourci StableCraft : il lancera ComfyUI, PhotoCraft et StableCraft.
+Vous pouvez aussi double-cliquer sur **`StableCraft.bat`** à la racine du projet.
 
 Ou, en ligne de commande :
 
@@ -127,7 +139,7 @@ Ou, en ligne de commande :
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1
 ```
 
-Si ComfyUI utilise un autre port, passe `-ComfyEndpoint` ou modifie
+Si ComfyUI utilise un autre port, passez `-ComfyEndpoint` ou modifiez
 `[comfyui] endpoint` dans `config.toml` après l'installation :
 
 ```powershell
@@ -135,15 +147,104 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
   -ComfyEndpoint "http://127.0.0.1:12452"
 ```
 
-### Option 2 — manuel
+### Installation Linux
 
-```powershell
-Copy-Item config.example.toml config.toml
-.\StableCraft.bat
+Debian/Ubuntu, Fedora/RHEL et Arch sont pris en charge. Sous Linux, StableCraft utilise
+un **venv local**. Python 3.11+ et Tkinter sont obligatoires ; les distributions plus
+anciennes ne sont volontairement pas prises en charge.
+
+```bash
+bash install.sh
 ```
 
-Le lanceur a besoin de `config.toml` ; le plus simple est de copier l'exemple. Les
-chemins peuvent rester vides si l'auto-détection suffit. Les chemins importants :
+L'installateur installe les paquets système manquants (Python, Tkinter, venv),
+crée `.venv`, installe `prototypes/requirements.txt`, crée `config.toml` si
+nécessaire et ajoute un raccourci applicatif. Il demande l'autorisation avant
+d'utiliser `sudo` ; utilisez `bash install.sh --yes` pour une installation sans
+confirmation. Il ne télécharge aucun modèle et ne modifie pas ComfyUI.
+
+Dépendances Linux (installées automatiquement si absentes) :
+
+| Distribution | Paquets |
+|---|---|
+| Debian / Ubuntu / Mint | `python3 python3-tk python3-venv` |
+| Fedora / RHEL / Rocky / Alma | `python3 python3-tkinter` |
+| Arch / Manjaro | `python tk` |
+
+Python **3.11+** est obligatoire car StableCraft utilise `tomllib`. Cela exclut
+Ubuntu 22.04 (Python 3.10) et RHEL 9 (Python 3.9) sans installation d'un Python plus
+récent.
+
+> **Fedora 45+ (Python 3.15) :** StableCraft s'installe et fonctionne avec Python
+> 3.15. Les dépendances de ComfyUI n'ont pas encore toutes de wheels Python 3.15
+> (`sentencepiece`, `kornia-rs`) ; utilisez le `python3.13` (ou `python3.14`) de
+> Fedora pour le venv de ComfyUI.
+
+Sous Linux, ComfyUI est généralement géré en externe (Comfy Desktop ou son propre
+terminal). `manage = false` est la valeur par défaut sous Linux, car ComfyUI peut être
+installé de plusieurs façons (Desktop, comfy-cli, systemd, venv manuel) ; StableCraft ne
+devine pas quelle instance démarrer. Configurez `config.toml` comme ceci :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = false
+```
+
+Puis démarrez Comfy Desktop/ComfyUI vous-même. Si StableCraft doit démarrer ComfyUI,
+utilisez `manage = true` et pointez l'installation :
+
+```toml
+[comfyui]
+endpoint = "http://127.0.0.1:8188"
+manage = true
+root = "/home/seb/ComfyUI-Installs/ComfyUI"
+python = "/home/seb/ComfyUI-Installs/ComfyUI/.venv/bin/python"
+# Optionnel ; sinon <root>/ComfyUI/main.py ou <root>/main.py est utilisé.
+# Ne mettez pas le binaire Python ici ; utilisez un script .sh si nécessaire.
+start_command = ""
+# Ouvrir un terminal visible pour ComfyUI (sinon sortie dans le log).
+open_console = true
+# Arguments supplémentaires pour main.py. Sur une VM sans CUDA :
+# extra_args = ["--cpu"]
+extra_args = []
+```
+
+`start_command` doit rester vide, pointer vers un script shell ou un point
+d'entrée `.py`, mais pas vers l'interpréteur Python. `open_console` ouvre le
+terminal du bureau quand une session graphique est disponible ; sinon
+StableCraft écrit dans `user/logs/comfyui.log`.
+
+PhotoCraft sous Linux est détecté automatiquement depuis :
+
+- paquet Debian `.deb`, RPM Fedora/RHEL ou paquet Arch : `/usr/bin/photocraft` ;
+- Snap : `/snap/bin/photocraft` ;
+- exports Flatpak : `ai.storyteller.photocraft` ;
+- AppImage dans `~/Applications`, `~/Downloads`, `~/Desktop`, `~/bin`,
+  `~/.local/bin` ou `~` ;
+- tarball/manuel : `/usr/local/bin`, `~/.local/bin`, `~/bin`, `/opt/photocraft` ;
+- fichiers `.desktop` installés.
+
+Renseignez `executable` seulement si PhotoCraft est installé ailleurs :
+
+```toml
+[photocraft]
+executable = "/usr/bin/photocraft"
+control_port = 7990
+```
+
+L'AppImage, le `.deb`, le `.rpm`, le paquet Arch et le tarball fonctionnent. Préférez
+AppImage, `.deb`, `.rpm` ou tarball au Flatpak : le sandbox Flatpak peut bloquer
+l'accès au dossier `automation_root` de StableCraft.
+
+Si ComfyUI ne voit pas les modèles téléchargés par StableCraft, renseignez le
+dossier d'installation dans `[comfyui] root` : StableCraft y ajoutera
+`extra_model_paths.yaml`.
+
+### Configuration
+
+L'installateur crée `config.toml` pour vous. Les chemins peuvent rester vides si
+l'auto-détection suffit. Les chemins importants :
 
 ```toml
 [photocraft]
@@ -156,48 +257,56 @@ root = "F:/ComfyUI_windows_portable"
 python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 ```
 
-Le port de contrôle par défaut est **7990**. Le port 7878 tombe dans une plage de
-ports exclue par Windows sur certaines machines, ce qui fait échouer le control
-channel de PhotoCraft avec une erreur de permissions d'accès.
+Le port de contrôle utilisé par StableCraft est par défaut **7990**.
 
 L'endpoint ComfyUI par défaut est **http://127.0.0.1:8188**, le port par défaut de
-ComfyUI. Si ton ComfyUI écoute sur un autre port, change `endpoint` :
+ComfyUI. Si votre ComfyUI écoute sur un autre port, changez `endpoint` :
 
 ```toml
 [comfyui]
 endpoint = "http://127.0.0.1:12452"
 ```
 
-Quand StableCraft démarre ComfyUI, il ajoute `--port <port de l'endpoint>` au batch
-`start_command` si celui-ci ne contient pas déjà un `--port`. Si le batch en contient
-un, garde les deux ports identiques ; StableCraft écrit un avertissement dans le
-journal en cas de différence.
+Sous Windows, quand StableCraft démarre ComfyUI, il ajoute
+`--port <port de l'endpoint>` au batch `start_command` si celui-ci ne contient pas
+déjà un `--port`. Si le batch en contient un, gardez les deux ports identiques ;
+StableCraft écrit un avertissement dans le journal en cas de différence. Sous Linux,
+laissez `start_command` vide : StableCraft lance `main.py` et ajoute `--port`,
+`--disable-auto-launch` et `extra_args`.
 
-Au lancement, `StableCraft.bat` :
+Au lancement, le lanceur :
 
 1. vérifie les chemins ;
-2. démarre ComfyUI si nécessaire, **sans ouvrir le navigateur** ;
+2. démarre ComfyUI si nécessaire et si `[comfyui] manage = true`, **sans ouvrir le
+   navigateur** ;
 3. démarre PhotoCraft avec le control channel si nécessaire ;
 4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
 5. ouvre l'interface.
 
-### Lancer le batch
+### Lancer l'application
 
-`StableCraft.bat` est un fichier batch Windows. Double-clique dessus, ou lance-le
+Windows : `StableCraft.bat` est un fichier batch. Double-cliquez dessus, ou lancez-le
 avec :
 
 - **cmd.exe** : `StableCraft.bat`
 - **PowerShell** : `.\StableCraft.bat`
 - **Git Bash / MSYS** : `cmd //c StableCraft.bat`
 
-Ce n'est pas un script Linux/WSL. Le batch utilise `py -3` s'il est disponible,
-sinon `python` ; Python **3.11+** et **Tkinter** sont requis. Si aucun ne fonctionne,
-il affiche les instructions d'installation au lieu de se fermer sans explication.
+Le batch utilise `py -3` s'il est disponible, sinon `python` ; Python **3.11+** et
+**Tkinter** sont requis. Si aucun ne fonctionne, il affiche les instructions
+d'installation au lieu de se fermer sans explication.
 
-Si la fenêtre se ferme immédiatement, lance le batch depuis cmd.exe ou PowerShell
-pour lire le message, puis consulte `user\logs\launcher.log`. Utilise l'installateur
-python.org (pas l'alias du Microsoft Store) et coche « Add python.exe to PATH ». Si
-Windows a bloqué un `.bat` téléchargé, ouvre ses Propriétés et clique **Débloquer**.
+Linux :
+
+```bash
+./StableCraft.sh
+# ou : bash StableCraft.sh
+```
+
+Le script shell utilise `.venv/bin/python` s'il existe.
+
+En cas de crash, consultez les journaux dans `user\logs\` (`launcher.log`, `ui.log`,
+`comfyui.log`).
 
 Si un chemin obligatoire manque, un message clair s'affiche. Les modèles manquants ne
 bloquent pas l'installation : l'UI les signale et **Générer** ouvre le gestionnaire de
@@ -205,19 +314,16 @@ modèles avec les actions **Localiser** et **Télécharger**.
 
 ## Utilisation
 
-1. Ouvre une image dans PhotoCraft.
-2. Fais un **lasso** autour de la zone à modifier.
-3. Dans StableCraft : choisis le **mode** (EDIT par défaut, ou T2I), le profil,
-   écris le prompt, puis clique **Générer**.
+1. Ouvrez une image dans PhotoCraft.
+2. Faites un **lasso** autour de la zone à modifier.
+3. Dans StableCraft : choisissez le **mode** (EDIT par défaut, ou T2I), le profil,
+   écrivez le prompt, puis cliquez **Générer**.
 4. Le résultat est ajouté comme **calque StableCraft** avec un masque.
 5. La galerie du calque apparaît sous le prompt.
 
 En **T2I**, aucune image de scène n'est envoyée : le prompt génère une image au format
 du crop (sélection + contexte), puis PhotoCraft la masque avec la sélection. Une
-sélection rectangulaire donne un meilleur résultat qu'un lasso irrégulier. Le `base.png`
-de la session reste l'image d'origine : repasser en EDIT sur le même calque utilise
-toujours cette scène, jamais l'image T2I précédente. Pour repartir de l'image T2I comme
-nouvelle scène, refais un lasso.
+sélection rectangulaire donne un meilleur résultat qu'un lasso irrégulier.
 
 ### Sélection, calques et projets
 
@@ -250,22 +356,23 @@ nouvelle scène, refais un lasso.
 ### Régénérer et galerie
 
 - Même sélection → **Régénérer** met à jour le **même calque** et ajoute une vignette.
-- Chaque génération repart du `base.png` figé au moment du lasso, jamais du composite
-  avec les générations précédentes.
-- Clique sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
-- Sélection perdue → sélectionne le calque `StableCraft [id]`, puis **Régénérer**.
+- Cliquez sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
+- Sélection perdue → sélectionnez le calque `StableCraft [id]`, puis **Régénérer**.
 - Nouvelle sélection → nouvelle galerie et nouveau calque.
+- Dupliquer un calque `StableCraft [id]` dans PhotoCraft crée une session
+  indépendante pour le clone à sa prochaine génération : le prompt, les réglages et
+  l'historique du clone ne modifient plus le calque d'origine.
 
 ### Image de référence
 
-- coche **Utiliser une image de référence** ;
-- clique sur la vignette ou dépose une image ;
-- la référence est propre au calque et se recharge quand tu reviens dessus ;
+- cochez **Utiliser une image de référence** ;
+- cliquez sur la vignette ou déposez une image ;
+- la référence est propre au calque et se recharge quand vous revenez dessus ;
 - compatible **Krea 2**, **FLUX.2 Klein 9B**, **FLUX.3 Klein** et **Qwen Image 2.1** ;
 - en **EDIT**, le modèle reçoit **image 1 = scène** et **image 2 = référence** ;
 - en **T2I**, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence
   comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT ;
-- décris dans le prompt ce que tu prends de la référence.
+- décrivez dans le prompt ce que vous prenez de la référence.
 
 Exemple :
 
@@ -277,7 +384,7 @@ pratiques et des exemples.
 
 ### LoRA
 
-- coche **Activer les LoRA** dans la fenêtre principale ; **Gérer les LoRA…** ouvre le
+- cochez **Activer les LoRA** dans la fenêtre principale ; **Gérer les LoRA…** ouvre le
   gestionnaire ;
 - jusqu'à **10 LoRA par profil**, chacun avec sa case activer/désactiver et une force de
   **0.00 à 1.00** ;
@@ -287,7 +394,7 @@ pratiques et des exemples.
   (`http://<comfyui>/loras`). StableCraft ne copie jamais un LoRA : il utilise
   uniquement les fichiers déjà visibles par ComfyUI (`models/loras` ou
   `extra_model_paths.yaml`) ;
-- utilise **Ouvrir la page LoRA Manager** pour ajouter ou organiser tes fichiers, puis
+- utilisez **Ouvrir la page LoRA Manager** pour ajouter ou organiser vos fichiers, puis
   **Actualiser** ;
 - le LoRA Manager sert des aperçus WebP ; StableCraft les convertit en petits PNG dans
   `user/cache/lora_previews/` avec le Python de ComfyUI (Pillow). Aucun fichier de
@@ -295,49 +402,18 @@ pratiques et des exemples.
 - le gestionnaire avertit quand l'architecture d'un LoRA ne correspond pas au profil,
   sans bloquer ;
 - la sélection est enregistrée par profil et copiée dans le `session.json` de chaque
-  calque, donc un ancien calque recharge ses propres LoRA ;
-- seuls les LoRA « model-only » sont appliqués (`LoraLoaderModelOnly`). Les poids de
-  text encoder sont ignorés ;
-- Krea 2 General Edit applique d'abord le LoRA du profil en EDIT, puis la pile
-  utilisateur ; en T2I, seule la pile utilisateur est appliquée.
+  calque, donc un ancien calque recharge ses propres LoRA.
 
 ### Aperçu
 
 - **Document** : le composite PhotoCraft après application.
 - **Crop** : le résultat généré à la taille du crop, avant masque.
 
-### Modèles et nœud custom
-
-- **Gérer**, à droite du profil, ouvre le gestionnaire à tout moment, même quand tous
-  les fichiers sont présents. Les lignes **Fichiers du profil** montrent l'UNet, le
-  text encoder et le VAE courants, et permettent de passer à un fichier déjà visible
-  par ComfyUI ou d'en choisir un avec **Parcourir…** ;
-- les fichiers manquants sont listés avec **Localiser** (utiliser un fichier existant)
-  et **Télécharger** (taille, source et confirmation) ;
-- **Localiser** accepte n'importe quel nom de fichier supporté (**GGUF ou
-  safetensors**) : il n'a pas besoin de correspondre au nom attendu dans
-  `models.json`. La boîte de dialogue s'ouvre dans le dossier `models` de ComfyUI et
-  conserve le nom réel du fichier choisi. Un fichier
-  déjà présent dans un dossier de modèles de ComfyUI est utilisé sur place, sans être
-  recopié dans le projet. Choisis un UNet/modèle de diffusion seul, pas un checkpoint
-  tout-en-un ;
-- les choix de quantification combinent les entrées **Q4_K_M**, **Q6_K**, **Q8_0**,
-  **BF16** de `models.json` avec les UNet de la même famille déjà visibles par ComfyUI :
-  un fichier Q8 téléchargé hors de StableCraft reste donc sélectionnable ;
-- les fichiers téléchargés vont dans `models/` et sont ajoutés à
-  `extra_model_paths.yaml` de ComfyUI ;
-- après un fichier localisé ou téléchargé, le gestionnaire propose de redémarrer
-  ComfyUI automatiquement pour qu'il devienne visible ;
-- un fichier déjà dans `models/` est déplacé vers le sous-dossier attendu au lieu
-  d'être copié à nouveau ;
-- le nœud **comfyui-krea2edit** est vérifié au démarrage et peut être installé ou mis à
-  jour depuis le gestionnaire.
-
 ## Langue
 
 L'UI prend en charge **l'anglais et le français**. L'anglais est la langue par défaut
-d'une nouvelle installation. Utilise le sélecteur de langue dans l'en-tête ; le choix
-est enregistré dans `config.toml` (`[app] language`). Redémarre l'UI pour l'appliquer.
+d'une nouvelle installation. Utilisez le sélecteur de langue dans l'en-tête ; le choix
+est enregistré dans `config.toml` (`[app] language`). Redémarrez l'UI pour l'appliquer.
 
 La version anglaise de ce README est dans [`README.md`](README.md).
 
@@ -345,31 +421,17 @@ La version anglaise de ce README est dans [`README.md`](README.md).
 
 StableCraft vérifie la dernière Release GitHub au démarrage. Si une version plus
 récente existe, une ligne cliquable apparaît dans l'en-tête et ouvre la page Releases.
-Aucun fichier n'est remplacé pendant que l'application tourne : `config.toml`, `user/`
-et `models/` sont toujours préservés, et la mise à jour reste une action explicite.
+Vous pouvez également `git pull` le projet pour mettre à jour.
 
 ## Stockage
 
-Rien n'est stocké dans AppData.
-
-```text
-<dossier StableCraft>/
-  user/
-    control.token
-    sessions/<id>/       # base, masque, référence, galerie
-    logs/
-    model_selection.json # quantification choisie par profil
-    lora_settings.json   # case maîtresse + pile de LoRA par profil
-    cache/lora_previews/ # miniatures PNG des LoRA (pas les modèles)
-  models/                # modèles locaux, aucun poids versionné
-```
-
-Les chemins sont configurables dans `config.toml` (`[app]`, `[photocraft]`,
-`[comfyui]`, `[models]`).
+StableCraft stocke ses données dans `user/` et les modèles dans `models/`, à côté
+du projet.
 
 ## Crédits
 
-- **Stable.art** — inspiration pour l'expérience lasso + prompt.
+- **Stable.art** — inspiration pour l'expérience lasso + prompt :
+  [isekaidev/stable.art](https://github.com/isekaidev/stable.art).
 - **PhotoCraft** — application hôte et control channel :
   [storytold/photocraft](https://github.com/storytold/photocraft).
 - **ComfyUI** — moteur de génération :

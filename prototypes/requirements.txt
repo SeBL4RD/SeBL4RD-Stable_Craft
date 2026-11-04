@@ -1,4 +1,6 @@
-# The bridge runs with ComfyUI's embedded Python (Pillow and requests are already
-# installed there). For a system Python 3.11+:
+# StableCraft's UI runs with the system Python + Tkinter. The bridge and LoRA
+# previews need requests and Pillow. On Linux, psutil is used by the launcher
+# and model manager to stop the ComfyUI process listening on the endpoint port.
 requests>=2.31
 Pillow>=10.0
+psutil>=5.9; sys_platform != "win32"

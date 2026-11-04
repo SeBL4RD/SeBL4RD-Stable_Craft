@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -68,6 +69,18 @@ class SessionStore:
         temporary = path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         temporary.replace(path)
+
+    def clone_directory(self, source_id: str, destination_id: str) -> Path:
+        """Copy a whole session (metadata, base/mask and generations)."""
+        source = self.directory(source_id)
+        destination = self.directory(destination_id)
+        if not source.exists():
+            raise FileNotFoundError(f"session {source_id!r} introuvable : {source}")
+        if destination.exists():
+            raise FileExistsError(f"session {destination_id!r} existe déjà")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, destination)
+        return destination
 
     def generation_dir(self, data: dict[str, Any], index: int) -> Path:
         return self.directory(str(data["id"])) / "generations" / str(index)

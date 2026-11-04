@@ -107,12 +107,54 @@ EN: dict[str, str] = {
     " · ~{vram} Go VRAM": " · ~{vram} GB VRAM",
     "Gérer les modèles": "Manage models",
     "Gérer": "Manage",
+    "ComfyUI": "ComfyUI",
+    "Page GitHub": "GitHub page",
+    "Installer {name} ?": "Install {name}?",
+    "Installer le nœud ComfyUI {name} depuis GitHub ?\n\nSes dépendances Python seront installées dans l'environnement de ComfyUI, puis un redémarrage sera nécessaire.": (
+        "Install the ComfyUI node {name} from GitHub?\n\nIts Python dependencies "
+        "will be installed in ComfyUI's environment, then a restart will be required."
+    ),
+    "Nœud {name} installé. Redémarre ComfyUI.": (
+        "Node {name} installed. Restart ComfyUI."
+    ),
+    "Installation de {name}…": "Installing {name}…",
+    "ComfyUI externe": "External ComfyUI",
+    "ComfyUI est géré en externe. Redémarre-le depuis Desktop ou son propre lanceur.": (
+        "ComfyUI is managed externally. Restart it from Desktop or its own launcher."
+    ),
+    "Duplication de session impossible : {error}": (
+        "Could not separate the duplicated session: {error}"
+    ),
+    "Calque dupliqué séparé : {old} → {new}": (
+        "Duplicated layer separated: {old} → {new}"
+    ),
+    "ComfyUI est géré en externe. Redémarre-le depuis Desktop ou son propre lanceur pour voir les nouveaux fichiers ou nœuds.": (
+        "ComfyUI is managed externally. Restart it from Desktop or its own launcher "
+        "to see the new files or nodes."
+    ),
+    "Python du venv StableCraft introuvable. Crée-le avec install.sh ou installe requests et Pillow.": (
+        "StableCraft venv Python not found. Create it with install.sh or install "
+        "requests and Pillow."
+    ),
     "Fichiers du profil": "Profile files",
     "Appliquer": "Apply",
     "Parcourir…": "Browse…",
+    "Choisir un fichier…": "Choose a file…",
     "Modèle sélectionné : {filename}": "Selected model: {filename}",
     "ComfyUI hors ligne : Parcourir… permet de choisir un fichier local.": (
         "ComfyUI offline: Browse… lets you pick a local file."
+    ),
+    "ComfyUI hors ligne : Choisir un fichier… permet de sélectionner un fichier local.": (
+        "ComfyUI offline: Choose a file… lets you select a local file."
+    ),
+    "{count} fichier(s) téléchargé(s). Redémarre ComfyUI pour qu'il les voie.": (
+        "{count} file(s) downloaded. Restart ComfyUI so it can see them."
+    ),
+    "{label} · {filename} — téléchargé, redémarrage requis": (
+        "{label} · {filename} — downloaded, restart required"
+    ),
+    "Redémarre ComfyUI pour que ce fichier devienne visible.": (
+        "Restart ComfyUI so this file becomes visible."
     ),
     "Régénérer": "Regenerate",
     "Cette combinaison existe déjà (#{index}). Mets le seed à -1 ou change le prompt.": (

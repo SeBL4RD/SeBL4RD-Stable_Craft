@@ -31,6 +31,7 @@ import json
 import math
 import os
 import random
+import shutil
 import sys
 import time
 import tomllib
@@ -124,7 +125,11 @@ def comfy_temp_dir(cfg: dict[str, Any]) -> Path | None:
     root = str(section.get("root", "") or os.environ.get("STABLECRAFT_COMFY_ROOT", "") or "")
     if not root:
         return None
-    return as_path(root) / "ComfyUI" / "temp"
+    base = as_path(root)
+    nested = base / "ComfyUI"
+    if (nested / "main.py").exists() or (nested / "temp").exists():
+        return nested / "temp"
+    return base / "temp"
 
 
 # ---------------------------------------------------------------------------
@@ -1146,28 +1151,102 @@ def save_composite(
         control.activate(orig_index)
 
 
+def document_has_session_layer(
+    control: ControlClient, doc_index: int, session_id: str
+) -> bool:
+    prefix = f"StableCraft [{session_id}]"
+    try:
+        listing = control.execute(
+            "layer.list", {"document": int(doc_index), "flat": True}
+        )
+    except ControlError:
+        return False
+    layers = listing.get("layers", []) if isinstance(listing, dict) else listing
+    if not isinstance(layers, list):
+        return False
+
+    def walk(items: list[Any]) -> bool:
+        for layer in items:
+            if not isinstance(layer, dict):
+                continue
+            if str(layer.get("name", "")).startswith(prefix):
+                return True
+            if walk(layer.get("children", [])):
+                return True
+        return False
+
+    return walk(layers)
+
+
+def find_session_document(
+    control: ControlClient,
+    docs: list[dict[str, Any]],
+    active: int,
+    sdata: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Find the open document that actually contains this session layer.
+
+    A project can be saved/renamed after its StableCraft layer was created, or
+    document indexes can shift when another file is closed. The stored
+    document name/path is therefore only a fallback; the layer itself is the
+    reliable link.
+    """
+    session_id = str(sdata.get("id") or "")
+    if not session_id:
+        return None
+    stored = sdata.get("document") if isinstance(sdata.get("document"), dict) else {}
+    indexes: list[int] = [active]
+    try:
+        stored_index = stored.get("index")
+        if stored_index is not None:
+            value = int(stored_index)
+            if value not in indexes:
+                indexes.append(value)
+    except (TypeError, ValueError):
+        pass
+    for value in (int(d["index"]) for d in docs):
+        if value not in indexes:
+            indexes.append(value)
+    by_index = {int(d["index"]): d for d in docs}
+    for index in indexes:
+        if index not in by_index:
+            continue
+        # The active document can be checked without layer.list, which keeps
+        # compatibility with PhotoCraft builds where that command is missing.
+        if index == active and find_session_layer(control, session_id):
+            return by_index[index]
+        if document_has_session_layer(control, index, session_id):
+            return by_index[index]
+    return None
+
+
 def current_document(control: ControlClient, sdata: dict[str, Any] | None = None) -> dict[str, Any]:
     ui = control.request("ui.inspect")
     docs = ui["session"]["documents"]
     if not docs:
         raise ControlError("aucun document ouvert dans PhotoCraft")
     active = int(ui["session"]["active"])
+    doc: dict[str, Any] | None = None
     if sdata is not None:
-        name = sdata["document"]["name"]
-        path = sdata["document"].get("path")
-        matches = [
-            d for d in docs
-            if d["name"] == name and (path is None or d.get("path") == path)
-        ]
-        if not matches:
-            # The file may have been moved since the session was created. If its
-            # name is unique among the open documents, keep the session usable.
-            by_name = [d for d in docs if d["name"] == name]
-            if len(by_name) == 1:
-                matches = by_name
-        if not matches:
-            raise ControlError(f"le document de la session ({name}) n'est pas ouvert")
-        doc = next((d for d in matches if d["index"] == active), matches[0])
+        doc = find_session_document(control, docs, active, sdata)
+        if doc is None:
+            name = sdata["document"]["name"]
+            path = sdata["document"].get("path")
+            matches = [
+                d for d in docs
+                if d["name"] == name and (path is None or d.get("path") == path)
+            ]
+            if not matches:
+                # The file may have been moved since the session was created. If
+                # its name is unique among the open documents, keep it usable.
+                by_name = [d for d in docs if d["name"] == name]
+                if len(by_name) == 1:
+                    matches = by_name
+            if not matches:
+                raise ControlError(
+                    f"le document de la session ({name}) n'est pas ouvert"
+                )
+            doc = next((d for d in matches if d["index"] == active), matches[0])
     else:
         doc = next(d for d in docs if d["index"] == active)
     control.activate(int(doc["index"]))
@@ -1371,6 +1450,148 @@ def create_session(
     return sdata
 
 
+def update_session_document(sdata: dict[str, Any], doc: dict[str, Any]) -> None:
+    """Keep the session attached to the current file after Save / Save As."""
+    sdata["document"] = {
+        "name": doc["name"],
+        "path": doc.get("path"),
+        "width": int(doc["width"]),
+        "height": int(doc["height"]),
+        "index": int(doc["index"]),
+    }
+
+
+def _flatten_layers(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flat: list[dict[str, Any]] = []
+    for layer in layers:
+        flat.append(layer)
+        flat.extend(_flatten_layers(layer.get("children", [])))
+    return flat
+
+
+def _layers_for_session(doc: dict[str, Any], session_id: str) -> list[dict[str, Any]]:
+    prefix = f"StableCraft [{session_id}]"
+    return [
+        layer
+        for layer in _flatten_layers(doc.get("layers", []))
+        if str(layer.get("name", "")).startswith(prefix)
+    ]
+
+
+def _session_prompt(sdata: dict[str, Any]) -> str:
+    generations = sdata.get("generations", [])
+    current = int(sdata.get("current", -1))
+    if 0 <= current < len(generations):
+        return str(generations[current].get("prompt", "") or "")
+    return ""
+
+
+def _clone_session_for_layer(
+    store: SessionStore,
+    sdata: dict[str, Any],
+    layer: dict[str, Any],
+    doc: dict[str, Any],
+) -> dict[str, Any]:
+    source = store.directory(str(sdata["id"]))
+    if not source.exists():
+        raise ControlError(f"session source introuvable : {source}")
+    new_id = store.new_id()
+    while store.directory(new_id).exists():
+        new_id = store.new_id()
+    store.clone_directory(str(sdata["id"]), new_id)
+    cloned = store.load(new_id)
+    cloned["id"] = new_id
+    cloned["layer_id"] = int(layer["id"])
+    cloned["layer_name"] = session_layer_name(new_id, _session_prompt(cloned))
+    cloned["mask_channel"] = f"StableCraft Mask {new_id}"
+    update_session_document(cloned, doc)
+    store.save(cloned)
+    return cloned
+
+
+def ensure_unique_session_layer(
+    control: ControlClient,
+    store: SessionStore,
+    sdata: dict[str, Any],
+    doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Detach duplicated PhotoCraft layers from the same session.
+
+    PhotoCraft duplicates the layer name, including ``StableCraft [id]``. The
+    clone must not keep writing into the original session, so every duplicate
+    gets its own session directory and a new id in the layer name.
+    """
+    session_id = str(sdata.get("id") or "")
+    try:
+        inspect = control.inspect()
+    except ControlError:
+        return sdata
+    layers = _layers_for_session(inspect, session_id)
+    if not layers:
+        return sdata
+    ids = {int(layer["id"]) for layer in layers}
+    canonical: int | None = None
+    stored_layer_id = sdata.get("layer_id")
+    try:
+        value = int(stored_layer_id)
+        if value in ids:
+            canonical = value
+    except (TypeError, ValueError):
+        pass
+    if canonical is None:
+        named = [
+            layer
+            for layer in layers
+            if str(layer.get("name", "")) == str(sdata.get("layer_name", ""))
+        ]
+        if len(named) == 1:
+            canonical = int(named[0]["id"])
+        else:
+            canonical = min(ids)
+    sdata["layer_id"] = canonical
+
+    if len(layers) <= 1:
+        return sdata
+
+    active: int | None = None
+    try:
+        active_value = inspect.get("activeLayer")
+        if active_value is not None:
+            active = int(active_value)
+    except (TypeError, ValueError):
+        active = None
+
+    selected = sdata
+    for layer in sorted(layers, key=lambda item: int(item["id"])):
+        layer_id = int(layer["id"])
+        if layer_id == canonical:
+            continue
+        cloned: dict[str, Any] | None = None
+        try:
+            cloned = _clone_session_for_layer(store, sdata, layer, doc)
+            new_name = str(cloned["layer_name"])
+            control.execute(
+                "layer.renameLayer", {"layer": layer_id, "name": new_name}
+            )
+        except Exception as exc:  # noqa: BLE001
+            if cloned is not None:
+                shutil.rmtree(store.directory(str(cloned["id"])), ignore_errors=True)
+            if layer_id == active:
+                raise ControlError(
+                    "impossible de séparer le calque dupliqué de sa session "
+                    f"d'origine : {exc}"
+                ) from exc
+            print(f"Avertissement: duplication de session ignorée : {exc}")
+            continue
+        if layer_id == active:
+            selected = cloned
+        print(
+            f"Session clonée pour le calque dupliqué {layer_id}: "
+            f"{session_id} -> {cloned['id']}"
+        )
+    return selected
+
+
 def parse_lora_args(values: list[str] | None) -> list[tuple[str, float]]:
     """Parse repeated ``--lora NAME=STRENGTH`` arguments."""
     loras: list[tuple[str, float]] = []
@@ -1561,6 +1782,9 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
                 else:
                     ctx["mode"] = str(sdata.get("mode", "edit"))
             orig_doc = current_document(control, sdata)
+            sdata = ensure_unique_session_layer(control, store, sdata, orig_doc)
+            update_session_document(sdata, orig_doc)
+            store.save(sdata)
             base_abs = store.base_path(sdata)
             if not base_abs.exists():
                 raise ControlError(f"base de session introuvable : {base_abs}")
@@ -1707,12 +1931,15 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
         control.close_socket()
         control = connect_control(ctx)
         orig_doc = current_document(control, sdata)
+        update_session_document(sdata, orig_doc)
+        store.save(sdata)
         orig_index = int(orig_doc["index"])
         new_layer = apply_session_result(
             control, ctx, store, sdata, result_path, [x0, y0, cw, ch],
             ctx["feather"], orig_index, restore_selection=True,
         )
         sdata["layer_name"] = session_layer_name(sid, prompt)
+        sdata["layer_id"] = int(new_layer)
         sdata["current"] = index
         store.save(sdata)
         print(f"Layer:     {new_layer} {sdata['layer_name']}")
@@ -1759,6 +1986,9 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
     clean_recent_files(control)
     try:
         orig_doc = current_document(control, sdata)
+        sdata = ensure_unique_session_layer(control, store, sdata, orig_doc)
+        update_session_document(sdata, orig_doc)
+        store.save(sdata)
         orig_index = int(orig_doc["index"])
         new_layer = apply_session_result(
             control, ctx, store, sdata, result_path, crop, feather,
@@ -1766,6 +1996,7 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
         )
         sdata["current"] = index
         sdata["mode"] = str(generation.get("mode", "edit"))
+        sdata["layer_id"] = int(new_layer)
         store.save(sdata)
         print(f"SESSION: {sdata['id']}")
         print(f"GENERATION: {index}")

@@ -21,6 +21,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app_meta import APP_VERSION
+from platform_support import (
+    IS_WINDOWS,
+    comfyui_app_dir,
+    comfyui_manageable,
+    comfyui_python,
+    start_comfyui_process,
+    stop_comfyui_port,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 USER_DIR = ROOT / "user"
@@ -30,6 +38,14 @@ SELECTION_PATH = USER_DIR / "model_selection.json"
 KREA_NODE_REPO = "lbouaraba/comfyui-krea2edit"
 KREA_NODE_DIR = "comfyui-krea2edit"
 KREA_NODE_API = f"https://api.github.com/repos/{KREA_NODE_REPO}/releases/latest"
+
+NODE_SOURCES = {
+    "ComfyUI-GGUF": {
+        "repo": "city96/ComfyUI-GGUF",
+        "folder": "ComfyUI-GGUF",
+        "url": "https://github.com/city96/ComfyUI-GGUF",
+    },
+}
 
 FOLDER_FOR_KIND = {
     "unet": "unet",
@@ -338,13 +354,23 @@ def comfyui_root(cfg: dict[str, Any]) -> Path | None:
     python_value = str(section.get("python", "") or "")
     if python_value:
         python_path = Path(python_value)
-        if (
-            python_path.exists()
-            and python_path.parent.name.lower() == "python_embeded"
-        ):
-            root = python_path.parent.parent
-            if root.exists():
-                return root
+        if python_path.exists():
+            if python_path.parent.name.lower() == "python_embeded":
+                root = python_path.parent.parent
+                if root.exists():
+                    return root
+            # Linux venv: .../.venv/bin/python or .../venv/bin/python.
+            if (
+                python_path.parent.name in {"bin", "Scripts"}
+                and (python_path.parent.parent / "pyvenv.cfg").exists()
+            ):
+                venv_root = python_path.parent.parent
+                for candidate in (venv_root, venv_root.parent, venv_root.parent.parent):
+                    if (
+                        (candidate / "main.py").exists()
+                        or (candidate / "ComfyUI" / "main.py").exists()
+                    ):
+                        return candidate
     start_value = str(section.get("start_command", "") or "")
     if start_value:
         start = Path(start_value)
@@ -369,10 +395,10 @@ def comfyui_root(cfg: dict[str, Any]) -> Path | None:
 
 
 def extra_model_paths_path(cfg: dict[str, Any]) -> Path | None:
-    root = comfyui_root(cfg)
-    if root is None:
+    app_dir = comfyui_app_dir(comfyui_root(cfg))
+    if app_dir is None:
         return None
-    return root / "ComfyUI" / "extra_model_paths.yaml"
+    return app_dir / "extra_model_paths.yaml"
 
 
 def ensure_store_dirs(cfg: dict[str, Any]) -> Path:
@@ -428,7 +454,17 @@ def endpoint_port(cfg: dict[str, Any]) -> int:
 
 
 def stop_comfyui(cfg: dict[str, Any]) -> None:
+    if not comfyui_manageable(cfg):
+        raise RuntimeError(
+            "ComfyUI est géré en externe ([comfyui] manage = false). "
+            "Arrête-le depuis Comfy Desktop ou son propre lanceur."
+        )
     port = endpoint_port(cfg)
+    if not IS_WINDOWS:
+        # No listener means there is nothing to stop (common when starting a
+        # stopped ComfyUI from the model manager).
+        stop_comfyui_port(port)
+        return
     command = (
         "$p = Get-NetTCPConnection -LocalPort "
         f"{port} -State Listen -ErrorAction SilentlyContinue | "
@@ -444,8 +480,27 @@ def stop_comfyui(cfg: dict[str, Any]) -> None:
 
 
 def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:
+    if not comfyui_manageable(cfg):
+        raise RuntimeError(
+            "ComfyUI est géré en externe ([comfyui] manage = false). "
+            "Démarre-le depuis Comfy Desktop ou son propre lanceur."
+        )
     section = cfg.get("comfyui", {})
     root = comfyui_root(cfg)
+    if not IS_WINDOWS:
+        python = comfyui_python(
+            root, str(section.get("python", "") or "")
+        )
+        start_value = str(section.get("start_command", "") or "")
+        start = Path(start_value) if start_value else None
+        return start_comfyui_process(
+            cfg,
+            python,
+            root,
+            start,
+            log_path=USER_DIR / "logs" / "comfyui.log",
+        )
+
     if root is None:
         raise RuntimeError("Dossier ComfyUI introuvable.")
     start_value = str(section.get("start_command", "") or "")
@@ -491,10 +546,10 @@ def wait_for_comfyui(cfg: dict[str, Any], timeout: float = 240.0) -> bool:
 
 
 def krea_node_path(cfg: dict[str, Any]) -> Path | None:
-    root = comfyui_root(cfg)
-    if root is None:
+    app_dir = comfyui_app_dir(comfyui_root(cfg))
+    if app_dir is None:
         return None
-    return root / "ComfyUI" / "custom_nodes" / KREA_NODE_DIR
+    return app_dir / "custom_nodes" / KREA_NODE_DIR
 
 
 def _read_node_version(path: Path) -> str | None:
@@ -637,6 +692,74 @@ def install_krea_node(
             archive.unlink()
         except OSError:
             pass
+
+
+def install_custom_node(
+    cfg: dict[str, Any],
+    name: str,
+    progress: Callable[[int, int], None] | None = None,
+) -> str:
+    """Install a small custom node from its GitHub main branch."""
+    spec = NODE_SOURCES.get(name)
+    if spec is None:
+        raise RuntimeError(f"Nœud inconnu : {name}")
+    app_dir = comfyui_app_dir(comfyui_root(cfg))
+    if app_dir is None:
+        raise RuntimeError("Dossier ComfyUI introuvable.")
+    destination = app_dir / "custom_nodes" / str(spec["folder"])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if not destination.exists():
+        repo = str(spec["repo"])
+        zip_url = f"https://github.com/{repo}/archive/refs/heads/main.zip"
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        archive = CACHE_DIR / f"{name}-main.zip"
+        download_file(zip_url, archive, progress=progress)
+        temp_dir = Path(
+            tempfile.mkdtemp(prefix=f"stablecraft-{name}-", dir=str(CACHE_DIR))
+        )
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                zf.extractall(temp_dir)
+            candidates = [p for p in temp_dir.iterdir() if p.is_dir()]
+            root = candidates[0] if candidates else None
+            if root is None or not (
+                (root / "__init__.py").exists() or (root / "nodes.py").exists()
+            ):
+                raise RuntimeError(f"L'archive du nœud {name} est invalide.")
+            shutil.copytree(root, destination)
+        except Exception:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            try:
+                archive.unlink()
+            except OSError:
+                pass
+
+    requirements = destination / "requirements.txt"
+    if requirements.exists():
+        python = comfyui_python(
+            comfyui_root(cfg),
+            str(cfg.get("comfyui", {}).get("python", "") or ""),
+        )
+        if python is None:
+            raise RuntimeError("Python de ComfyUI introuvable pour les dépendances.")
+        if progress is not None:
+            progress(0, 0)
+        result = subprocess.run(
+            [str(python), "-m", "pip", "install", "-r", str(requirements)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            raise RuntimeError(
+                f"Installation des dépendances de {name} impossible : "
+                f"{detail[-1] if detail else result.returncode}"
+            )
+    return str(spec["folder"])
 
 
 def wait_port(host: str, port: int, timeout: float = 1.0) -> bool:

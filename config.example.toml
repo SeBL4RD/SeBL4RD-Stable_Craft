@@ -20,11 +20,16 @@ default_profile = "flux3_klein"
 # Vide = <dossier StableCraft>/user/sessions
 # Doit rester sous photocraft.automation_root.
 # sessions_dir = ""
-# Python qui lance l'UI (Tkinter). Vide = le Python qui exécute StableCraft.bat.
+# Python qui lance l'UI (Tkinter). Vide = le Python qui exécute StableCraft.bat
+# sous Windows, ou .venv/bin/python sous Linux.
 # python_ui = "C:/Users/Seb/AppData/Local/Programs/Python/Python311/pythonw.exe"
+# Python du bridge. Windows : vide = [comfyui] python (python_embeded).
+# Linux : vide = .venv/bin/python. À ne renseigner que si tu utilises un autre venv.
+# bridge_python = ""
 
 [photocraft]
-# Photocraft.exe. Vide = recherche automatique.
+# Windows : photocraft.exe. Linux : binaire, AppImage ou chemin /usr/bin/photocraft.
+# Vide = recherche automatique.
 executable = ""
 control_host = "127.0.0.1"
 # 7990 évite la plage 7878 souvent exclue par Windows (Hyper-V/WSL).
@@ -37,19 +42,39 @@ automation_root = ""
 
 [comfyui]
 # 8188 = port par défaut de ComfyUI. Si ton ComfyUI écoute sur un autre port,
-# change endpoint ci-dessous. StableCraft ajoutera automatiquement --port à
-# start_command si celui-ci n'en contient pas déjà un.
+# change endpoint ci-dessous. Sous Windows, StableCraft ajoute automatiquement
+# --port au start_command si celui-ci n'en contient pas déjà un.
 endpoint = "http://127.0.0.1:8188"
-# Dossier ComfyUI portable (celui qui contient run_nvidia_gpu.bat et python_embeded).
+# true  = StableCraft peut démarrer/arrêter/redémarrer ComfyUI.
+# false = ComfyUI est géré en externe (Comfy Desktop, service, terminal).
+#         StableCraft se contente de vérifier l'endpoint.
+manage = true
+# Dossier ComfyUI.
+# Windows : dossier portable qui contient run_nvidia_gpu.bat et python_embeded.
+# Linux   : clone ou instance, par exemple /home/seb/ComfyUI
+#           ou /home/seb/ComfyUI-Installs/ComfyUI.
 # Vide = recherche automatique.
 root = ""
-# Lanceur ComfyUI. Vide = <root>/run_nvidia_gpu.bat
+# Lanceur ComfyUI.
+# Windows : vide = <root>/run_nvidia_gpu.bat
+# Linux   : vide = <root>/main.py ou <root>/ComfyUI/main.py, avec [comfyui] python.
+# Ne mets PAS le binaire Python ici : laisse vide pour lancer main.py, ou donne
+# un script .sh. Exemple : start_command = "/home/seb/ComfyUI/start.sh"
 start_command = ""
-# Python embarqué de ComfyUI (Pillow + requests). Vide = <root>/python_embeded/python.exe
+# Linux : ouvrir ComfyUI dans une fenêtre de terminal visible.
+# false = lancer en arrière-plan, sortie dans user/logs/comfyui.log.
+open_console = true
+# Arguments supplémentaires passés à ComfyUI main.py.
+# Pour une VM sans GPU NVIDIA : extra_args = ["--cpu"]
+extra_args = []
+# Python de ComfyUI.
+# Windows : vide = <root>/python_embeded/python.exe (obligatoire pour le bridge).
+# Linux   : vide = <root>/.venv/bin/python, venv/bin/python, etc.
+#           Le bridge Linux utilise plutôt .venv/bin/python de StableCraft.
 python = ""
 # Dossier temporaire de ComfyUI. Les images StableCraft y sont écrites puis
 # supprimées après téléchargement, pour ne pas polluer le dossier output.
-# Vide = <root>/ComfyUI/temp
+# Vide = <root>/ComfyUI/temp (Windows) ou <root>/temp (Linux).
 # temp_dir = ""
 # Ne pas ouvrir l'UI web de ComfyUI dans le navigateur au démarrage.
 # disable_browser = true
