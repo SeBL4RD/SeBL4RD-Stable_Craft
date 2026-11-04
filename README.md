@@ -114,9 +114,13 @@ Notes:
 - model licenses apply (FLUX Kommunity, Krea Community, Qwen Research, etc.),
   separately from the MIT license of the code.
 
+---
+
 ## Installation
 
-### Option 1 — Windows installer (recommended)
+StableCraft runs from the project folder.
+
+### Installation Windows
 
 Double-click **`InstallStableCraft.bat`** at the repository root.
 
@@ -142,10 +146,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 `
   -ComfyEndpoint "http://127.0.0.1:12452"
 ```
 
-### Option 2 — Linux installer (Debian/Ubuntu, Fedora/RHEL, Arch)
+### Installation Linux
 
-StableCraft uses a **local venv** on Linux. Python 3.11+ and Tkinter are required;
-older distributions are intentionally not supported.
+Debian/Ubuntu, Fedora/RHEL and Arch are supported. StableCraft uses a **local venv**
+on Linux. Python 3.11+ and Tkinter are required; older distributions are intentionally
+not supported.
 
 ```bash
 bash install.sh
@@ -170,16 +175,13 @@ Ubuntu 22.04 (Python 3.10) and RHEL 9 (Python 3.9) unless a newer Python is inst
 
 > **Fedora 45+ (Python 3.15):** StableCraft itself installs and runs with Python
 > 3.15. ComfyUI's dependencies do not all ship Python 3.15 wheels yet
-> (`sentencepiece`, `kornia-rs`), so for a manual ComfyUI install create **its**
-> venv with Fedora's `python3.13` (or `python3.14`):
->
-> ```bash
-> sudo dnf install python3.13
-> cd ~/ComfyUI && python3.13 -m venv .venv
-> ```
+> (`sentencepiece`, `kornia-rs`); use Fedora's `python3.13` (or `python3.14`) for
+> ComfyUI's venv.
 
 On Linux, ComfyUI is usually managed externally (Comfy Desktop or its own terminal).
-Set:
+`manage = false` is the default on Linux because ComfyUI can be installed in many
+ways (Desktop, comfy-cli, systemd, manual venv); StableCraft does not guess which
+instance to start. Configure `config.toml` as follows:
 
 ```toml
 [comfyui]
@@ -233,9 +235,8 @@ The AppImage, `.deb`, `.rpm`, Arch package and tarball all work. Prefer AppImage
 `.deb`, `.rpm` or tarball over Flatpak when possible: the Flatpak sandbox can block
 access to StableCraft's `automation_root`.
 
-When using Comfy Desktop, use its shared models folder, or set `[comfyui] root` to the
-instance folder so StableCraft can add `extra_model_paths.yaml`. If Desktop ignores
-that file on your version, add StableCraft's `models/` folder in Desktop's settings.
+If ComfyUI does not see models downloaded by StableCraft, set the installation
+folder in `[comfyui] root`: StableCraft will add `extra_model_paths.yaml` there.
 
 ### Configuration
 
@@ -253,9 +254,7 @@ root = "F:/ComfyUI_windows_portable"
 python = "F:/ComfyUI_windows_portable/python_embeded/python.exe"
 ```
 
-The default control port is **7990**. Port 7878 is inside a Windows excluded port
-range on some machines, which makes PhotoCraft's control channel fail with an
-“access permissions” error.
+StableCraft uses control port **7990** by default.
 
 The default ComfyUI endpoint is **http://127.0.0.1:8188**, ComfyUI's own default.
 If ComfyUI listens on another port, change `endpoint`:
@@ -300,13 +299,10 @@ Linux:
 # or: bash StableCraft.sh
 ```
 
-The shell script uses `.venv/bin/python` when present. It does not use
-`python_embeded`, PowerShell, `cmd.exe` or Windows drag & drop.
+The shell script uses `.venv/bin/python` when present.
 
-If the window closes immediately, run the batch from cmd.exe or PowerShell to read
-the message, then check `user\logs\launcher.log`. Use the python.org installer (not
-the Microsoft Store alias) and enable “Add python.exe to PATH”. If Windows blocked a
-downloaded `.bat`, open its Properties and click **Unblock**.
+If it crashes, check the logs in `user\logs\` (`launcher.log`, `ui.log`,
+`comfyui.log`).
 
 A clear message is shown when a required path is missing. Missing models do not block
 installation: the UI reports them and **Generate** opens the model manager with
@@ -317,17 +313,13 @@ installation: the UI reports them and **Generate** opens the model manager with
 1. Open an image in PhotoCraft.
 2. Draw a **lasso** around the area to edit.
 3. In StableCraft: choose the **mode** (EDIT by default, or T2I), the profile,
-   write the prompt, then click **Generate**. Drag the bottom-right grip of the
-   prompt/negative-prompt box to resize it; double-click the grip to reset it.
+   write the prompt, then click **Generate**.
 4. The result is added as a **StableCraft layer** with a mask.
 5. The layer gallery appears under the prompt.
 
 In **T2I**, no scene image is sent: the prompt generates an image at the crop size
 (selection + context), then PhotoCraft masks it with the selection. A rectangular
-selection gives cleaner results than an irregular lasso. The session's `base.png`
-remains the original image: switching back to EDIT on the same layer always uses that
-scene, never the previous T2I image. To use the T2I image as a new scene, draw a new
-lasso.
+selection gives cleaner results than an irregular lasso.
 
 ### Selection, layers and projects
 
@@ -358,8 +350,6 @@ lasso.
 ### Regenerate and gallery
 
 - Same selection → **Regenerate** updates the **same layer** and adds a thumbnail.
-- Every generation starts from the `base.png` frozen at lasso time, never from the
-  composite with previous generations.
 - Click a thumbnail to apply that generation without running ComfyUI again.
 - Selection lost → select the `StableCraft [id]` layer, then **Regenerate**.
 - New selection → new gallery and new layer.
@@ -402,41 +392,7 @@ and examples.
 - the manager warns when a LoRA's architecture does not match the current profile, but
   does not block it;
 - the LoRA set is stored per profile and snapshotted in each layer's `session.json`, so
-  an old layer reloads its own set;
-- model-only LoRA are applied (`LoraLoaderModelOnly`). Text-encoder weights are ignored;
-- Krea 2 General Edit applies its profile LoRA first in EDIT, then the user stack; T2I
-  uses the user stack only.
-
-### Models and custom node
-
-- **Manage** next to the profile opens the model manager at any time, even when every
-  file is present. The **Profile files** rows show only files ComfyUI already sees;
-  use the dropdown + **Apply** to switch between them, or **Choose a file…** for a
-  local file;
-- missing files are listed separately with **Locate** (use an existing file) and
-  **Download** (with size, source and confirmation). A missing file is not repeated in
-  the profile-file selector;
-- after a download/copy, the manager clearly shows **downloaded, restart required**
-  instead of keeping it in the missing list. Restart ComfyUI from the manager (or
-  externally when `manage = false`) to make it visible;
-- **Locate** accepts any supported filename (**GGUF or safetensors**): the file does
-  not need to match the name in `models.json`. It starts in ComfyUI's `models` folder
-  and keeps the selected file's real name. A file already inside a ComfyUI model folder is used in place,
-  without copying it into the project. Select a standalone UNet/diffusion model, not
-  an all-in-one checkpoint;
-- quantization choices combine the **Q4_K_M**, **Q6_K**, **Q8_0**, **BF16** entries
-  from `models.json` with same-family UNet files that ComfyUI already sees, so a Q8
-  file downloaded outside StableCraft can still be selected;
-- downloaded files go to the project's `models/` folder and are added to ComfyUI's
-  `extra_model_paths.yaml`;
-- after a file is located or downloaded, the manager offers to restart ComfyUI
-  automatically so the file becomes visible;
-- a file already inside `models/` is moved to the expected subfolder instead of being
-  copied again;
-- the **comfyui-krea2edit** node is checked at startup and can be installed or updated
-  from the model manager;
-- **ComfyUI-GGUF** is detected when a GGUF UNet/text encoder is selected and can be
-  installed with one **Install** click from the model manager (then restart ComfyUI).
+  an old layer reloads its own set.
 
 ### Preview
 
@@ -445,22 +401,8 @@ and examples.
 
 ## Storage
 
-Nothing is stored in AppData.
-
-```text
-<StableCraft folder>/
-  user/
-    control.token
-    sessions/<id>/       # base, mask, reference, gallery
-    logs/
-    model_selection.json # selected quantization per profile
-    lora_settings.json   # master switch + LoRA stack per profile
-    cache/lora_previews/ # PNG LoRA thumbnails (not model files)
-  models/                # local models, no weights in git
-```
-
-Paths are configurable in `config.toml` (`[app]`, `[photocraft]`, `[comfyui]`,
-`[models]`).
+StableCraft stores its data in `user/` and its models in `models/`, next to the
+project.
 
 ## Language
 
@@ -473,13 +415,13 @@ A French version of this README is available in [`README.fr.md`](README.fr.md).
 ## Updates
 
 StableCraft checks the latest GitHub Release at startup. When a newer version exists,
-a clickable notice appears in the header and opens the Releases page. Files are not
-replaced at runtime: `config.toml`, `user/` and `models/` are always preserved, and
-updating remains an explicit action.
+a clickable notice appears in the header and opens the Releases page. You can also
+`git pull` the project to update.
 
 ## Credits
 
-- **Stable.art** — inspiration for the lasso + prompt experience.
+- **Stable.art** — inspiration for the lasso + prompt experience:
+  [isekaidev/stable.art](https://github.com/isekaidev/stable.art).
 - **PhotoCraft** — host application and control channel:
   [storytold/photocraft](https://github.com/storytold/photocraft).
 - **ComfyUI** — generation engine:
