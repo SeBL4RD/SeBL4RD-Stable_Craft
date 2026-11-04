@@ -151,11 +151,13 @@ older distributions are intentionally not supported.
 bash install.sh
 ```
 
-The installer checks Python/Tkinter, creates `.venv`, installs
-`prototypes/requirements.txt`, creates `config.toml` if needed, and adds an
-application shortcut. It does **not** download models or modify ComfyUI.
+The installer installs any missing system packages (Python, Tkinter, venv),
+creates `.venv`, installs `prototypes/requirements.txt`, creates `config.toml`
+if needed, and adds an application shortcut. It asks before using `sudo`; use
+`bash install.sh --yes` for a non-interactive install. It does **not** download
+models or modify ComfyUI.
 
-Linux dependencies:
+Linux dependencies (installed automatically when missing):
 
 | Distribution | Packages |
 |---|---|
@@ -165,6 +167,16 @@ Linux dependencies:
 
 Python **3.11+** is mandatory because StableCraft uses `tomllib`. This excludes
 Ubuntu 22.04 (Python 3.10) and RHEL 9 (Python 3.9) unless a newer Python is installed.
+
+> **Fedora 45+ (Python 3.15):** StableCraft itself installs and runs with Python
+> 3.15. ComfyUI's dependencies do not all ship Python 3.15 wheels yet
+> (`sentencepiece`, `kornia-rs`), so for a manual ComfyUI install create **its**
+> venv with Fedora's `python3.13` (or `python3.14`):
+>
+> ```bash
+> sudo dnf install python3.13
+> cd ~/ComfyUI && python3.13 -m venv .venv
+> ```
 
 On Linux, ComfyUI is usually managed externally (Comfy Desktop or its own terminal).
 Set:

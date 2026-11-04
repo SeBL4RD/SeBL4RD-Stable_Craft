@@ -1375,6 +1375,7 @@ class StableCraftApp(tk.Tk):
         self._update_denoise_for_profile()
         self._load_profile_loras()
         self._update_generate_state()
+        self._update_krea_node_label()
         self._check_models()
 
     def _update_denoise_for_profile(self) -> None:
@@ -3780,6 +3781,15 @@ class StableCraftApp(tk.Tk):
         self.queue.put(("krea_node", status, latest))
 
     def _update_krea_node_label(self) -> None:
+        # The Krea node is only relevant to Krea profiles. Showing its install
+        # banner on FLUX/Qwen profiles looks like a false missing dependency.
+        if self.profile_key not in KREA_PROFILES:
+            self.node_update_label.config(text="")
+            if self.node_update_label.winfo_manager():
+                self.node_update_label.pack_forget()
+            return
+        if not self.node_update_label.winfo_manager():
+            self.node_update_label.pack(fill="x")
         status = self.krea_status or {}
         if status.get("needs_install"):
             self.node_update_label.config(
@@ -3799,6 +3809,8 @@ class StableCraftApp(tk.Tk):
             )
         else:
             self.node_update_label.config(text="")
+            if self.node_update_label.winfo_manager():
+                self.node_update_label.pack_forget()
 
     # ------------------------------------------------------------------
     # Preview / log
