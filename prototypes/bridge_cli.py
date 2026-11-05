@@ -42,10 +42,22 @@ import requests
 from PIL import Image, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from comfy_progress import ComfyProgress  # noqa: E402
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
 from models_tools import resolve_filename  # noqa: E402
 from reference_image import normalize_reference  # noqa: E402
 from session_store import SessionStore, session_layer_name  # noqa: E402
+from xyz_axes import (  # noqa: E402
+    AXIS_IDS,
+    AXIS_TYPES,
+    axis_label,
+    describe_axis,
+    format_value,
+    parse_values,
+    sr_search,
+    type_info,
+)
+from xyz_plot import compose_plot  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -146,6 +158,10 @@ class ComfyClient:
         self.endpoint = endpoint.rstrip("/")
         self.timeout = timeout
         self.temp_dir = Path(temp_dir) if temp_dir else None
+        self.client_id = (
+            f"stablecraft-{random.randrange(1 << 30)}-{int(time.time() * 1000)}"
+        )
+        self._options_cache: dict[tuple[str, str], list[str]] = {}
 
     def _get(self, path: str, **kwargs: Any) -> requests.Response:
         response = requests.get(self.endpoint + path, timeout=30, **kwargs)
@@ -161,11 +177,18 @@ class ComfyClient:
         return self._get("/system_stats").json()
 
     def options(self, node: str, key: str) -> list[str]:
+        cache_key = (node, key)
+        cached = self._options_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
         info = self._get(f"/object_info/{node}").json()
         spec = info[node]["input"]["required"][key]
         if isinstance(spec, list) and spec and isinstance(spec[0], list):
-            return list(spec[0])
-        return []
+            values = list(spec[0])
+        else:
+            values = []
+        self._options_cache[cache_key] = values
+        return list(values)
 
     def require(self, node: str, key: str, value: str) -> None:
         options = self.options(node, key)
@@ -200,7 +223,7 @@ class ComfyClient:
     def queue(self, workflow: dict[str, Any]) -> str:
         response = self._post(
             "/prompt",
-            json={"prompt": workflow, "client_id": f"stablecraft-{random.randrange(1 << 30)}"},
+            json={"prompt": workflow, "client_id": self.client_id},
         )
         body = response.json()
         if "prompt_id" not in body:
@@ -1679,6 +1702,13 @@ def comfy_generate(
     negative: str,
     seed: int,
     reference_path: Path | None = None,
+    *,
+    uploaded_image: str | None = None,
+    uploaded_reference: str | None = None,
+    progress: ComfyProgress | None = None,
+    progress_scope: str = "generate",
+    progress_index: int = 0,
+    progress_count: int = 1,
 ) -> Image.Image:
     mode = ctx["mode"]
     profile = ctx["profile_name"]
@@ -1704,14 +1734,16 @@ def comfy_generate(
             f"L'image de référence n'est pas disponible pour le profil {profile}."
         )
 
-    uploaded = None
-    if mode == "edit":
+    uploaded = uploaded_image
+    if mode == "edit" and not uploaded:
         uploaded = comfy.upload(image_path, f"stablecraft_{time.time_ns()}.png")
-    reference_name = None
-    if reference_path is not None:
+    reference_name = uploaded_reference
+    if reference_path is not None and not reference_name:
         reference_name = comfy.upload(
             reference_path, f"stablecraft_ref_{time.time_ns()}.png"
         )
+    if reference_path is None:
+        reference_name = None
     workflow = build_workflow(
         profile,
         image_name=uploaded,
@@ -1742,6 +1774,14 @@ def comfy_generate(
         f"ComfyUI:   queued {prompt_id} (mode {mode.upper()}, seed {seed}, "
         f"{ctx['steps']} steps, cfg {ctx['cfg_scale']})"
     )
+    if progress is not None:
+        progress.track(
+            workflow,
+            prompt_id,
+            scope=progress_scope,
+            index=progress_index,
+            count=progress_count,
+        )
     entry = comfy.wait(prompt_id)
     images: list[dict[str, Any]] = []
     for node in entry.get("outputs", {}).values():
@@ -1766,10 +1806,21 @@ def comfy_generate(
 def run_session_generate(ctx: dict[str, Any]) -> None:
     args = ctx["args"]
     store = SessionStore(sessions_root(ctx))
-    control = connect_control(ctx)
-    clean_recent_files(control)
+    try:
+        control = connect_control(ctx)
+        clean_recent_files(control)
+    except (ControlError, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        raise SystemExit(1)
     comfy = ComfyClient(
         ctx["comfy_endpoint"], timeout=args.timeout, temp_dir=comfy_temp_dir(ctx["cfg"])
+    )
+    progress = ComfyProgress(
+        ctx["comfy_endpoint"],
+        comfy.client_id,
+        lambda data: print(
+            "PROGRESS: " + json.dumps(data, separators=(",", ":")), flush=True
+        ),
     )
     try:
         if args.session:
@@ -1854,30 +1905,26 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             print(f"SESSION: {sid}")
             return
 
-        seed = args.seed if args.seed is not None and args.seed >= 0 else random.randrange(0, 2**63 - 1)
-        started = time.time()
-        result = comfy_generate(
-            ctx,
-            comfy,
-            crop_path,
-            cw,
-            ch,
-            prompt,
-            args.negative,
-            seed,
-            reference_path=reference_path,
-        )
-        elapsed = time.time() - started
+        batch = max(1, min(16, int(getattr(args, "batch", 1) or 1)))
+        if args.seed is not None and args.seed >= 0:
+            seeds = [
+                int(args.seed + index) % (2**63) for index in range(batch)
+            ]
+        else:
+            seeds = [random.randrange(0, 2**63 - 1) for _ in range(batch)]
 
-        index = len(sdata["generations"])
-        gdir = store.generation_dir(sdata, index)
-        gdir.mkdir(parents=True, exist_ok=True)
-        result_path = gdir / "result.png"
-        result.save(result_path)
-        crop_image.save(gdir / "crop.png")
-        thumb = result.copy()
-        thumb.thumbnail((128, 128), Image.LANCZOS)
-        thumb.save(gdir / "thumb.png")
+        # Upload the source crop and the reference once for the whole batch.
+        uploaded_image = None
+        if ctx["mode"] == "edit":
+            uploaded_image = comfy.upload(
+                crop_path, f"stablecraft_{time.time_ns()}.png"
+            )
+        uploaded_reference = None
+        if reference_path is not None:
+            uploaded_reference = comfy.upload(
+                reference_path, f"stablecraft_ref_{time.time_ns()}.png"
+            )
+
         sdata["layer_name"] = session_layer_name(sid, prompt)
         sdata["profile"] = ctx["profile_name"]
         sdata["mode"] = ctx["mode"]
@@ -1890,72 +1937,141 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             "scheduler": ctx["scheduler"],
             "denoise": ctx["denoise"],
         }
-        generation = {
-            "prompt": prompt,
-            "negative": args.negative,
-            "seed": seed,
-            "steps": ctx["steps"],
-            "cfg": ctx["cfg_scale"],
-            "sampler": ctx["sampler"],
-            "scheduler": ctx["scheduler"],
-            "denoise": ctx["denoise"],
-            "profile": ctx["profile_name"],
-            "mode": ctx["mode"],
-            "feather": ctx["feather"],
-            "padding": ctx["padding"],
-            "loras": [
-                {"name": name, "strength": strength}
-                for name, strength in (ctx.get("loras") or [])
-            ],
-            "crop": [x0, y0, cw, ch],
-            "crop_offset": [x0, y0],
-            "crop_size": [cw, ch],
-            "result": f"generations/{index}/result.png",
-            "thumb": f"generations/{index}/thumb.png",
-            "reference": (
-                sdata.get("reference", {}).get("name") if reference_path else None
-            ),
-            "elapsed": round(elapsed, 1),
-        }
-        store.add_generation(sdata, generation)
-        store.save(sdata)
-        print(f"Result:    {result_path} ({elapsed:.1f}s)")
-        print(f"SESSION: {sid}")
-        print(f"GENERATION: {index}")
+        orig_index = int(orig_doc["index"])
+        applied_any = False
+        for batch_index, seed in enumerate(seeds):
+            started = time.time()
+            result = comfy_generate(
+                ctx,
+                comfy,
+                crop_path,
+                cw,
+                ch,
+                prompt,
+                args.negative,
+                seed,
+                reference_path=reference_path,
+                uploaded_image=uploaded_image,
+                uploaded_reference=uploaded_reference,
+                progress=progress,
+                progress_scope="generate",
+                progress_index=batch_index,
+                progress_count=batch,
+            )
+            elapsed = time.time() - started
+
+            index = len(sdata["generations"])
+            gdir = store.generation_dir(sdata, index)
+            gdir.mkdir(parents=True, exist_ok=True)
+            result_path = gdir / "result.png"
+            result.save(result_path)
+            crop_image.save(gdir / "crop.png")
+            thumb = result.copy()
+            # The gallery cell is 4:3 (128x96).  Keep the thumbnail inside
+            # that box; the UI centres it without cropping the result.
+            thumb.thumbnail((128, 96), Image.LANCZOS)
+            thumb.save(gdir / "thumb.png")
+            generation = {
+                "prompt": prompt,
+                "negative": args.negative,
+                "seed": seed,
+                "steps": ctx["steps"],
+                "cfg": ctx["cfg_scale"],
+                "sampler": ctx["sampler"],
+                "scheduler": ctx["scheduler"],
+                "denoise": ctx["denoise"],
+                "profile": ctx["profile_name"],
+                "mode": ctx["mode"],
+                "feather": ctx["feather"],
+                "padding": ctx["padding"],
+                "loras": [
+                    {"name": name, "strength": strength}
+                    for name, strength in (ctx.get("loras") or [])
+                ],
+                "crop": [x0, y0, cw, ch],
+                "crop_offset": [x0, y0],
+                "crop_size": [cw, ch],
+                "result": f"generations/{index}/result.png",
+                "thumb": f"generations/{index}/thumb.png",
+                "reference": (
+                    (sdata.get("reference") or {}).get("name")
+                    if reference_path
+                    and isinstance(sdata.get("reference"), dict)
+                    else None
+                ),
+                "elapsed": round(elapsed, 1),
+                "batch": batch,
+                "batch_index": batch_index + 1,
+                "favorite": False,
+            }
+            store.add_generation(sdata, generation)
+            store.save(sdata)
+            print(f"Result:    {result_path} ({elapsed:.1f}s)")
+            print(f"SESSION: {sid}")
+            print(f"GENERATION: {index}")
+
+            if args.no_apply:
+                continue
+
+            # PhotoCraft may close an idle control connection during sampling.
+            control.close_socket()
+            control = connect_control(ctx)
+            orig_doc = current_document(control, sdata)
+            update_session_document(sdata, orig_doc)
+            store.save(sdata)
+            orig_index = int(orig_doc["index"])
+            new_layer = apply_session_result(
+                control,
+                ctx,
+                store,
+                sdata,
+                result_path,
+                [x0, y0, cw, ch],
+                ctx["feather"],
+                orig_index,
+                restore_selection=True,
+            )
+            sdata["layer_name"] = session_layer_name(sid, prompt)
+            sdata["layer_id"] = int(new_layer)
+            sdata["current"] = index
+            store.save(sdata)
+            applied_any = True
+            print(f"Layer:     {new_layer} {sdata['layer_name']}")
 
         if args.no_apply:
-            print("No-apply: génération enregistrée, calque non modifié.")
-            return
-
-        # Reconnect: PhotoCraft may close an idle control connection during sampling.
-        control.close_socket()
-        control = connect_control(ctx)
-        orig_doc = current_document(control, sdata)
-        update_session_document(sdata, orig_doc)
-        store.save(sdata)
-        orig_index = int(orig_doc["index"])
-        new_layer = apply_session_result(
-            control, ctx, store, sdata, result_path, [x0, y0, cw, ch],
-            ctx["feather"], orig_index, restore_selection=True,
-        )
-        sdata["layer_name"] = session_layer_name(sid, prompt)
-        sdata["layer_id"] = int(new_layer)
-        sdata["current"] = index
-        store.save(sdata)
-        print(f"Layer:     {new_layer} {sdata['layer_name']}")
-
-        if args.save_preview:
+            print("No-apply: génération(s) enregistrée(s), calque non modifié.")
+        elif args.save_preview and applied_any:
+            # Reconnect in case PhotoCraft closed the connection after the last
+            # apply; save_composite reads the current composite.  A preview is
+            # optional and must not turn a successful batch into an error.
             preview = sdir / "after.png"
-            save_composite(control, ctx["automation_root"], preview, orig_index)
-            print(f"Preview:   {preview}")
+            try:
+                control.close_socket()
+                control = connect_control(ctx)
+                save_composite(
+                    control, ctx["automation_root"], preview, orig_index
+                )
+                print(f"Preview:   {preview}")
+            except (ControlError, OSError) as exc:
+                print(f"Preview:   unavailable ({exc})", file=sys.stderr)
 
         print("Done.")
-    except (ControlError, ComfyError, requests.RequestException) as exc:
+    except (
+        ControlError,
+        ComfyError,
+        requests.RequestException,
+        ValueError,
+        OSError,
+    ) as exc:
         print("ERROR:", exc, file=sys.stderr)
         comfy.interrupt()
         raise SystemExit(1)
     finally:
-        clean_recent_files(control)
+        progress.stop()
+        try:
+            clean_recent_files(control)
+        except (ControlError, OSError):
+            pass
         control.close_socket()
 
 
@@ -1982,8 +2098,12 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
     feather = int(generation.get("feather", sdata["settings"].get("feather", 10)))
     sdata["layer_name"] = session_layer_name(str(sdata["id"]), generation.get("prompt", ""))
 
-    control = connect_control(ctx)
-    clean_recent_files(control)
+    try:
+        control = connect_control(ctx)
+        clean_recent_files(control)
+    except (ControlError, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        raise SystemExit(1)
     try:
         orig_doc = current_document(control, sdata)
         sdata = ensure_unique_session_layer(control, store, sdata, orig_doc)
@@ -2008,6 +2128,514 @@ def run_session_apply(ctx: dict[str, Any]) -> None:
         print("Done.")
     finally:
         clean_recent_files(control)
+        control.close_socket()
+
+
+def _xyz_axis_value_label(axis: dict[str, Any], value: Any) -> str:
+    type_id = str(axis.get("type") or "none")
+    if type_id == "none":
+        return ""
+    label = axis_label(type_id)
+    if type_id == "lora":
+        name = str(axis.get("lora") or axis.get("lora_resolved") or "")
+        if name:
+            label = f"LoRA {name}"
+    text = f"{label} = {format_value(value)}"
+    if len(text) > 64:
+        text = text[:63].rstrip() + "…"
+    return text
+
+
+def _xyz_cell_settings(
+    ctx: dict[str, Any],
+    axes: dict[str, dict[str, Any]],
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply the X, Y and Z values to a copy of the base generation settings."""
+    args = ctx["args"]
+    prompt = str(args.prompt or "")
+    negative = str(args.negative or "")
+    steps = int(ctx["steps"])
+    cfg = float(ctx["cfg_scale"])
+    sampler = str(ctx["sampler"])
+    scheduler = str(ctx["scheduler"])
+    denoise = float(ctx["denoise"])
+    loras = list(ctx.get("loras") or [])
+    for axis_id in AXIS_IDS:
+        axis = axes[axis_id]
+        type_id = str(axis.get("type") or "none")
+        if type_id == "none":
+            continue
+        value = values.get(axis_id)
+        if type_id == "prompt_sr":
+            search = sr_search(axis["values"])
+            replacement = str(value)
+            prompt = prompt.replace(search, replacement)
+            negative = negative.replace(search, replacement)
+        elif type_id == "negative_sr":
+            search = sr_search(axis["values"])
+            negative = negative.replace(search, str(value))
+        elif type_id == "sampler":
+            sampler = str(value)
+        elif type_id == "scheduler":
+            scheduler = str(value)
+        elif type_id == "steps":
+            steps = int(value)
+        elif type_id == "cfg":
+            cfg = float(value)
+        elif type_id == "denoise":
+            denoise = float(value)
+        elif type_id == "lora":
+            name = str(axis.get("lora_resolved") or axis.get("lora") or "")
+            key = name.replace("\\", "/").casefold()
+            loras = [
+                (existing, strength)
+                for existing, strength in loras
+                if existing.replace("\\", "/").casefold() != key
+            ]
+            strength = float(value)
+            if strength > 0:
+                loras.append((name, strength))
+    return {
+        "prompt": prompt,
+        "negative": negative,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler": sampler,
+        "scheduler": scheduler,
+        "denoise": denoise,
+        "loras": loras,
+    }
+
+
+def run_xyz(ctx: dict[str, Any], job: dict[str, Any]) -> None:
+    """Generate an X/Y/Z matrix and compose a labelled contact sheet.
+
+    The run never touches the active PhotoCraft document except to capture the
+    source composite when there is no reusable session.  Each cell is saved at
+    full resolution; the page is a separate PNG.
+    """
+    args = ctx["args"]
+    store = SessionStore(sessions_root(ctx))
+
+    # ------------------------------------------------------------------
+    # Axes and job validation
+    # ------------------------------------------------------------------
+    axes: dict[str, dict[str, Any]] = {}
+    raw_axes = job.get("axes") or []
+    if not isinstance(raw_axes, list):
+        raise SystemExit("XYZ job invalide : 'axes' doit être une liste.")
+    for raw in raw_axes:
+        if not isinstance(raw, dict):
+            continue
+        axis_id = str(raw.get("axis") or "").lower()
+        if axis_id not in AXIS_IDS:
+            continue
+        type_id = str(raw.get("type") or "none")
+        info = type_info(type_id)
+        if type_id not in {item["id"] for item in AXIS_TYPES}:
+            raise SystemExit(f"Axe {axis_id.upper()} : type inconnu {type_id!r}.")
+        values = raw.get("values")
+        if info["kind"] == "none":
+            values = [None]
+        elif not values:
+            values = parse_values(str(raw.get("raw") or ""), info["kind"])
+        values = list(values or [])
+        if info["kind"] == "int":
+            values = [int(value) for value in values]
+        elif info["kind"] == "float":
+            values = [float(value) for value in values]
+        elif info["kind"] in {"choice", "sr"}:
+            values = [str(value) for value in values]
+        if info["kind"] != "none" and not values:
+            raise SystemExit(f"Axe {axis_id.upper()} : aucune valeur.")
+        axes[axis_id] = {
+            "axis": axis_id,
+            "type": type_id,
+            "values": values,
+            "lora": str(raw.get("lora") or ""),
+        }
+    for axis_id in AXIS_IDS:
+        axes.setdefault(
+            axis_id, {"axis": axis_id, "type": "none", "values": [None], "lora": ""}
+        )
+    xs = list(axes["x"]["values"])
+    ys = list(axes["y"]["values"])
+    zs = list(axes["z"]["values"])
+
+    if not (args.prompt or "").strip():
+        raise SystemExit("XYZ : le prompt est vide.")
+
+    # Denoise is only meaningful on FLUX.2 Klein EDIT (same rule as the UI).
+    for axis in axes.values():
+        if axis["type"] == "denoise" and (
+            ctx["mode"] != "edit" or ctx["profile_name"] not in DENOISE_PROFILES
+        ):
+            raise SystemExit(
+                "XYZ : l'axe Denoise n'est disponible qu'en EDIT avec FLUX.2 Klein 9B."
+            )
+
+    for axis_id in AXIS_IDS:
+        axis = axes[axis_id]
+        type_id = axis["type"]
+        if type_id in {"prompt_sr", "negative_sr"}:
+            search = sr_search(axis["values"])
+            if not search:
+                raise SystemExit(f"Axe {axis_id.upper()} : texte recherché vide.")
+            if type_id == "negative_sr":
+                if search not in (args.negative or ""):
+                    raise SystemExit(
+                        f"Axe {axis_id.upper()} : « {search} » absent du negative prompt."
+                    )
+            elif search not in (args.prompt or "") and search not in (args.negative or ""):
+                raise SystemExit(
+                    f"Axe {axis_id.upper()} : « {search} » absent du prompt "
+                    "et du negative prompt."
+                )
+        elif type_id == "steps":
+            if any(value < 1 or value > 100 for value in axis["values"]):
+                raise SystemExit(f"Axe {axis_id.upper()} : Steps doit rester entre 1 et 100.")
+        elif type_id == "cfg":
+            if any(value < 0 or value > 20 for value in axis["values"]):
+                raise SystemExit(f"Axe {axis_id.upper()} : CFG doit rester entre 0 et 20.")
+        elif type_id == "denoise":
+            if any(value < 0 or value > 1 for value in axis["values"]):
+                raise SystemExit(f"Axe {axis_id.upper()} : Denoise doit rester entre 0 et 1.")
+        elif type_id == "lora":
+            if not axis["lora"]:
+                raise SystemExit(f"Axe {axis_id.upper()} : aucun LoRA choisi.")
+            if any(value < 0 or value > 1 for value in axis["values"]):
+                raise SystemExit(f"Axe {axis_id.upper()} : force LoRA entre 0 et 1.")
+
+    # ------------------------------------------------------------------
+    # Source / reference
+    # ------------------------------------------------------------------
+    run_dir = (
+        ctx["automation_root"]
+        / "xyz"
+        / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.urandom(2).hex()}"
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"XYZ_START: {run_dir}", flush=True)
+    try:
+        control = connect_control(ctx)
+    except (ControlError, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        raise SystemExit(1)
+    comfy = ComfyClient(
+        ctx["comfy_endpoint"], timeout=args.timeout, temp_dir=comfy_temp_dir(ctx["cfg"])
+    )
+    progress = ComfyProgress(
+        ctx["comfy_endpoint"],
+        comfy.client_id,
+        lambda data: print(
+            "PROGRESS: " + json.dumps(data, separators=(",", ":")), flush=True
+        ),
+    )
+    try:
+        session_id = str(job.get("session") or "").strip()
+        sdata: dict[str, Any] | None = None
+        reference_path: Path | None = None
+        if session_id:
+            sdata = store.load(session_id)
+            orig_doc = current_document(control, sdata)
+            base_abs = store.base_path(sdata)
+            selection = [int(value) for value in sdata["selection"]]
+            if not base_abs.exists():
+                base_abs = run_dir / "base.png"
+                save_composite(
+                    control, ctx["automation_root"], base_abs, int(orig_doc["index"])
+                )
+            if args.reference:
+                reference_path = as_path(str(args.reference))
+            else:
+                reference_path = session_reference_path(store, sdata)
+        else:
+            orig_doc = current_document(control)
+            inspect = control.inspect()
+            if not inspect.get("hasSelection"):
+                raise SystemExit(
+                    "XYZ : aucune sélection active dans PhotoCraft. "
+                    "Fais un lasso autour de la zone à comparer."
+                )
+            selection = [int(value) for value in inspect["selectionBounds"]]
+            base_abs = run_dir / "base.png"
+            save_composite(
+                control, ctx["automation_root"], base_abs, int(orig_doc["index"])
+            )
+            if args.reference:
+                reference_path = as_path(str(args.reference))
+
+        if reference_path is not None:
+            if not reference_path.exists():
+                raise SystemExit(f"XYZ : image de référence introuvable : {reference_path}")
+            if ctx["profile_name"] not in REFERENCE_PROFILES:
+                raise SystemExit(
+                    "XYZ : l'image de référence n'est pas disponible pour ce profil."
+                )
+            if (
+                ctx["mode"] == "t2i"
+                and ctx["profile_name"] not in T2I_REFERENCE_PROFILES
+            ):
+                raise SystemExit(
+                    "XYZ : ce profil n'utilise pas la référence en T2I ; passe en EDIT."
+                )
+
+        base = Image.open(base_abs).convert("RGB")
+        x0, y0, cw, ch = compute_crop(
+            selection, base.width, base.height, ctx["padding"]
+        )
+        crop_image = base.crop((x0, y0, x0 + cw, y0 + ch))
+        crop_path = run_dir / "crop.png"
+        crop_image.save(crop_path)
+        print(f"Crop:      ({x0},{y0}) {cw}x{ch}, padding={ctx['padding']}")
+
+        # ------------------------------------------------------------------
+        # Validate sampler/scheduler/LoRA values against ComfyUI before any
+        # generation, so a typo does not waste a whole plot.
+        # ------------------------------------------------------------------
+        samplers = comfy.options("KSampler", "sampler_name")
+        schedulers = comfy.options("KSampler", "scheduler")
+        lora_options: list[str] = []
+        if any(axis["type"] == "lora" for axis in axes.values()):
+            lora_options = comfy.options("LoraLoaderModelOnly", "lora_name")
+        lora_lookup = {
+            option.replace("\\", "/").casefold(): option for option in lora_options
+        }
+        for axis_id in AXIS_IDS:
+            axis = axes[axis_id]
+            type_id = axis["type"]
+            values = axis["values"]
+            if type_id == "sampler":
+                for value in values:
+                    if str(value) not in samplers:
+                        raise SystemExit(
+                            f"Axe {axis_id.upper()} : sampler inconnu {value!r}."
+                        )
+            elif type_id == "scheduler":
+                for value in values:
+                    if str(value) not in schedulers:
+                        raise SystemExit(
+                            f"Axe {axis_id.upper()} : scheduler inconnu {value!r}."
+                        )
+            elif type_id == "lora":
+                resolved = lora_lookup.get(axis["lora"].replace("\\", "/").casefold())
+                if resolved is None:
+                    raise SystemExit(
+                        f"Axe {axis_id.upper()} : LoRA introuvable dans ComfyUI : "
+                        f"{axis['lora']}"
+                    )
+                axis["lora_resolved"] = resolved
+
+        uploaded_image = None
+        if ctx["mode"] == "edit":
+            uploaded_image = comfy.upload(
+                crop_path, f"stablecraft_xyz_{time.time_ns()}.png"
+            )
+        uploaded_reference = None
+        if reference_path is not None:
+            uploaded_reference = comfy.upload(
+                reference_path, f"stablecraft_xyz_ref_{time.time_ns()}.png"
+            )
+
+        seed = (
+            int(args.seed)
+            if args.seed is not None and int(args.seed) >= 0
+            else random.randrange(0, 2**63 - 1)
+        )
+        total = len(xs) * len(ys) * len(zs)
+        if total <= 0:
+            raise SystemExit("XYZ : aucune cellule à générer.")
+        print(
+            f"XYZ:       {total} images ({len(xs)}x{len(ys)}x{len(zs)}), seed {seed}"
+        )
+
+        cells: list[dict[str, Any]] = []
+        done = 0
+        for iz, z_value in enumerate(zs):
+            for iy, y_value in enumerate(ys):
+                for ix, x_value in enumerate(xs):
+                    settings = _xyz_cell_settings(
+                        ctx,
+                        axes,
+                        {"x": x_value, "y": y_value, "z": z_value},
+                    )
+                    prompt = settings["prompt"]
+                    negative = settings["negative"]
+                    cell_ctx = dict(ctx)
+                    cell_ctx["steps"] = settings["steps"]
+                    cell_ctx["cfg_scale"] = settings["cfg"]
+                    cell_ctx["sampler"] = settings["sampler"]
+                    cell_ctx["scheduler"] = settings["scheduler"]
+                    cell_ctx["denoise"] = settings["denoise"]
+                    cell_ctx["loras"] = settings["loras"]
+
+                    result = comfy_generate(
+                        cell_ctx,
+                        comfy,
+                        crop_path,
+                        cw,
+                        ch,
+                        prompt,
+                        negative,
+                        seed,
+                        reference_path=reference_path,
+                        uploaded_image=uploaded_image,
+                        uploaded_reference=uploaded_reference,
+                        progress=progress,
+                        progress_scope="xyz",
+                        progress_index=done,
+                        progress_count=total,
+                    )
+                    cell_path = (
+                        run_dir
+                        / "cells"
+                        / f"{done + 1:03d}_x{ix + 1}_y{iy + 1}_z{iz + 1}.png"
+                    )
+                    cell_path.parent.mkdir(parents=True, exist_ok=True)
+                    result.save(cell_path)
+                    cells.append(
+                        {
+                            "path": str(cell_path),
+                            "ix": ix,
+                            "iy": iy,
+                            "iz": iz,
+                            "x": x_value,
+                            "y": y_value,
+                            "z": z_value,
+                            "prompt": prompt,
+                            "negative": negative,
+                            "seed": seed,
+                        }
+                    )
+                    done += 1
+                    print(f"XYZ_CELL: {done}/{total} {cell_path}", flush=True)
+
+        # ------------------------------------------------------------------
+        # Plot
+        # ------------------------------------------------------------------
+        x_labels = (
+            [""]
+            if axes["x"]["type"] == "none"
+            else [format_value(value) for value in xs]
+        )
+        y_labels = (
+            [""]
+            if axes["y"]["type"] == "none"
+            else [format_value(value) for value in ys]
+        )
+        if axes["z"]["type"] == "none":
+            z_labels = [""]
+        else:
+            z_labels = [
+                _xyz_axis_value_label(axes["z"], value) for value in zs
+            ]
+        axis_lines = [
+            f"{axis_id.upper()}: {describe_axis(axes[axis_id])}"
+            for axis_id in AXIS_IDS
+            if axes[axis_id]["type"] != "none"
+        ]
+        prompt_preview = " ".join((args.prompt or "").split())
+        if len(prompt_preview) > 160:
+            prompt_preview = prompt_preview[:159].rstrip() + "…"
+        negative_preview = " ".join((args.negative or "").split())
+        if len(negative_preview) > 160:
+            negative_preview = negative_preview[:159].rstrip() + "…"
+        legend = [
+            f"Seed {seed} · CFG {ctx['cfg_scale']} · Padding {ctx['padding']} "
+            f"· Feather {ctx['feather']}"
+        ]
+        if negative_preview:
+            legend.append(f"Negative: {negative_preview}")
+        if prompt_preview:
+            legend.append(f"Prompt: {prompt_preview}")
+        options = job.get("options") if isinstance(job.get("options"), dict) else {}
+        try:
+            cell_max = int(options.get("cell_max", 512))
+        except (TypeError, ValueError):
+            cell_max = 512
+        cell_max = max(128, min(1024, cell_max))
+        try:
+            preview_max = int(options.get("preview_max", 1600))
+        except (TypeError, ValueError):
+            preview_max = 1600
+        preview_max = max(320, min(4096, preview_max))
+        dark = bool(options.get("dark", True))
+
+        plot_path = run_dir / "plot.png"
+        preview_path = run_dir / "plot_preview.png"
+        profile_manifest = ctx["manifest"]
+        if str(ctx["cfg"].get("app", {}).get("language", "en")).lower().startswith("fr"):
+            profile_label = str(
+                profile_manifest.get("label") or ctx["profile_name"]
+            )
+        else:
+            profile_label = str(
+                profile_manifest.get("label_en")
+                or profile_manifest.get("label")
+                or ctx["profile_name"]
+            )
+        plot_info = compose_plot(
+            cells=cells,
+            x_values=x_labels,
+            y_values=y_labels,
+            z_values=z_labels,
+            title=f"StableCraft XYZ — {profile_label} — {ctx['mode'].upper()}",
+            axis_lines=axis_lines,
+            legend=legend,
+            out_path=plot_path,
+            preview_path=preview_path,
+            cell_max=cell_max,
+            preview_max=preview_max,
+            dark=dark,
+            sub_grid_dir=run_dir,
+        )
+
+        resolved_job = dict(job)
+        resolved_job["resolved"] = {
+            "seed": seed,
+            "profile": ctx["profile_name"],
+            "mode": ctx["mode"],
+            "settings": {
+                "steps": ctx["steps"],
+                "cfg": ctx["cfg_scale"],
+                "sampler": ctx["sampler"],
+                "scheduler": ctx["scheduler"],
+                "denoise": ctx["denoise"],
+            },
+            "padding": ctx["padding"],
+            "feather": ctx["feather"],
+            "crop": [x0, y0, cw, ch],
+            "axes": axes,
+            "total": total,
+            "run_dir": str(run_dir),
+        }
+        (run_dir / "job.json").write_text(
+            json.dumps(resolved_job, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        (run_dir / "cells.json").write_text(
+            json.dumps(cells, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"XYZ_RESULT: {plot_path}")
+        print(f"XYZ_PREVIEW: {preview_path}")
+        print(f"XYZ_DIR: {run_dir}")
+        print(f"XYZ_DONE: {len(cells)}")
+        if plot_info.get("sub_grid_paths"):
+            for sub_path in plot_info["sub_grid_paths"]:
+                print(f"XYZ_SUBGRID: {sub_path}")
+        print("Done.")
+    except (
+        ControlError,
+        ComfyError,
+        requests.RequestException,
+        ValueError,
+        OSError,
+    ) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        comfy.interrupt()
+        raise SystemExit(1)
+    finally:
+        progress.stop()
         control.close_socket()
 
 
@@ -2038,6 +2666,18 @@ def main() -> None:
         help="EDIT only, 0..1 (FLUX.2 Klein only; forced to 1.0 elsewhere)",
     )
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument(
+        "--batch",
+        type=int,
+        default=1,
+        help="number of images to generate in this session (1..16)",
+    )
+    ap.add_argument(
+        "--xyz-job",
+        type=Path,
+        default=None,
+        help="JSON job for an X/Y/Z plot run",
+    )
     ap.add_argument("--dry-run", action="store_true", help="only save the composite and crop")
     ap.add_argument("--no-apply", action="store_true", help="generate but do not insert into PhotoCraft")
     ap.add_argument("--save-preview", action="store_true", help="also save a flattened after.png")
@@ -2066,6 +2706,54 @@ def main() -> None:
         help="user LoRA to apply (repeatable, max 10, strength 0..1)",
     )
     args = ap.parse_args()
+    xyz_job: dict[str, Any] | None = None
+    if args.xyz_job:
+        try:
+            xyz_job = json.loads(args.xyz_job.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"XYZ job illisible : {exc}") from exc
+        if not isinstance(xyz_job, dict):
+            raise SystemExit("XYZ job invalide : objet JSON attendu.")
+        if xyz_job.get("profile"):
+            args.profile = str(xyz_job["profile"])
+        if xyz_job.get("mode") in {"edit", "t2i"}:
+            args.mode = str(xyz_job["mode"])
+        args.prompt = str(xyz_job.get("prompt") or args.prompt)
+        args.negative = str(xyz_job.get("negative") or "")
+        settings = xyz_job.get("settings") or {}
+        if isinstance(settings, dict):
+            if settings.get("steps") is not None:
+                args.steps = int(settings["steps"])
+            if settings.get("cfg") is not None:
+                args.cfg = float(settings["cfg"])
+            if settings.get("sampler"):
+                args.sampler = str(settings["sampler"])
+            if settings.get("scheduler"):
+                args.scheduler = str(settings["scheduler"])
+            if settings.get("denoise") is not None:
+                args.denoise = float(settings["denoise"])
+        if xyz_job.get("padding") is not None:
+            args.padding = int(xyz_job["padding"])
+        if xyz_job.get("feather") is not None:
+            args.feather = int(xyz_job["feather"])
+        if xyz_job.get("seed") is not None:
+            args.seed = int(xyz_job["seed"])
+        if xyz_job.get("reference"):
+            args.reference = Path(str(xyz_job["reference"]))
+            args.reference_name = xyz_job.get("reference_name")
+        args.lora = []
+        for item in xyz_job.get("loras") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            try:
+                strength = float(item.get("strength", 1.0))
+            except (TypeError, ValueError):
+                strength = 1.0
+            args.lora.append(f"{name}={strength}")
+
     loras = parse_lora_args(args.lora)
 
     cfg = load_config(args.config)
@@ -2123,46 +2811,54 @@ def main() -> None:
     if mode != "edit" or profile_name not in DENOISE_PROFILES:
         denoise = 1.0
 
-    if args.reference and not (args.session_mode or args.session):
+    if args.reference and not (
+        args.session_mode or args.session or xyz_job is not None
+    ):
         raise SystemExit(
-            "--reference nécessite --session-mode (nouvelle session) ou --session <id>."
+            "--reference nécessite --session-mode (nouvelle session), --session <id> "
+            "ou --xyz-job."
         )
     if args.reference and mode == "t2i" and profile_name not in T2I_REFERENCE_PROFILES:
         raise SystemExit(
             "Ce profil n'utilise pas la référence en T2I ; passe en mode EDIT."
         )
 
+    ctx = {
+        "args": args,
+        "cfg": cfg,
+        "profile_name": profile_name,
+        "mode": mode,
+        "pcfg": pcfg,
+        "manifest": manifest,
+        "comfy_endpoint": comfy_endpoint,
+        "host": host,
+        "port": port,
+        "token_path": token_path,
+        "automation_root": automation_root,
+        "padding": padding,
+        "feather": feather,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
+        "sampler": sampler,
+        "scheduler": scheduler,
+        "denoise": denoise,
+        "ref_boost": ref_boost,
+        "grounding_px": grounding_px,
+        "unet": unet,
+        "text_encoder": text_encoder,
+        "vae": vae,
+        "lora": lora,
+        "lora_strength": lora_strength,
+        "loras": loras,
+    }
+    if args.sessions_dir:
+        cfg.setdefault("app", {})["sessions_dir"] = str(args.sessions_dir)
+
+    if xyz_job is not None:
+        run_xyz(ctx, xyz_job)
+        return
+
     if args.session_mode or args.session or args.apply:
-        ctx = {
-            "args": args,
-            "cfg": cfg,
-            "profile_name": profile_name,
-            "mode": mode,
-            "pcfg": pcfg,
-            "manifest": manifest,
-            "comfy_endpoint": comfy_endpoint,
-            "host": host,
-            "port": port,
-            "token_path": token_path,
-            "automation_root": automation_root,
-            "padding": padding,
-            "feather": feather,
-            "steps": steps,
-            "cfg_scale": cfg_scale,
-            "sampler": sampler,
-            "scheduler": scheduler,
-            "denoise": denoise,
-            "ref_boost": ref_boost,
-            "grounding_px": grounding_px,
-            "unet": unet,
-            "text_encoder": text_encoder,
-            "vae": vae,
-            "lora": lora,
-            "lora_strength": lora_strength,
-            "loras": loras,
-        }
-        if args.sessions_dir:
-            cfg.setdefault("app", {})["sessions_dir"] = str(args.sessions_dir)
         run_session_mode(ctx)
         return
 

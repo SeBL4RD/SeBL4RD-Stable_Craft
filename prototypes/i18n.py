@@ -216,9 +216,15 @@ EN: dict[str, str] = {
     "LoRA": "LoRA",
     "LoRA Manager": "LoRA Manager",
     "Sélectionner un LoRA": "Select a LoRA",
+    "Monter": "Up",
+    "Dossiers": "Folders",
+    "Racine": "Root",
+    "Recherche dans tous les dossiers…": "Searching all folders…",
+    "Aucun LoRA à ce niveau — ouvre un dossier.": (
+        "No LoRA at this level — open a folder."
+    ),
     "Détails": "Details",
     "Grille": "Grid",
-    "Charger plus": "Load more",
     "Utiliser ce LoRA": "Use this LoRA",
     "Vérification des LoRA…": "Checking LoRA…",
     "{count}/{max} LoRA": "{count}/{max} LoRA",
@@ -257,11 +263,11 @@ EN: dict[str, str] = {
         "ComfyUI list loaded: {count} visible LoRA. Generation will validate each name."
     ),
     "Profil actuel : {profile}": "Current profile: {profile}",
-    "La liste et les miniatures viennent de ComfyUI LoRA Manager. Aucun fichier n'est copié.": (
-        "The list and thumbnails come from ComfyUI LoRA Manager. Nothing is copied."
+    "Dossiers et miniatures viennent de ComfyUI LoRA Manager. Aucun fichier n'est copié.": (
+        "Folders and thumbnails come from ComfyUI LoRA Manager. Nothing is copied."
     ),
     "Rechercher": "Search",
-    "Page {page}/{pages} · {total} LoRA": "Page {page}/{pages} · {total} LoRA",
+    "{total} LoRA": "{total} LoRA",
     "Aucun LoRA sélectionné. Clique sur « Ajouter un LoRA » pour en choisir un.": (
         "No LoRA selected. Click “Add a LoRA” to choose one."
     ),
@@ -559,6 +565,158 @@ EN: dict[str, str] = {
     "Toujours en cours. Vérifie que ComfyUI tourne, puis clique Vérifier.": (
         "Still checking. Make sure ComfyUI is running, then click Check."
     ),
+    # Gallery / batch / progress / clipboard
+    "Au premier plan": "Always on top",
+    "Coller": "Paste",
+    "Presse-papiers": "Clipboard",
+    "Impossible de lire le presse-papiers.\n\n{details}": (
+        "Could not read the clipboard.\n\n{details}"
+    ),
+    "Le presse-papiers ne contient pas d'image.": (
+        "The clipboard does not contain an image."
+    ),
+    "Favori : {error}": "Favorite: {error}",
+    " · {count} favori(s)": " · {count} favorite(s)",
+    "Clique sur une vignette pour appliquer.": "Click a thumbnail to apply.",
+    "Image {index}/{count}": "Image {index}/{count}",
+    "Cellule {index}/{count}": "Cell {index}/{count}",
+    "Progression indisponible…": "Progress unavailable…",
+    "{count} images · seeds {seeds}": "{count} images · seeds {seeds}",
+    "aléatoires": "random",
+    # XYZ tool
+    "XYZ Plot": "XYZ Plot",
+    "StableCraft — XYZ Plot": "StableCraft — XYZ Plot",
+    "Guide XYZ Plot": "XYZ Plot guide",
+    "Seed XYZ": "XYZ seed",
+    "Aléatoire": "Random",
+    "Même seed fixe pour toutes les cellules.": (
+        "Same fixed seed for every cell."
+    ),
+    "Aucun": "None",
+    "Lancer": "Run",
+    "Ouvrir le dossier": "Open folder",
+    "Ouvrir l'image": "Open image",
+    "Nouveau plot": "New plot",
+    "Le résultat apparaîtra ici.": "The result will appear here.",
+    "{profile} · {mode} · {selection}\nPrompt et réglages repris de la fenêtre principale.": (
+        "{profile} · {mode} · {selection}\n"
+        "Prompt and settings taken from the main window."
+    ),
+    "sélection actuelle": "current selection",
+    "session sélectionnée": "selected session",
+    "Axe désactivé.": "Axis disabled.",
+    "Ex. euler, dpmpp_2m": "E.g. euler, dpmpp_2m",
+    "Ex. simple, karras": "E.g. simple, karras",
+    "Ex. 8, 12, 16, 20 — plages 5-15(+2) ou 5-15[5]": (
+        "E.g. 8, 12, 16, 20 — ranges 5-15(+2) or 5-15[5]"
+    ),
+    "Ex. 0.4, 0.6, 0.8, 1.0": "E.g. 0.4, 0.6, 0.8, 1.0",
+    "Forces : 0.25, 0.5, 0.75, 1.0": "Strengths: 0.25, 0.5, 0.75, 1.0",
+    "Ex. 1.0, 2.0, 3.5": "E.g. 1.0, 2.0, 3.5",
+    "1re valeur = texte recherché. Ex. chat, chien, loup": (
+        "1st value = search text. E.g. cat, dog, wolf"
+    ),
+    "1re valeur = texte recherché (aussi 1er remplacement). Ex. chat, chien, loup": (
+        "1st value = search text (also the 1st replacement). "
+        "E.g. cat, dog, wolf"
+    ),
+    "1re valeur = texte recherché, dans le negative prompt. Ex. flou, net": (
+        "1st value = search text, in the negative prompt. E.g. blurry, sharp"
+    ),
+    "Aucun LoRA visible dans ComfyUI.": "No LoRA visible in ComfyUI.",
+    "Axe {axis} : aucune valeur.": "Axis {axis}: no value.",
+    "Axe {axis} : Steps doit rester entre 1 et 100.": (
+        "Axis {axis}: Steps must stay between 1 and 100."
+    ),
+    "Axe {axis} : Denoise doit rester entre 0 et 1.": (
+        "Axis {axis}: Denoise must stay between 0 and 1."
+    ),
+    "L'axe Denoise n'est disponible qu'en EDIT avec FLUX.2 Klein 9B.": (
+        "The Denoise axis is only available in EDIT with FLUX.2 Klein 9B."
+    ),
+    "Axe {axis} : CFG doit rester entre 0 et 20.": (
+        "Axis {axis}: CFG must stay between 0 and 20."
+    ),
+    "Axe {axis} : choisis un LoRA.": "Axis {axis}: choose a LoRA.",
+    "Choisir un LoRA…": "Choose a LoRA…",
+    "Choisis un LoRA avec le bouton, puis les forces.": (
+        "Choose a LoRA with the button, then the strengths."
+    ),
+    "Axe {axis} : force LoRA entre 0 et 1.": (
+        "Axis {axis}: LoRA strength must stay between 0 and 1."
+    ),
+    "Axe {axis} : sampler inconnu {value}.": (
+        "Axis {axis}: unknown sampler {value}."
+    ),
+    "Axe {axis} : scheduler inconnu {value}.": (
+        "Axis {axis}: unknown scheduler {value}."
+    ),
+    "Axe {axis} : texte recherché vide.": "Axis {axis}: empty search text.",
+    "Axe {axis} : « {search} » absent du negative prompt.": (
+        "Axis {axis}: “{search}” is not in the negative prompt."
+    ),
+    "Axe {axis} : « {search} » absent du prompt et du negative prompt.": (
+        "Axis {axis}: “{search}” is not in the prompt or the negative prompt."
+    ),
+    "Choisis au moins un axe.": "Choose at least one axis.",
+    "— {error}": "— {error}",
+    "{count} image(s) à générer": "{count} image(s) to generate",
+    " — attention, cela peut être long.": " — this may take a while.",
+    "ComfyUI déconnecté.": "ComfyUI disconnected.",
+    "Une génération est déjà en cours.": "A generation is already running.",
+    "Installe les modèles manquants avant de lancer.": (
+        "Install the missing models before running."
+    ),
+    "Trop d'images : maximum 100 cellules pour un plot.": (
+        "Too many images: maximum 100 cells per plot."
+    ),
+    "Le seed du XYZ plot doit être un entier positif fixe.": (
+        "The XYZ seed must be a fixed positive integer."
+    ),
+    "Vérifie les réglages dans la fenêtre principale.": (
+        "Check the settings in the main window."
+    ),
+    "Préparation…": "Preparing…",
+    "Génération en cours…": "Generating…",
+    "Application dans PhotoCraft…": "Applying in PhotoCraft…",
+    "Annulé.": "Cancelled.",
+    "Annulé — les cellules déjà générées sont conservées.": (
+        "Cancelled — already generated cells are kept."
+    ),
+    "Erreur.": "Error.",
+    "Terminé.": "Done.",
+    "{count} cellule(s) générée(s).": "{count} cell(s) generated.",
+    "Les cellules déjà générées sont conservées.": (
+        "Already generated cells are kept."
+    ),
+    "Aucun aperçu.": "No preview.",
+    "Un XYZ Plot est en cours. L'annuler et fermer ?": (
+        "An XYZ Plot is running. Cancel it and close?"
+    ),
+    "XYZ Plot en cours…": "XYZ Plot running…",
+    "XYZ LoRA : {error}": "XYZ LoRA: {error}",
+    "PhotoCraft et ComfyUI doivent être connectés.": (
+        "PhotoCraft and ComfyUI must be connected."
+    ),
+    "Écris le prompt à comparer dans la fenêtre principale.": (
+        "Write the prompt to compare in the main window."
+    ),
+    "Fais un lasso, ou sélectionne un calque StableCraft pour utiliser sa sélection d'origine.": (
+        "Draw a lasso, or select a StableCraft layer to use its original selection."
+    ),
+    "Sampler": "Sampler",
+    "Scheduler": "Scheduler",
+    "Steps": "Steps",
+    "Denoise": "Denoise",
+    "CFG scale": "CFG scale",
+    "Prompt S/R": "Prompt S/R",
+    "Negative prompt S/R": "Negative prompt S/R",
+    "Chargement": "Loading",
+    "Text Encoder": "Text Encoder",
+    "VAE Decode": "VAE Decode",
+    "VAE Encode": "VAE Encode",
+    "Génération": "Generation",
+    "Préparation": "Preparation",
 }
 
 

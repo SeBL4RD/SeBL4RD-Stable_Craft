@@ -42,7 +42,8 @@ YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
 CREATE_NO_WINDOW = 0x08000000
-PICKER_PAGE_SIZE = 40
+PICKER_PAGE_SIZE = 100
+ROOT_FOLDER_IID = "__root__"
 PREVIEW_SIZE = 160
 ROW_THUMB_SIZE = 84
 
@@ -903,6 +904,12 @@ class LoraPicker(tk.Toplevel):
         self.total_pages = 0
         self.selected_name = ""
         self.view = "details"
+        self.folder = ""
+        if current:
+            normalized = str(current).replace("\\", "/")
+            if "/" in normalized:
+                self.folder = normalized.rsplit("/", 1)[0]
+        self._suppress_folder_event = False
         self._closed = False
         self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self._request_id = 0
@@ -933,6 +940,8 @@ class LoraPicker(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
 
         self._build(label)
+        self._update_folder_path()
+        self._load_folders()
         self.after(80, self._poll)
         self._schedule_search(immediate=True)
 
@@ -964,7 +973,7 @@ class LoraPicker(tk.Toplevel):
         tk.Label(
             header,
             text=tr(
-                "La liste et les miniatures viennent de ComfyUI LoRA Manager. "
+                "Dossiers et miniatures viennent de ComfyUI LoRA Manager. "
                 "Aucun fichier n'est copié."
             ),
             bg=BG,
@@ -1006,8 +1015,72 @@ class LoraPicker(tk.Toplevel):
         self.grid_btn.pack(side="left", padx=(4, 0))
         self._update_view_buttons()
 
-        self.content = tk.Frame(self, bg=BG)
-        self.content.pack(fill="both", expand=True, padx=12)
+        path_row = tk.Frame(header, bg=BG)
+        path_row.pack(fill="x", pady=(6, 0))
+        self.up_btn = self._button(path_row, tr("Monter"), self._go_up, bg=PANEL_2)
+        self.up_btn.pack(side="left")
+        self.up_btn.config(state="disabled")
+        self.folder_label = tk.Label(
+            path_row,
+            text=tr("Racine"),
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=680,
+            font=("Segoe UI", 8),
+        )
+        self.folder_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=12)
+        sidebar = tk.Frame(body, bg=BG)
+        sidebar.pack(side="left", fill="y", padx=(0, 10))
+        tk.Label(
+            sidebar,
+            text=tr("Dossiers"),
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(fill="x", pady=(0, 4))
+        folder_frame = tk.Frame(sidebar, bg=BG)
+        folder_frame.pack(fill="both", expand=True)
+        style = ttk.Style(self)
+        style.configure(
+            "LoraFolders.Treeview",
+            background=PANEL,
+            fieldbackground=PANEL,
+            foreground=FG,
+            rowheight=22,
+            borderwidth=0,
+            font=("Segoe UI", 9),
+        )
+        style.map(
+            "LoraFolders.Treeview",
+            background=[("selected", ACCENT)],
+            foreground=[("selected", "white")],
+        )
+        self.folder_tree = ttk.Treeview(
+            folder_frame,
+            show="tree",
+            selectmode="browse",
+            style="LoraFolders.Treeview",
+        )
+        self.folder_tree.column("#0", width=210, stretch=False)
+        folder_scroll = ttk.Scrollbar(
+            folder_frame, orient="vertical", command=self.folder_tree.yview
+        )
+        self.folder_tree.configure(yscrollcommand=folder_scroll.set)
+        folder_scroll.pack(side="right", fill="y")
+        self.folder_tree.pack(side="left", fill="both", expand=True)
+        self.folder_tree.insert(
+            "", "end", iid=ROOT_FOLDER_IID, text=tr("Racine"), open=True
+        )
+        self.folder_tree.bind("<<TreeviewSelect>>", self._on_folder_select)
+
+        self.content = tk.Frame(body, bg=BG)
+        self.content.pack(side="left", fill="both", expand=True)
 
         footer = tk.Frame(self, bg=BG, padx=14, pady=10)
         footer.pack(fill="x", side="bottom")
@@ -1024,9 +1097,6 @@ class LoraPicker(tk.Toplevel):
         self.status.pack(fill="x", pady=(0, 6))
         actions = tk.Frame(footer, bg=BG)
         actions.pack(fill="x")
-        self.more_btn = self._button(actions, tr("Charger plus"), self._load_more, bg=PANEL_2)
-        self.more_btn.pack(side="left")
-        self.more_btn.pack_forget()
         self.use_btn = self._button(actions, tr("Utiliser ce LoRA"), self._use_selected, bg=ACCENT)
         self.use_btn.pack(side="right")
         self.use_btn.config(state="disabled")
@@ -1083,6 +1153,126 @@ class LoraPicker(tk.Toplevel):
             self._start_thumbnails()
 
     # ------------------------------------------------------------------
+    # Folders
+    # ------------------------------------------------------------------
+
+    def _load_folders(self) -> None:
+        def work() -> None:
+            tree: dict[str, Any] = {}
+            try:
+                tree = self.api.unified_folder_tree()
+            except Exception:  # noqa: BLE001
+                tree = {}
+            if not tree:
+                try:
+                    tree = self._tree_from_names(self.api.comfy_names())
+                except Exception:  # noqa: BLE001
+                    tree = {}
+            self._queue.put(("folders", tree))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _tree_from_names(names: list[str]) -> dict[str, Any]:
+        tree: dict[str, Any] = {}
+        for name in names:
+            parts = str(name).replace("\\", "/").split("/")[:-1]
+            node = tree
+            for part in parts:
+                if part:
+                    node = node.setdefault(part, {})
+        return tree
+
+    @staticmethod
+    def _folder_iid(path: str) -> str:
+        return f"folder:{path}" if path else ROOT_FOLDER_IID
+
+    def _apply_folder_tree(self, tree: dict[str, Any]) -> None:
+        reload_root = False
+        self._suppress_folder_event = True
+        try:
+            for child in self.folder_tree.get_children(ROOT_FOLDER_IID):
+                self.folder_tree.delete(child)
+            self._insert_folders(ROOT_FOLDER_IID, "", tree)
+            target = self._folder_iid(self.folder)
+            if self.folder_tree.exists(target):
+                self.folder_tree.selection_set(target)
+                self.folder_tree.see(target)
+            else:
+                reload_root = bool(self.folder)
+                self.folder_tree.selection_set(ROOT_FOLDER_IID)
+                self.folder = ""
+        finally:
+            self._suppress_folder_event = False
+        self._update_folder_path()
+        if reload_root and not self._closed:
+            self._schedule_search(immediate=True)
+
+    def _insert_folders(
+        self, parent_iid: str, parent_path: str, tree: dict[str, Any]
+    ) -> None:
+        for name in sorted(tree, key=lambda value: str(value).casefold()):
+            if not name:
+                continue
+            path = f"{parent_path}/{name}" if parent_path else str(name)
+            iid = self._folder_iid(path)
+            self.folder_tree.insert(
+                parent_iid, "end", iid=iid, text=str(name), open=False
+            )
+            children = tree[name] if isinstance(tree[name], dict) else {}
+            self._insert_folders(iid, path, children)
+
+    def _on_folder_select(self, _event: object = None) -> None:
+        if self._suppress_folder_event:
+            return
+        selection = self.folder_tree.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        folder = (
+            ""
+            if iid == ROOT_FOLDER_IID
+            else iid[len("folder:") :]
+            if iid.startswith("folder:")
+            else ""
+        )
+        search_active = bool(self.search_var.get())
+        if folder == self.folder and not search_active:
+            self._update_folder_path()
+            return
+        self.folder = folder
+        if search_active:
+            self.search_var.set("")
+        self._update_folder_path()
+        self._schedule_search(immediate=True)
+
+    def _update_folder_path(self) -> None:
+        self.folder_label.config(
+            text=self.folder.replace("/", " / ") if self.folder else tr("Racine")
+        )
+        self.up_btn.config(state="disabled" if not self.folder else "normal")
+
+    def _go_up(self) -> None:
+        if not self.folder:
+            return
+        parent = self.folder.rsplit("/", 1)[0] if "/" in self.folder else ""
+        self._select_folder(parent)
+
+    def _select_folder(self, path: str) -> None:
+        iid = self._folder_iid(path)
+        if self.folder_tree.exists(iid):
+            self.folder_tree.selection_set(iid)
+            self.folder_tree.see(iid)
+            return
+        if path == self.folder:
+            return
+        self.folder = path
+        if self.search_var.get():
+            self.search_var.set("")
+        self._update_folder_path()
+        self._schedule_search(immediate=True)
+
+    # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
 
@@ -1120,11 +1310,21 @@ class LoraPicker(tk.Toplevel):
         self._page_loading = True
         self._update_footer()
         search = self.search_var.get().strip()
-        self.status.config(text=tr("Chargement de la liste…"), fg=MUTED)
+        folder = None if search else self.folder
+        self.status.config(
+            text=(
+                tr("Recherche dans tous les dossiers…")
+                if search
+                else tr("Chargement de la liste…")
+            ),
+            fg=MUTED,
+        )
 
         def work() -> None:
             try:
-                data = self.api.list_loras(page, PICKER_PAGE_SIZE, search)
+                data = self.api.list_loras(
+                    page, PICKER_PAGE_SIZE, search, folder=folder
+                )
                 if not self._comfy_loaded:
                     try:
                         self._comfy_names = self.api.comfy_names()
@@ -1134,8 +1334,14 @@ class LoraPicker(tk.Toplevel):
                 items = []
                 for raw in data.get("items", []):
                     value = normalize_api_item(raw, self._comfy_names)
-                    if value is not None:
-                        items.append(value)
+                    if value is None:
+                        continue
+                    if (
+                        folder is not None
+                        and str(value.get("folder") or "") != folder
+                    ):
+                        continue
+                    items.append(value)
                 self._fallback = False
                 self._queue.put(("page", request_id, page, data, items, None))
             except Exception as exc:  # noqa: BLE001
@@ -1147,15 +1353,25 @@ class LoraPicker(tk.Toplevel):
                     term = search.casefold()
                     for name in names:
                         path = Path(str(name).replace("\\", "/"))
-                        folder = "" if str(path.parent) in {"", "."} else str(path.parent).replace("\\", "/")
+                        item_folder = (
+                            ""
+                            if str(path.parent) in {"", "."}
+                            else str(path.parent).replace("\\", "/")
+                        )
                         label = path.name
-                        if term and term not in label.casefold() and term not in folder.casefold():
+                        if folder is not None and item_folder != folder:
+                            continue
+                        if (
+                            term
+                            and term not in label.casefold()
+                            and term not in item_folder.casefold()
+                        ):
                             continue
                         all_items.append(
                             {
                                 "name": str(name),
                                 "label": label,
-                                "folder": folder,
+                                "folder": item_folder,
                                 "arch": "",
                                 "architecture": "",
                                 "has_text_encoder": False,
@@ -1186,10 +1402,6 @@ class LoraPicker(tk.Toplevel):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _load_more(self) -> None:
-        if self.page < self.total_pages and not self._page_loading:
-            self._start_page_load(self.page + 1, self._request_id, reset=False)
-
     def _poll(self) -> None:
         try:
             while True:
@@ -1197,6 +1409,10 @@ class LoraPicker(tk.Toplevel):
                 kind = item[0]
                 if kind == "page":
                     self._handle_page(item)
+                elif kind == "folders":
+                    self._apply_folder_tree(
+                        item[1] if isinstance(item[1], dict) else {}
+                    )
                 elif kind == "thumb":
                     self._handle_thumb(item[1], bool(item[2]), str(item[3]))
                 elif kind == "thumbs_done":
@@ -1254,6 +1470,10 @@ class LoraPicker(tk.Toplevel):
             self._update_selection_status()
         if self.view == "grid":
             self._start_thumbnails()
+        # Load the whole list in the background: the picker has no "load more"
+        # button, so every page is fetched as soon as the previous one arrives.
+        if self.page < self.total_pages and not self._closed:
+            self._start_page_load(self.page + 1, request_id, reset=False)
 
     def _item_by_name(self, name: str) -> dict[str, Any] | None:
         target = str(name or "").casefold()
@@ -1273,11 +1493,17 @@ class LoraPicker(tk.Toplevel):
         self._thumb_keys.clear()
         self._tree = None
         if not self.items:
-            text = (
-                tr("Chargement…")
-                if self._page_loading
-                else tr("Aucun LoRA trouvé.")
+            folder_iid = self._folder_iid(self.folder)
+            has_subfolders = (
+                self.folder_tree.exists(folder_iid)
+                and bool(self.folder_tree.get_children(folder_iid))
             )
+            if self._page_loading:
+                text = tr("Chargement…")
+            elif has_subfolders:
+                text = tr("Aucun LoRA à ce niveau — ouvre un dossier.")
+            else:
+                text = tr("Aucun LoRA trouvé.")
             tk.Label(
                 self.content,
                 text=text,
@@ -1528,19 +1754,9 @@ class LoraPicker(tk.Toplevel):
             self.status.config(text=tr("Aucun LoRA trouvé."), fg=MUTED)
         else:
             self.status.config(
-                text=tr(
-                    "Page {page}/{pages} · {total} LoRA",
-                    page=self.page,
-                    pages=max(1, self.total_pages),
-                    total=self.total or len(self.items),
-                ),
+                text=tr("{total} LoRA", total=self.total or len(self.items)),
                 fg=MUTED,
             )
-        if self.page < self.total_pages:
-            self.more_btn.pack(side="left")
-            self.more_btn.config(state="disabled" if self._page_loading else "normal")
-        else:
-            self.more_btn.pack_forget()
         if not self.selected_name:
             self.use_btn.config(state="disabled")
 

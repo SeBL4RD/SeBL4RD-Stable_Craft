@@ -83,6 +83,13 @@ RED = "#ef4444"
 YELLOW = "#eab308"
 BORDER = "#3a3a44"
 
+# Gallery cells use a fixed 4:3 box.  The thumbnail is contained inside it,
+# so 16:9 and portrait results stay readable without being cropped.
+GALLERY_IMAGE_W = 128
+GALLERY_IMAGE_H = 96
+GALLERY_CELL_W = GALLERY_IMAGE_W + 4
+GALLERY_CELL_H = GALLERY_IMAGE_H + 4
+
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
 SUPPORTED_PROFILES = {
@@ -293,9 +300,28 @@ class StableCraftApp(tk.Tk):
         self.session_data: dict[str, Any] | None = None
         self.current_selection: list[int] | None = None
         self.gallery_images: list[tk.PhotoImage] = []
-        self.gallery_buttons: dict[int, tk.Button] = {}
+        self.gallery_buttons: dict[int, tk.Canvas] = {}
+        self.gallery_canvases: dict[int, tk.Canvas] = {}
+        self._gallery_items: list[tk.Canvas] = []
+        self._gallery_item_indices: list[int] = []
+        self._gallery_star_centers: dict[int, tuple[int, int]] = {}
+        self._gallery_cell_w = GALLERY_CELL_W
+        self._gallery_cell_h = GALLERY_CELL_H
+        self._gallery_columns = 0
+        self._gallery_reflow_job: str | None = None
+        self._gallery_scroll_to: int | None = None
         self.pending_session_id: str | None = None
         self.pending_generation: int | None = None
+        self.batch_var = tk.StringVar(value="1")
+        self.topmost_var = tk.BooleanVar(value=False)
+        self.job_kind = "generate"
+        self.xyz_window: Any = None
+        self.progress_value = 0
+        self.progress_text = "Prêt."
+        self._progress_indeterminate = False
+        self._progress_position = 0.0
+        self._progress_animation: str | None = None
+        self._cancel_requested = False
         self.reference_path: Path | None = None
         self.reference_name: str | None = None
         self.reference_thumb_image: tk.PhotoImage | None = None
@@ -511,6 +537,279 @@ class StableCraftApp(tk.Tk):
         self.main_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
         return "break"
 
+    # ------------------------------------------------------------------
+    # Gallery (wrapping grid)
+    # ------------------------------------------------------------------
+
+    def _bind_gallery_wheel(self, widget: tk.Misc) -> None:
+        widget.bind("<MouseWheel>", self._on_gallery_wheel)
+        widget.bind("<Button-4>", self._on_gallery_wheel_button)
+        widget.bind("<Button-5>", self._on_gallery_wheel_button)
+
+    def _on_gallery_wheel(self, event: tk.Event) -> str:
+        delta = int(getattr(event, "delta", 0) or 0)
+        if delta:
+            self.gallery_canvas.yview_scroll(int(-delta / 120), "units")
+        return "break"
+
+    def _on_gallery_wheel_button(self, event: tk.Event) -> str:
+        self.gallery_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        return "break"
+
+    def _on_gallery_canvas_configure(self, event: tk.Event) -> None:
+        try:
+            self.gallery_canvas.itemconfigure(
+                self.gallery_window, width=max(1, event.width)
+            )
+        except tk.TclError:
+            pass
+        if self._gallery_reflow_job is not None:
+            try:
+                self.after_cancel(self._gallery_reflow_job)
+            except tk.TclError:
+                pass
+        self._gallery_reflow_job = self.after(30, self._layout_gallery)
+
+    def _gallery_height_for(self, columns: int) -> int:
+        rows = max(1, math.ceil(len(self._gallery_items) / max(1, columns)))
+        visible_rows = min(3, rows)
+        return visible_rows * (self._gallery_cell_h + 2) + 2
+
+    def _layout_gallery(self) -> None:
+        self._gallery_reflow_job = None
+        if not self._gallery_items:
+            self._gallery_columns = 0
+            return
+        width = self.gallery_canvas.winfo_width()
+        if width <= 1:
+            width = 480
+        item_w = max(40, self._gallery_cell_w + 2)
+        columns = max(1, (width - 4) // item_w)
+        desired_height = self._gallery_height_for(columns)
+        if int(self.gallery_canvas.cget("height")) != desired_height:
+            self.gallery_canvas.configure(height=desired_height)
+        if columns == self._gallery_columns and all(
+            item.winfo_manager() for item in self._gallery_items
+        ):
+            self.gallery_inner.update_idletasks()
+            self.gallery_canvas.configure(
+                scrollregion=self.gallery_canvas.bbox("all")
+            )
+            if (
+                self._gallery_scroll_to is not None
+                and self.gallery_canvas.winfo_height() > 1
+            ):
+                self._scroll_gallery_to(self._gallery_scroll_to)
+                self._gallery_scroll_to = None
+            return
+        self._gallery_columns = columns
+        for index, item in enumerate(self._gallery_items):
+            item.grid(
+                row=index // columns,
+                column=index % columns,
+                padx=1,
+                pady=1,
+                sticky="n",
+            )
+        self.gallery_inner.update_idletasks()
+        self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
+        if (
+            self._gallery_scroll_to is not None
+            and self.gallery_canvas.winfo_height() > 1
+        ):
+            self._scroll_gallery_to(self._gallery_scroll_to)
+            self._gallery_scroll_to = None
+
+    def _scroll_gallery_to(self, index: int) -> None:
+        try:
+            position = self._gallery_item_indices.index(index)
+        except ValueError:
+            return
+        if not 0 <= position < len(self._gallery_items):
+            return
+        item = self._gallery_items[position]
+        self.gallery_inner.update_idletasks()
+        canvas_h = max(1, self.gallery_canvas.winfo_height())
+        inner_h = max(1, self.gallery_inner.winfo_height())
+        if inner_h <= canvas_h + 1:
+            self.gallery_canvas.yview_moveto(0.0)
+            return
+        y = max(0, int(item.winfo_y()))
+        target = max(0.0, min(1.0, (y - 4) / max(1, inner_h - canvas_h)))
+        self.gallery_canvas.yview_moveto(target)
+
+    def _gallery_set_star(self, canvas: tk.Canvas, visible: bool) -> None:
+        try:
+            canvas.itemconfigure("star", state="normal" if visible else "hidden")
+        except tk.TclError:
+            pass
+
+    def _gallery_leave(self, index: int, canvas: tk.Canvas) -> None:
+        # Read the current favorite instead of the value captured when the item
+        # was created: toggling the star must survive the mouse leaving.
+        favorite = False
+        if self.session_data:
+            generations = self.session_data.get("generations", [])
+            if 0 <= index < len(generations):
+                favorite = bool(generations[index].get("favorite"))
+        self._gallery_set_star(canvas, favorite)
+
+    def _make_gallery_item(
+        self,
+        index: int,
+        generation: dict[str, Any],
+        image: tk.PhotoImage,
+        selected: bool,
+        cell_w: int,
+        cell_h: int,
+        image_w: int,
+        image_h: int,
+    ) -> tk.Canvas:
+        favorite = bool(generation.get("favorite"))
+        canvas = tk.Canvas(
+            self.gallery_inner,
+            width=cell_w,
+            height=cell_h,
+            bg="#111114",
+            highlightthickness=1,
+            highlightbackground=ACCENT if selected else BORDER,
+            cursor="hand2",
+        )
+        offset_x = max(0, (cell_w - image_w) // 2)
+        offset_y = max(0, (cell_h - image_h) // 2)
+        canvas.create_image(offset_x, offset_y, image=image, anchor="nw")
+
+        # Star badge, on the case's top-right corner.
+        star_x = cell_w - 10
+        star_y = 10
+        self._gallery_star_centers[index] = (star_x, star_y)
+        canvas.create_oval(
+            star_x - 8,
+            star_y - 8,
+            star_x + 8,
+            star_y + 8,
+            fill="#111114",
+            outline="#000000",
+            tags=("star", "star_bg"),
+        )
+        canvas.create_text(
+            star_x,
+            star_y,
+            text="★" if favorite else "☆",
+            fill=YELLOW if favorite else MUTED,
+            font=("Segoe UI", 10, "bold"),
+            tags=("star", "star_fg"),
+        )
+        if not favorite:
+            canvas.itemconfigure("star", state="hidden")
+
+        # Number badge, on the image's bottom-left corner.
+        label = f"#{index + 1}"
+        try:
+            number_font = tkfont.Font(family="Segoe UI", size=8, weight="bold")
+            text_w = number_font.measure(label)
+            text_h = number_font.metrics("linespace")
+        except Exception:  # noqa: BLE001
+            text_w, text_h = 20, 12
+        badge_w = text_w + 8
+        badge_h = text_h + 4
+        badge_x = cell_w - badge_w - 3
+        badge_y = cell_h - badge_h - 3
+        canvas.create_rectangle(
+            badge_x,
+            badge_y,
+            badge_x + badge_w,
+            badge_y + badge_h,
+            fill="#111114",
+            outline="#000000",
+            tags=("num", "num_bg"),
+        )
+        canvas.create_text(
+            badge_x + badge_w / 2,
+            badge_y + badge_h / 2,
+            text=label,
+            fill=FG,
+            font=("Segoe UI", 8, "bold"),
+            tags=("num", "num_fg"),
+        )
+
+        canvas.bind(
+            "<Enter>",
+            lambda _event, c=canvas: self._gallery_set_star(c, True),
+        )
+        canvas.bind(
+            "<Leave>",
+            lambda _event, i=index, c=canvas: self._gallery_leave(i, c),
+        )
+        canvas.bind(
+            "<Button-1>",
+            lambda event, idx=index, c=canvas: self._gallery_click(event, idx, c),
+        )
+        self._bind_gallery_wheel(canvas)
+        return canvas
+
+    def _gallery_click(
+        self, event: tk.Event, index: int, canvas: tk.Canvas
+    ) -> str:
+        if self.running:
+            return "break"
+        star = self._gallery_star_centers.get(index)
+        if star is not None and abs(event.x - star[0]) <= 12 and abs(
+            event.y - star[1]
+        ) <= 12:
+            self._toggle_favorite(index)
+            return "break"
+        closest = canvas.find_closest(event.x, event.y)
+        if closest:
+            tags = canvas.gettags(closest[0])
+            if "star" in tags:
+                self._toggle_favorite(index)
+                return "break"
+        self._apply_generation(index)
+        return "break"
+
+    def _toggle_favorite(self, index: int) -> None:
+        if self.running or not self.session_data:
+            return
+        generations = self.session_data.get("generations", [])
+        if not 0 <= index < len(generations):
+            return
+        generation = generations[index]
+        favorite = not bool(generation.get("favorite"))
+        generation["favorite"] = favorite
+        try:
+            self.session_store.save(self.session_data)
+        except Exception as exc:  # noqa: BLE001
+            self._log(tr("Favori : {error}", error=short_error(exc)))
+        canvas = self.gallery_canvases.get(index)
+        if canvas is not None:
+            try:
+                canvas.itemconfigure(
+                    "star_fg",
+                    text="★" if favorite else "☆",
+                    fill=YELLOW if favorite else MUTED,
+                )
+            except tk.TclError:
+                pass
+            self._gallery_set_star(canvas, favorite)
+        self._update_gallery_title()
+
+    def _update_gallery_title(self) -> None:
+        if not self.session_data:
+            return
+        generations = self.session_data.get("generations", [])
+        favorites = sum(
+            1 for generation in generations if generation.get("favorite")
+        )
+        text = tr(
+            "Galerie — StableCraft [{session}] · {count} génération(s)",
+            session=self.session_id,
+            count=len(generations),
+        )
+        if favorites:
+            text += tr(" · {count} favori(s)", count=favorites)
+        self.gallery_title.config(text=text)
+
     def _section(
         self,
         parent: tk.Misc,
@@ -607,6 +906,19 @@ class StableCraftApp(tk.Tk):
         self.language_combo.pack(side="left")
         self.language_combo.bind("<<ComboboxSelected>>", self._on_language_change)
         self._lock_scroll_wheel(self.language_combo)
+        self.topmost_check = tk.Checkbutton(
+            title_row,
+            text=tr("Au premier plan"),
+            variable=self.topmost_var,
+            command=self._toggle_topmost,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 8),
+        )
+        self.topmost_check.pack(side="right", padx=(0, 10))
         tk.Label(
             header,
             text="Le lasso de Stable.art, dans PhotoCraft, avec ComfyUI.",
@@ -790,9 +1102,43 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 8),
         )
         self.ref_hint.pack(fill="x", pady=(2, 4))
+        ref_buttons = tk.Frame(ref_side, bg=BG)
+        ref_buttons.pack(anchor="w", fill="x")
+        self.ref_choose = tk.Button(
+            ref_buttons,
+            text=tr("Choisir…"),
+            command=self._choose_reference,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=7,
+            pady=2,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.ref_choose.pack(side="left")
+        self.ref_paste = tk.Button(
+            ref_buttons,
+            text=tr("Coller"),
+            command=self._paste_reference,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=7,
+            pady=2,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+        )
+        self.ref_paste.pack(side="left", padx=(4, 0))
         self.ref_remove = tk.Button(
-            ref_side,
-            text="Retirer",
+            ref_buttons,
+            text=tr("Retirer"),
             command=self._remove_reference,
             bg=PANEL_2,
             fg=FG,
@@ -800,13 +1146,13 @@ class StableCraftApp(tk.Tk):
             activeforeground=FG,
             relief="flat",
             bd=0,
-            padx=8,
+            padx=7,
             pady=2,
             font=("Segoe UI", 8),
             cursor="hand2",
             state="disabled",
         )
-        self.ref_remove.pack(anchor="w")
+        self.ref_remove.pack(side="left", padx=(4, 0))
         self._draw_reference_tile()
 
         prof_frame = self._section(main, "PROFIL")
@@ -1049,6 +1395,27 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.generate_btn.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            actions,
+            text="×",
+            bg=BG,
+            fg=MUTED,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(side="left", padx=(6, 2))
+        self.batch_spin = ttk.Spinbox(
+            actions,
+            from_=1,
+            to=16,
+            increment=1,
+            textvariable=self.batch_var,
+            width=3,
+        )
+        self.batch_spin.pack(side="left")
+        self._lock_scroll_wheel(self.batch_spin)
+        self.batch_spin.bind("<KeyRelease>", lambda _event: self._update_generate_state())
+        self.batch_spin.bind("<<Increment>>", lambda _event: self._update_generate_state())
+        self.batch_spin.bind("<<Decrement>>", lambda _event: self._update_generate_state())
+        self.batch_spin.bind("<FocusOut>", lambda _event: self._normalize_batch())
         self.cancel_btn = tk.Button(
             actions,
             text="Annuler",
@@ -1065,14 +1432,44 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.cancel_btn.pack(side="left", padx=(8, 0))
+        self.xyz_btn = tk.Button(
+            actions,
+            text="XYZ Plot…",
+            command=self._open_xyz,
+            bg=PANEL_2,
+            fg=FG,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=9,
+            pady=9,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        )
+        self.xyz_btn.pack(side="left", padx=(8, 0))
         self.action_hint = tk.Label(
             main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
         )
         self.action_hint.pack(fill="x", pady=(3, 0))
 
-        self.progress = ttk.Progressbar(main, mode="indeterminate")
-        self.progress.pack(fill="x", pady=(10, 0))
-        self.progress_label = tk.Label(main, text="Prêt.", bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.progress_canvas = tk.Canvas(
+            main,
+            height=24,
+            bg=PANEL,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        self.progress_canvas.pack(fill="x", pady=(10, 0))
+        self.progress_canvas.bind("<Configure>", lambda _event: self._draw_progress())
+        self.progress_label = tk.Label(
+            main,
+            text="Prêt.",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 9),
+        )
         self.progress_label.pack(fill="x", pady=(2, 0))
 
         gallery_frame = self._section(main, "GALERIE")
@@ -1085,30 +1482,39 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 9),
         )
         self.gallery_title.pack(fill="x")
+        gallery_body = tk.Frame(gallery_frame, bg="#111114")
+        gallery_body.pack(fill="x", pady=(4, 0))
         self.gallery_canvas = tk.Canvas(
-            gallery_frame,
-            height=124,
+            gallery_body,
+            height=160,
             bg="#111114",
             highlightthickness=1,
             highlightbackground=BORDER,
         )
+        self.gallery_scroll = ttk.Scrollbar(
+            gallery_body, orient="vertical", command=self.gallery_canvas.yview
+        )
+        self.gallery_canvas.configure(yscrollcommand=self.gallery_scroll.set)
+        self.gallery_scroll.pack(side="right", fill="y")
+        self.gallery_canvas.pack(side="left", fill="both", expand=True)
         self.gallery_inner = tk.Frame(self.gallery_canvas, bg="#111114")
         self.gallery_window = self.gallery_canvas.create_window(
             (0, 0), window=self.gallery_inner, anchor="nw"
         )
-        self.gallery_scroll = ttk.Scrollbar(
-            gallery_frame, orient="horizontal", command=self.gallery_canvas.xview
-        )
-        self.gallery_canvas.configure(xscrollcommand=self.gallery_scroll.set)
-        self.gallery_canvas.pack(fill="x", pady=(4, 0))
-        self.gallery_scroll.pack(fill="x")
         self.gallery_inner.bind(
             "<Configure>",
-            lambda _event: self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all")),
+            lambda _event: self.gallery_canvas.configure(
+                scrollregion=self.gallery_canvas.bbox("all")
+            ),
         )
+        self.gallery_canvas.bind(
+            "<Configure>", self._on_gallery_canvas_configure
+        )
+        self._bind_gallery_wheel(self.gallery_canvas)
+        self._bind_gallery_wheel(self.gallery_inner)
         self.gallery_hint = tk.Label(
             gallery_frame,
-            text="Clique sur un calque StableCraft pour retrouver ses générations.",
+            text="Clique sur une vignette pour appliquer.",
             bg=BG,
             fg=MUTED,
             anchor="w",
@@ -1531,6 +1937,17 @@ class StableCraftApp(tk.Tk):
             )
         )
 
+    def _batch_count(self) -> int:
+        try:
+            value = int(float(self.batch_var.get().replace(",", ".")))
+        except (TypeError, ValueError):
+            value = 1
+        return max(1, min(16, value))
+
+    def _normalize_batch(self) -> None:
+        self.batch_var.set(str(self._batch_count()))
+        self._update_generate_state()
+
     def _form_values(self) -> dict[str, Any] | None:
         try:
             reference = self._reference_active_path()
@@ -1596,7 +2013,8 @@ class StableCraftApp(tk.Tk):
 
     def _update_generate_state(self) -> None:
         values = self._form_values()
-        duplicate = self._duplicate_generation()
+        batch = self._batch_count()
+        duplicate = self._duplicate_generation() if batch == 1 else None
         reuse = self._reusable_session()
         has_input = self.has_selection or reuse
         if not self.models_ok:
@@ -1647,12 +2065,24 @@ class StableCraftApp(tk.Tk):
             )
         else:
             self.action_hint.config(text="")
-        for button in self.gallery_buttons.values():
-            button.config(state="disabled" if self.running else "normal")
         radio_state = "disabled" if self.running else "normal"
         self.edit_radio.config(state=radio_state)
         self.t2i_radio.config(state=radio_state)
         self.profile_manage_btn.config(state="disabled" if self.running else "normal")
+        self.batch_spin.config(state="disabled" if self.running else "normal")
+        self.xyz_btn.config(state="disabled" if self.running else "normal")
+        for name in ("ref_choose", "ref_paste"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.config(state="disabled" if self.running else "normal")
+        if hasattr(self, "ref_remove"):
+            self.ref_remove.config(
+                state=(
+                    "disabled"
+                    if self.running or not self.reference_path
+                    else "normal"
+                )
+            )
         if self.quant_frame.winfo_manager():
             self.quant_combo.config(state="disabled" if self.running else "readonly")
 
@@ -1913,6 +2343,15 @@ class StableCraftApp(tk.Tk):
                                 self.sampler_var.set(samplers[0])
                             if self.scheduler_var.get() not in schedulers:
                                 self.scheduler_var.set(schedulers[0])
+                elif kind == "progress":
+                    self._handle_progress(item[1])
+                elif kind.startswith("xyz_"):
+                    if self.xyz_window is not None:
+                        try:
+                            if self.xyz_window.winfo_exists():
+                                self.xyz_window.handle_event(kind, str(item[1]))
+                        except Exception:  # noqa: BLE001
+                            pass
                 elif kind == "log":
                     self._log(str(item[1]))
                 elif kind == "drop":
@@ -1929,6 +2368,13 @@ class StableCraftApp(tk.Tk):
                     self.pending_session_id = str(item[1])
                 elif kind == "generation_line":
                     self.pending_generation = int(item[1])
+                    if self.running:
+                        self._refresh_running_session()
+                        if self.job_kind != "xyz":
+                            self._set_progress(
+                                self.progress_value,
+                                tr("Application dans PhotoCraft…"),
+                            )
                 elif kind == "update":
                     version = str(item[1])
                     self.update_url = str(item[2])
@@ -2058,6 +2504,74 @@ class StableCraftApp(tk.Tk):
                     self._model_manager.refresh()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _open_xyz(self) -> None:
+        if self.running:
+            return
+        if not self.pc_ok or not self.comfy_ok:
+            messagebox.showwarning(
+                tr("XYZ Plot"),
+                tr("PhotoCraft et ComfyUI doivent être connectés."),
+            )
+            return
+        if not self.models_ok:
+            self._open_model_manager()
+            return
+        if not (self.has_selection or self._reusable_session()):
+            messagebox.showwarning(
+                tr("Sélection vide"),
+                tr(
+                    "Fais un lasso, ou sélectionne un calque StableCraft pour "
+                    "utiliser sa sélection d'origine."
+                ),
+            )
+            return
+        if not self.prompt_text.get("1.0", "end").strip():
+            messagebox.showwarning(
+                tr("Prompt vide"),
+                tr("Écris le prompt à comparer dans la fenêtre principale."),
+            )
+            return
+        if self.xyz_window is not None:
+            try:
+                if self.xyz_window.winfo_exists():
+                    self.xyz_window.deiconify()
+                    self.xyz_window.lift()
+                    self.xyz_window.focus_force()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        from xyz_plot_ui import XYZPlotWindow  # noqa: PLC0415
+
+        self.xyz_window = XYZPlotWindow(self)
+
+    def _start_xyz_bridge(self, job_path: Path, label: str) -> None:
+        if self.running:
+            return
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror(tr("Python ComfyUI introuvable"), error)
+            return
+        bridge = ROOT / "prototypes" / "bridge_cli.py"
+        if not bridge.exists():
+            messagebox.showerror(tr("Bridge introuvable"), str(bridge))
+            return
+        command = [
+            python,
+            str(bridge),
+            "--config",
+            str(self.config_path),
+            "--xyz-job",
+            str(job_path),
+        ]
+        self.job_kind = "xyz"
+        self._start_bridge(command, label)
+        if not self.running:
+            self.job_kind = "generate"
+
+    def _on_xyz_closed(self, window: Any) -> None:
+        if self.xyz_window is window:
+            self.xyz_window = None
 
     def _open_model_manager(self) -> None:
         from model_manager import ModelManager  # noqa: PLC0415 - avoids import cycle
@@ -2370,7 +2884,66 @@ class StableCraftApp(tk.Tk):
         if selected:
             self._set_reference_from_source(Path(selected))
 
-    def _set_reference_from_source(self, source: Path) -> None:
+    def _paste_reference(self) -> None:
+        if self.running:
+            return
+        if not self._reference_supported():
+            messagebox.showinfo(tr("Image de référence"), self._reference_help())
+            return
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror(tr("Python ComfyUI introuvable"), error)
+            return
+        script = ROOT / "prototypes" / "clipboard_image.py"
+        if not script.exists():
+            messagebox.showerror(tr("Presse-papiers"), str(script))
+            return
+        output = self._pending_root() / "clipboard.png"
+        flags = 0x08000000 if os.name == "nt" else 0
+        try:
+            result = subprocess.run(
+                [python, str(script), "--output", str(output)],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=flags,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(tr("Presse-papiers"), short_error(exc))
+            return
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            messagebox.showerror(
+                tr("Presse-papiers"),
+                tr(
+                    "Impossible de lire le presse-papiers.\n\n{details}",
+                    details=details[:800],
+                ),
+            )
+            return
+        try:
+            info = json.loads(result.stdout.strip().splitlines()[-1])
+        except Exception:  # noqa: BLE001
+            info = {}
+        path = Path(str(info.get("path") or output))
+        if not path.exists():
+            messagebox.showerror(
+                tr("Presse-papiers"),
+                tr("Le presse-papiers ne contient pas d'image."),
+            )
+            return
+        display = (
+            path.name
+            if str(info.get("source") or "") == "file"
+            else tr("Presse-papiers") + ".png"
+        )
+        self._set_reference_from_source(path, display_name=display)
+
+    def _set_reference_from_source(
+        self, source: Path, display_name: str | None = None
+    ) -> None:
         if self.running:
             return
         if not self._reference_supported():
@@ -2433,11 +3006,12 @@ class StableCraftApp(tk.Tk):
         except Exception:  # noqa: BLE001
             pass
 
+        display = display_name or source.name
         if not pending and self.session_data:
             self.session_data["reference"] = {
                 "image": "reference.png",
                 "thumb": "reference_thumb.png",
-                "name": source.name,
+                "name": display,
                 "enabled": True,
                 "width": info.get("width"),
                 "height": info.get("height"),
@@ -2450,7 +3024,7 @@ class StableCraftApp(tk.Tk):
         self._display_reference(
             image_path,
             thumb_path,
-            source.name,
+            display,
             True,
             pending=pending,
         )
@@ -3205,6 +3779,19 @@ class StableCraftApp(tk.Tk):
             # replaced another: this is a new selection, not the previous one.
             self._reset_generation_fields()
 
+    def _refresh_running_session(self) -> None:
+        """Reload the gallery after each image of a running batch."""
+        session_id = self.pending_session_id or self.session_id
+        if not session_id:
+            return
+        try:
+            data = self.session_store.load(session_id)
+        except Exception:  # noqa: BLE001
+            return
+        self.session_id = session_id
+        self.session_data = data
+        self._populate_gallery()
+
     def _load_session(self, session_id: str | None, force: bool = False) -> None:
         if session_id == self.session_id and not force:
             return
@@ -3331,6 +3918,13 @@ class StableCraftApp(tk.Tk):
             child.destroy()
         self.gallery_images.clear()
         self.gallery_buttons.clear()
+        self.gallery_canvases.clear()
+        self._gallery_items.clear()
+        self._gallery_item_indices.clear()
+        self._gallery_star_centers.clear()
+        self._gallery_cell_w = GALLERY_CELL_W
+        self._gallery_cell_h = GALLERY_CELL_H
+        self._gallery_columns = 0
 
         if not self.session_data:
             self.gallery_title.config(text=tr("Aucune galerie"))
@@ -3339,82 +3933,103 @@ class StableCraftApp(tk.Tk):
             )
             self._set_document_preview()
             self._set_result_preview(None)
+            self._gallery_scroll_to = None
+            self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
+            self.gallery_canvas.configure(height=160)
             return
 
         generations = self.session_data.get("generations", [])
         current = int(self.session_data.get("current", -1))
-        self.gallery_title.config(
-            text=tr(
-                "Galerie — StableCraft [{session}] · {count} génération(s)",
-                session=self.session_id,
-                count=len(generations),
-            )
-        )
+        self._update_gallery_title()
         if not generations:
             self.gallery_hint.config(text=tr("Aucune génération dans cette session."))
             self._set_document_preview()
             self._set_result_preview(None)
+            self._gallery_scroll_to = None
+            self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
+            self.gallery_canvas.configure(height=160)
             return
 
         self._set_document_preview()
         self._set_result_preview(current if current >= 0 else None)
         session_dir = self.session_store.directory(str(self.session_id))
+        photos: list[tuple[int, dict[str, Any], tk.PhotoImage, int, int]] = []
         for index, generation in enumerate(generations):
             thumb_rel = generation.get("thumb") or generation.get("result")
-            path = session_dir / str(thumb_rel) if thumb_rel else None
-            if not path or not path.exists():
-                path = session_dir / str(generation.get("result", ""))
+            thumb_path = session_dir / str(thumb_rel) if thumb_rel else None
+            result_path = session_dir / str(generation.get("result", ""))
+            path = thumb_path if thumb_path and thumb_path.exists() else result_path
             try:
                 image = tk.PhotoImage(file=str(path))
             except Exception:  # noqa: BLE001
                 continue
-            factor = max(1, math.ceil(max(image.width() / 104, image.height() / 104)))
-            if factor > 1:
-                image = image.subsample(factor, factor)
+            if (
+                image.width() > GALLERY_IMAGE_W
+                or image.height() > GALLERY_IMAGE_H
+            ):
+                # Legacy square/portrait thumbnails do not fit the 4:3 box.
+                # Prefer the full result, then subsample it to fit.
+                if result_path.exists() and result_path != path:
+                    try:
+                        image = tk.PhotoImage(file=str(result_path))
+                    except Exception:  # noqa: BLE001
+                        pass
+                factor = max(
+                    1,
+                    math.ceil(
+                        max(
+                            image.width() / GALLERY_IMAGE_W,
+                            image.height() / GALLERY_IMAGE_H,
+                        )
+                    ),
+                )
+                if factor > 1:
+                    image = image.subsample(factor, factor)
+            photos.append((index, generation, image, image.width(), image.height()))
+
+        if not photos:
+            self.gallery_hint.config(
+                text=tr("Aucune génération dans cette session.")
+            )
+            self._gallery_scroll_to = None
+            self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
+            self.gallery_canvas.configure(height=160)
+            return
+
+        cell_w = GALLERY_CELL_W
+        cell_h = GALLERY_CELL_H
+        self._gallery_cell_w = cell_w
+        self._gallery_cell_h = cell_h
+        for index, generation, image, image_w, image_h in photos:
             self.gallery_images.append(image)
             selected = index == current
-            button = tk.Button(
-                self.gallery_inner,
-                image=image,
-                text=f"#{index + 1}",
-                compound="top",
-                bg=ACCENT if selected else PANEL_2,
-                fg="white" if selected else FG,
-                activebackground=ACCENT_ACTIVE,
-                activeforeground="white",
-                relief="flat",
-                bd=0,
-                padx=4,
-                pady=3,
-                font=("Segoe UI", 8),
-                state="disabled" if self.running else "normal",
-                command=lambda idx=index: self._apply_generation(idx),
+            canvas = self._make_gallery_item(
+                index,
+                generation,
+                image,
+                selected,
+                cell_w,
+                cell_h,
+                image_w,
+                image_h,
             )
-            button.pack(side="left", padx=3, pady=3)
-            self.gallery_buttons[index] = button
+            self.gallery_canvases[index] = canvas
+            self.gallery_buttons[index] = canvas
+            self._gallery_items.append(canvas)
+            self._gallery_item_indices.append(index)
 
-        if 0 <= current < len(generations):
-            generation = generations[current]
-            prompt = " ".join(str(generation.get("prompt", "")).split())
-            if len(prompt) > 72:
-                prompt = prompt[:71] + "…"
-            self.gallery_hint.config(
-                text=(
-                    f"#{current + 1} · {str(generation.get('mode', 'edit')).upper()} · "
-                    f"{generation.get('profile', '?')} · "
-                    f"seed {generation.get('seed', '?')} · {prompt}"
-                )
-            )
-        else:
-            self.gallery_hint.config(
-                text=tr("Clique sur une vignette pour appliquer cette génération.")
-            )
-        self.gallery_canvas.update_idletasks()
-        self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
+        self.gallery_hint.config(text=tr("Clique sur une vignette pour appliquer."))
+        self._gallery_scroll_to = current if 0 <= current < len(generations) else 0
+        self._layout_gallery()
+        self.gallery_inner.update_idletasks()
+        bbox = self.gallery_canvas.bbox("all")
+        if bbox:
+            self.gallery_canvas.configure(scrollregion=bbox)
 
     def _apply_generation(self, index: int) -> None:
         if self.running or not self.session_id or not self.session_data:
             return
+        self.job_kind = "generate"
         generations = self.session_data.get("generations", [])
         if not 0 <= index < len(generations):
             return
@@ -3473,6 +4088,8 @@ class StableCraftApp(tk.Tk):
     def _generate(self) -> None:
         if self.running:
             return
+        self.job_kind = "generate"
+        batch = self._batch_count()
         if self.profile_key not in SUPPORTED_PROFILES:
             messagebox.showinfo(
                 tr("Bientôt"), tr("Ce profil sera ajouté plus tard.")
@@ -3491,7 +4108,7 @@ class StableCraftApp(tk.Tk):
                 ),
             )
             return
-        duplicate = self._duplicate_generation()
+        duplicate = self._duplicate_generation() if batch == 1 else None
         if duplicate is not None:
             messagebox.showinfo(
                 tr("Déjà généré"),
@@ -3560,6 +4177,8 @@ class StableCraftApp(tk.Tk):
         command += [
             "--seed",
             self.seed_var.get(),
+            "--batch",
+            str(batch),
             "--save-preview",
         ]
         if reuse:
@@ -3587,6 +4206,121 @@ class StableCraftApp(tk.Tk):
             tr("Régénération en cours…") if reuse else tr("Génération en cours…"),
         )
 
+    # ------------------------------------------------------------------
+    # Progress
+    # ------------------------------------------------------------------
+
+    def _draw_progress(self) -> None:
+        try:
+            self.progress_canvas.delete("all")
+        except tk.TclError:
+            return
+        width = max(1, self.progress_canvas.winfo_width())
+        height = max(1, self.progress_canvas.winfo_height())
+        self.progress_canvas.create_rectangle(
+            0, 0, width, height, fill=PANEL, outline=""
+        )
+        if self._progress_indeterminate:
+            segment = max(40, width // 5)
+            x = int(self._progress_position * (width + segment)) - segment
+            x0, x1 = max(0, x), min(width, x + segment)
+            if x1 > x0:
+                self.progress_canvas.create_rectangle(
+                    x0, 2, x1, height - 2, fill=ACCENT, outline=""
+                )
+        else:
+            filled = int(width * max(0, min(100, self.progress_value)) / 100)
+            if filled > 0:
+                self.progress_canvas.create_rectangle(
+                    0, 0, filled, height, fill=ACCENT, outline=""
+                )
+        text = self.progress_text or tr("Prêt.")
+        self.progress_canvas.create_text(
+            width // 2 + 1,
+            height // 2 + 1,
+            text=text,
+            fill="#0b0b0d",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.progress_canvas.create_text(
+            width // 2,
+            height // 2,
+            text=text,
+            fill="white",
+            font=("Segoe UI", 9, "bold"),
+        )
+
+    def _set_progress(
+        self, percent: float, text: str, *, indeterminate: bool = False
+    ) -> None:
+        self.progress_value = max(0.0, min(100.0, float(percent)))
+        self.progress_text = text or tr("Prêt.")
+        if indeterminate != self._progress_indeterminate:
+            self._progress_indeterminate = indeterminate
+            if indeterminate:
+                self._start_progress_animation()
+            else:
+                self._stop_progress_animation()
+        self._draw_progress()
+
+    def _start_progress_animation(self) -> None:
+        if self._progress_animation is not None:
+            return
+
+        def tick() -> None:
+            if not self._progress_indeterminate:
+                self._progress_animation = None
+                return
+            self._progress_position = (self._progress_position + 0.035) % 1.0
+            self._draw_progress()
+            self._progress_animation = self.after(50, tick)
+
+        self._progress_animation = self.after(50, tick)
+
+    def _stop_progress_animation(self) -> None:
+        if self._progress_animation is not None:
+            try:
+                self.after_cancel(self._progress_animation)
+            except tk.TclError:
+                pass
+            self._progress_animation = None
+
+    def _progress_start(self, label: str) -> None:
+        self._set_progress(0, label, indeterminate=True)
+        self.progress_label.config(text=label, fg=YELLOW)
+
+    def _progress_finish(self, text: str, color: str) -> None:
+        self._set_progress(100 if color == GREEN else self.progress_value, text)
+        self.progress_label.config(text=text, fg=color)
+
+    def _handle_progress(self, data: dict[str, Any]) -> None:
+        if self.job_kind == "xyz" and self.xyz_window is not None:
+            try:
+                if self.xyz_window.winfo_exists():
+                    self.xyz_window.handle_progress(data)
+            except Exception:  # noqa: BLE001
+                pass
+        percent = int(data.get("percent", 0) or 0)
+        if data.get("unavailable"):
+            self._set_progress(percent, tr("Progression indisponible…"), indeterminate=True)
+            return
+        stage = tr(str(data.get("stage") or ""))
+        scope = str(data.get("scope") or "generate")
+        try:
+            index = int(data.get("index") or 0)
+            count = int(data.get("count") or 1)
+        except (TypeError, ValueError):
+            index, count = 0, 1
+        label = f"{stage} : {percent}%" if stage else f"{percent}%"
+        if count > 1:
+            prefix = (
+                tr("Image {index}/{count}", index=index, count=count)
+                if scope == "generate"
+                else tr("Cellule {index}/{count}", index=index, count=count)
+            )
+            label = f"{prefix} · {label}"
+        self._set_progress(percent, label, indeterminate=False)
+
     def _start_bridge(self, command: list[str], label: str) -> None:
         if self.running:
             return
@@ -3596,6 +4330,7 @@ class StableCraftApp(tk.Tk):
             return
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         flags = 0x08000000 if os.name == "nt" else 0
         try:
             self.proc = subprocess.Popen(
@@ -3616,10 +4351,10 @@ class StableCraftApp(tk.Tk):
 
         self.running = True
         self.last_error = None
+        self._cancel_requested = False
         self.pending_session_id = None
         self.pending_generation = None
-        self.progress.start(12)
-        self.progress_label.config(text=label, fg=YELLOW)
+        self._progress_start(label)
         self.cancel_btn.config(state="normal")
         self._update_lora_ui()
         self._log("")
@@ -3637,6 +4372,18 @@ class StableCraftApp(tk.Tk):
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
+                continue
+            if line.startswith("PROGRESS:"):
+                try:
+                    data = json.loads(line.split(":", 1)[1].strip())
+                except (ValueError, TypeError):
+                    data = None
+                if isinstance(data, dict):
+                    self.queue.put(("progress", data))
+                continue
+            if line.startswith("XYZ_"):
+                kind, _, payload = line.partition(":")
+                self.queue.put((kind.strip().lower(), payload.strip()))
                 continue
             self.queue.put(("log", line))
             if line.startswith("Preview:"):
@@ -3657,9 +4404,12 @@ class StableCraftApp(tk.Tk):
         self.queue.put(("done", code))
 
     def _finish(self, code: int) -> None:
+        if self.job_kind == "xyz":
+            self._finish_xyz(code)
+            return
         self.running = False
         loras_before_reload = copy.deepcopy(self.lora_items)
-        self.progress.stop()
+        self._stop_progress_animation()
         self.cancel_btn.config(state="disabled")
         session_id = self.pending_session_id
         self.pending_session_id = None
@@ -3683,20 +4433,47 @@ class StableCraftApp(tk.Tk):
             except Exception as exc:  # noqa: BLE001
                 self._log(tr("LoRA : {error}", error=short_error(exc)))
         self._update_lora_ui()
+        self._update_generate_state()
         if code == 0 and not self.last_error:
-            self.progress_label.config(
-                text=tr("Terminé — calque StableCraft prêt."), fg=GREEN
-            )
+            self._progress_finish(tr("Terminé — calque StableCraft prêt."), GREEN)
         elif self.last_error:
-            self.progress_label.config(text=tr("Erreur — voir le journal."), fg=RED)
-        else:
-            self.progress_label.config(
-                text=tr("Processus terminé (code {code}).", code=code), fg=YELLOW
+            self._set_progress(
+                self.progress_value, tr("Erreur — voir le journal.")
             )
+            self.progress_label.config(text=tr("Erreur — voir le journal."), fg=RED)
+        elif self._cancel_requested:
+            self._set_progress(self.progress_value, tr("Annulé."))
+            self.progress_label.config(text=tr("Annulé."), fg=YELLOW)
+        else:
+            text = tr("Processus terminé (code {code}).", code=code)
+            self._set_progress(self.progress_value, text)
+            self.progress_label.config(text=text, fg=YELLOW)
+        self.proc = None
+
+    def _finish_xyz(self, code: int) -> None:
+        self.running = False
+        self._stop_progress_animation()
+        self.cancel_btn.config(state="disabled")
+        self._update_lora_ui()
+        self._update_reference_for_profile()
+        self._update_generate_state()
+        window = self.xyz_window
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.on_bridge_done(code, self.last_error)
+            except Exception:  # noqa: BLE001
+                pass
+        self.pending_session_id = None
+        self.pending_generation = None
+        self._set_progress(0, tr("Prêt."))
+        self.progress_label.config(text=tr("Prêt."), fg=MUTED)
+        self.job_kind = "generate"
         self.proc = None
 
     def _cancel(self) -> None:
         if self.proc and self.proc.poll() is None:
+            self._cancel_requested = True
             self._log("Annulation demandée…")
             try:
                 self.proc.terminate()
@@ -3708,6 +4485,7 @@ class StableCraftApp(tk.Tk):
                 urllib.request.urlopen(request, timeout=2)
             except Exception:  # noqa: BLE001
                 pass
+            self._set_progress(self.progress_value, tr("Annulation…"))
             self.progress_label.config(text=tr("Annulation…"), fg=YELLOW)
 
     # ------------------------------------------------------------------
@@ -3771,6 +4549,13 @@ class StableCraftApp(tk.Tk):
             "Redémarre l'UI pour appliquer la langue.\n\n"
             "Restart the UI to apply the language.",
         )
+
+    def _toggle_topmost(self) -> None:
+        """Keep only the main window above other applications."""
+        try:
+            self.attributes("-topmost", bool(self.topmost_var.get()))
+        except tk.TclError:
+            pass
 
     def _check_krea_node(self) -> None:
         try:
@@ -3884,6 +4669,12 @@ class StableCraftApp(tk.Tk):
                 endpoint = str(self.cfg["comfyui"]["endpoint"]).rstrip("/")
                 request = urllib.request.Request(endpoint + "/interrupt", method="POST", data=b"")
                 urllib.request.urlopen(request, timeout=1)
+            except Exception:  # noqa: BLE001
+                pass
+        self._stop_progress_animation()
+        if self.xyz_window is not None:
+            try:
+                self.xyz_window.destroy()
             except Exception:  # noqa: BLE001
                 pass
         self.destroy()

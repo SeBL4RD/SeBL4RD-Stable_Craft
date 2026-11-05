@@ -11,25 +11,22 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
 
-**Dépôt :** [github.com/SeBL4RD/SeBL4RD-Stable_Craft](https://github.com/SeBL4RD/SeBL4RD-Stable_Craft)
-
 ## Présentation
 
 - lasso → prompt → édition → calque PhotoCraft ;
 - calque avec **masque et feather** ;
-- **galerie persistante par calque** : régénérer, comparer, changer de génération ;
+- **galerie persistante par calque** : régénérer, comparer, changer de génération,
+  favoris ;
+- génération par lot jusqu'à 16 images, appliquées dès qu'elles sont prêtes ;
+- outil **XYZ Plot** (sampler, scheduler, steps, denoise, LoRA, CFG, prompt S/R) ;
+- image de référence ;
 - régénération possible même si la sélection a été perdue ;
 - **deux modes** : EDIT (image source) ou T2I (texte seul), EDIT par défaut ;
-- **image de référence par calque** (Krea 2, FLUX.2/3 Klein et Qwen Image 2.1) ;
-- **pile de LoRA par profil** (10 max, force 0–1) avec la liste et les miniatures du
-  LoRA Manager de ComfyUI ;
-- cinq profils : FLUX.3 Klein, FLUX.2 Klein 9B, Krea 2 General Edit
-  (base + LoRA), Krea 2 Identity Edit et Qwen Image 2.1 ;
+- **gestion des LoRA** avec une UI ergonomique et des miniatures ;
+- **5 modèles disponibles** pour le moment ;
 - gestionnaire de modèles à la demande (**Localiser** / **Télécharger**) et vérification
   automatique du nœud `comfyui-krea2edit` ;
-- UI anglais/français, anglais par défaut ;
-- aucun poids de modèle dans le dépôt ;
-- aucun téléchargement silencieux.
+- UI anglais/français, anglais par défaut.
 
 
 <a href="./demo/t2i_forest.png" target="_blank"><img src="./demo/t2i_forest.png" alt="Image 1" width="400"></a> <a href="./demo/DEMO_StableCraft_EDIT.jpg" target="_blank"><img src="./demo/DEMO_StableCraft_EDIT.jpg" alt="Image 2" width="400"></a>
@@ -93,29 +90,13 @@ confirmation explicite.
 
 Notes :
 
-- **Krea 2 EDIT est expérimental** : les résultats sont irréguliers, surtout sur les
-  grandes zones. Le profil **General Edit** (base officielle + LoRA) est recommandé
-  pour l'édition générale ; le profil **Identity Edit** est un fichier fusionné adapté
-  aux personnages. En T2I, Krea 2 General Edit utilise la base seule, sans le LoRA ;
-- le GGUF `Qwen3VL-4B-Instruct-Q4_K_M.gguf` testé n'est pas compatible avec FLUX.3
-  ni Krea 2 ; StableCraft utilise le FP8 safetensors ;
-- `Qwen3-8B-Q4_K_M.gguf` fonctionne pour FLUX.2 ;
-- Qwen Image 2.1 utilise un **VAE dédié** (`qwen_image_2.1_vae_bf16.safetensors`) et un
-  text encoder **Qwen3-VL-8B**, différents de Krea 2. Le modèle GGUF est proposé en
-  Q4_K_M et Q8_0. Le text encoder officiel utilise **W4A8** par défaut
-  (`qwen3vl_8b_w4a8.safetensors`, 6,3 Go) au lieu de l'int8 (9,35 Go) : même vision
-  encoder, support W4A8 natif dans ComfyUI, environ 3 Go économisés. Choisissez **INT8**
-  dans le menu de téléchargement pour une fidélité maximale ;
-- le GGUF Qwen 2.1 doit contenir la métadonnée d'architecture `qwen_image` attendue par
-  `UnetLoaderGGUF`. Les fichiers du dépôt **Unsloth** n'en ont pas et ne sont pas
-  chargeables tels quels ; StableCraft pointe vers
-  [`Abiray/Qwen-Image-2.1-GGUF`](https://huggingface.co/Abiray/Qwen-Image-2.1-GGUF),
-  converti pour ComfyUI-GGUF ;
-- Qwen Image 2.1 utilise les nœuds **intégrés** de ComfyUI
-  (`TextEncodeQwenImage21`, `QwenImage21Cache`) : aucun nœud custom supplémentaire ;
-- Qwen Image 2.1 est sous **licence de recherche non commerciale** ;
-- les licences des modèles s'appliquent (FLUX Kommunity, Krea Community, Qwen Research,
-  etc.), séparément de la licence MIT du code.
+- **Krea 2 EDIT est expérimental** ; préférez **General Edit** (base + LoRA) pour
+  l'édition générale et **Identity Edit** pour les personnages. En T2I, General Edit
+  utilise la base seule.
+- Le GGUF `Qwen3VL-4B-Instruct-Q4_K_M.gguf` testé n'est compatible ni avec FLUX.3 ni
+  avec Krea 2 ; utilisez le FP8.
+- Qwen Image 2.1 utilise un VAE dédié et un text encoder Qwen3-VL-8B. W4A8 est la
+  valeur par défaut (6,3 Go) ; INT8 (9,35 Go) est disponible pour plus de fidélité.
 
 ---
 
@@ -161,7 +142,8 @@ L'installateur installe les paquets système manquants (Python, Tkinter, venv),
 crée `.venv`, installe `prototypes/requirements.txt`, crée `config.toml` si
 nécessaire et ajoute un raccourci applicatif. Il demande l'autorisation avant
 d'utiliser `sudo` ; utilisez `bash install.sh --yes` pour une installation sans
-confirmation. Il ne télécharge aucun modèle et ne modifie pas ComfyUI.
+confirmation. Il ne télécharge aucun modèle et ne modifie pas ComfyUI. Lancez avec
+`./StableCraft.sh` ou le raccourci applicatif.
 
 Dépendances Linux (installées automatiquement si absentes) :
 
@@ -201,7 +183,6 @@ manage = true
 root = "/home/seb/ComfyUI-Installs/ComfyUI"
 python = "/home/seb/ComfyUI-Installs/ComfyUI/.venv/bin/python"
 # Optionnel ; sinon <root>/ComfyUI/main.py ou <root>/main.py est utilisé.
-# Ne mettez pas le binaire Python ici ; utilisez un script .sh si nécessaire.
 start_command = ""
 # Ouvrir un terminal visible pour ComfyUI (sinon sortie dans le log).
 open_console = true
@@ -210,22 +191,11 @@ open_console = true
 extra_args = []
 ```
 
-`start_command` doit rester vide, pointer vers un script shell ou un point
-d'entrée `.py`, mais pas vers l'interpréteur Python. `open_console` ouvre le
-terminal du bureau quand une session graphique est disponible ; sinon
-StableCraft écrit dans `user/logs/comfyui.log`.
+`open_console` ouvre un terminal du bureau si disponible ; sinon StableCraft écrit
+dans `user/logs/comfyui.log`.
 
-PhotoCraft sous Linux est détecté automatiquement depuis :
-
-- paquet Debian `.deb`, RPM Fedora/RHEL ou paquet Arch : `/usr/bin/photocraft` ;
-- Snap : `/snap/bin/photocraft` ;
-- exports Flatpak : `ai.storyteller.photocraft` ;
-- AppImage dans `~/Applications`, `~/Downloads`, `~/Desktop`, `~/bin`,
-  `~/.local/bin` ou `~` ;
-- tarball/manuel : `/usr/local/bin`, `~/.local/bin`, `~/bin`, `/opt/photocraft` ;
-- fichiers `.desktop` installés.
-
-Renseignez `executable` seulement si PhotoCraft est installé ailleurs :
+PhotoCraft est détecté automatiquement sous Linux. S'il n'est pas détecté
+correctement, renseignez `executable` manuellement :
 
 ```toml
 [photocraft]
@@ -233,9 +203,8 @@ executable = "/usr/bin/photocraft"
 control_port = 7990
 ```
 
-L'AppImage, le `.deb`, le `.rpm`, le paquet Arch et le tarball fonctionnent. Préférez
-AppImage, `.deb`, `.rpm` ou tarball au Flatpak : le sandbox Flatpak peut bloquer
-l'accès au dossier `automation_root` de StableCraft.
+Préférez l'AppImage, le `.deb`, le `.rpm` ou le tarball ; le sandbox Flatpak peut
+bloquer `automation_root`.
 
 Si ComfyUI ne voit pas les modèles téléchargés par StableCraft, renseignez le
 dossier d'installation dans `[comfyui] root` : StableCraft y ajoutera
@@ -267,166 +236,70 @@ ComfyUI. Si votre ComfyUI écoute sur un autre port, changez `endpoint` :
 endpoint = "http://127.0.0.1:12452"
 ```
 
-Sous Windows, quand StableCraft démarre ComfyUI, il ajoute
-`--port <port de l'endpoint>` au batch `start_command` si celui-ci ne contient pas
-déjà un `--port`. Si le batch en contient un, gardez les deux ports identiques ;
-StableCraft écrit un avertissement dans le journal en cas de différence. Sous Linux,
-laissez `start_command` vide : StableCraft lance `main.py` et ajoute `--port`,
-`--disable-auto-launch` et `extra_args`.
-
-Au lancement, le lanceur :
-
-1. vérifie les chemins ;
-2. démarre ComfyUI si nécessaire et si `[comfyui] manage = true`, **sans ouvrir le
-   navigateur** ;
-3. démarre PhotoCraft avec le control channel si nécessaire ;
-4. nettoie les fichiers temporaires de « Ouvrir un fichier récent » ;
-5. ouvre l'interface.
-
-### Lancer l'application
-
-Windows : `StableCraft.bat` est un fichier batch. Double-cliquez dessus, ou lancez-le
-avec :
-
-- **cmd.exe** : `StableCraft.bat`
-- **PowerShell** : `.\StableCraft.bat`
-- **Git Bash / MSYS** : `cmd //c StableCraft.bat`
-
-Le batch utilise `py -3` s'il est disponible, sinon `python` ; Python **3.11+** et
-**Tkinter** sont requis. Si aucun ne fonctionne, il affiche les instructions
-d'installation au lieu de se fermer sans explication.
-
-Linux :
-
-```bash
-./StableCraft.sh
-# ou : bash StableCraft.sh
-```
-
-Le script shell utilise `.venv/bin/python` s'il existe.
-
-En cas de crash, consultez les journaux dans `user\logs\` (`launcher.log`, `ui.log`,
-`comfyui.log`).
-
-Si un chemin obligatoire manque, un message clair s'affiche. Les modèles manquants ne
-bloquent pas l'installation : l'UI les signale et **Générer** ouvre le gestionnaire de
-modèles avec les actions **Localiser** et **Télécharger**.
+En cas de crash, consultez `user/logs/` (`launcher.log`, `ui.log`, `comfyui.log`).
+Un chemin manquant affiche un message clair ; les modèles manquants sont signalés par
+l'UI et ouvrent le gestionnaire.
 
 ## Utilisation
 
-1. Ouvrez une image dans PhotoCraft.
-2. Faites un **lasso** autour de la zone à modifier.
-3. Dans StableCraft : choisissez le **mode** (EDIT par défaut, ou T2I), le profil,
-   écrivez le prompt, puis cliquez **Générer**.
-4. Le résultat est ajouté comme **calque StableCraft** avec un masque.
-5. La galerie du calque apparaît sous le prompt.
+Lasso → prompt → **Générer** ; le résultat devient un calque StableCraft masqué.
+En **T2I**, le prompt génère une image au format du crop, puis PhotoCraft la masque ;
+une sélection rectangulaire est préférable.
 
-En **T2I**, aucune image de scène n'est envoyée : le prompt génère une image au format
-du crop (sélection + contexte), puis PhotoCraft la masque avec la sélection. Une
-sélection rectangulaire donne un meilleur résultat qu'un lasso irrégulier.
+Mémoire persistante par calque : les générations et les réglages précédents sont
+mémorisés.
 
-### Sélection, calques et projets
+### Réglages
 
-- Une génération appartient à une **sélection** : document + calque actif + limites de
-  sélection. Un nouveau lasso, un nouveau calque créé avec **+**, ou un autre projet
-  repart avec un prompt et des réglages propres.
-- Sélectionner un calque `StableCraft [id]` existant avec sa sélection d'origine restaure
-  son prompt, ses réglages et sa galerie.
-- Les sessions sont liées à leur document (nom/chemin et taille). Ouvrir ou copier un
-  autre projet n'importe jamais les réglages du projet précédent, même à résolution
-  identique.
+- **Sampler / Scheduler** : valeurs ComfyUI ; `euler` + `simple` par défaut.
+- **Denoise** : uniquement **EDIT + FLUX.2 Klein 9B** ; forcé à `1.0` ailleurs.
+- Réglages enregistrés par génération ; les modifier invalide la détection de doublon.
 
-### Sampler, scheduler et denoise
+### Galerie et lot
 
-- **Sampler** et **Scheduler** sont disponibles dans les **Réglages**. Les valeurs
-  viennent de ComfyUI (`KSampler`), et la valeur par défaut de chaque profil est lue
-  dans `config.toml` (`sampler` / `scheduler`). `euler` + `simple` reste la base
-  recommandée pour les profils distillés ; les autres combinaisons sont autorisées.
-- **Denoise** n'apparaît qu'en **EDIT**, et n'est appliqué qu'à **FLUX.2 Klein 9B** :
-  ce profil part du latent du crop source, donc une valeur inférieure à 1.0 conserve
-  davantage l'image d'origine. `1.0` = édition complète ; `0.8–1.0` est une plage
-  raisonnable.
-- Pour les autres profils, et pour tous les T2I, le denoise est forcé à **1.0** : ils
-  partent d'un latent vide (utilisé seulement pour sa forme), donc un denoise partiel
-  partirait de zéros bruités et produirait des artefacts. Le champ est désactivé avec
-  une explication.
-- Sampler, scheduler et denoise sont enregistrés par génération dans `session.json` et
-  restaurés avec le calque ; les modifier invalide la détection de doublon.
+- **Régénérer** met à jour le même calque ; chaque génération reste dans la galerie.
+- **Favoris** : étoile enregistrée dans `session.json`.
+- **Lot** : seed fixe → `seed`, `seed+1`, … ; `-1` → aléatoire. Chaque image est
+  appliquée dès qu'elle est prête.
 
-### Régénérer et galerie
+### XYZ Plot
 
-- Même sélection → **Régénérer** met à jour le **même calque** et ajoute une vignette.
-- Cliquez sur une vignette pour appliquer cette génération, sans relancer ComfyUI.
-- Sélection perdue → sélectionnez le calque `StableCraft [id]`, puis **Régénérer**.
-- Nouvelle sélection → nouvelle galerie et nouveau calque.
-- Dupliquer un calque `StableCraft [id]` dans PhotoCraft crée une session
-  indépendante pour le clone à sa prochaine génération : le prompt, les réglages et
-  l'historique du clone ne modifient plus le calque d'origine.
+- Outil séparé ; il n'écrit jamais dans le calque courant.
+- Axes : Sampler, Scheduler, Steps, Denoise (FLUX.2 Klein 9B EDIT), LoRA, CFG,
+  Prompt S/R, Negative prompt S/R.
+- Valeurs séparées par des virgules ; plages `5-15(+2)` ou `5-15[5]`.
+- **Prompt S/R** : 1re valeur = texte recherché, toutes = remplacements
+  (prompt + negative). **Negative prompt S/R** : negative uniquement.
+- X = colonnes, Y = lignes, Z = sous-tableaux côte à côte ; **seed fixe**.
+- Sortie : `user/xyz/<run>/` (`plot.png`, `plot_z*.png`, `cells/`, `job.json`,
+  `cells.json`).
 
 ### Image de référence
 
-- cochez **Utiliser une image de référence** ;
-- cliquez sur la vignette ou déposez une image ;
-- la référence est propre au calque et se recharge quand vous revenez dessus ;
-- compatible **Krea 2**, **FLUX.2 Klein 9B**, **FLUX.3 Klein** et **Qwen Image 2.1** ;
-- en **EDIT**, le modèle reçoit **image 1 = scène** et **image 2 = référence** ;
-- en **T2I**, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence
-  comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT ;
-- décrivez dans le prompt ce que vous prenez de la référence.
-
-Exemple :
-
-> Add the black leather glove from the reference image to the man's right hand.
-> Keep the hand pose, arm, skin tone, lighting and background unchanged.
-
-Le bouton **Guide** à côté de `PROMPT` ouvre une fenêtre non bloquante avec les bonnes
-pratiques et des exemples.
+Vous pouvez ajouter une image de référence ; cliquez sur **Guide** en cas de besoin.
 
 ### LoRA
 
-- cochez **Activer les LoRA** dans la fenêtre principale ; **Gérer les LoRA…** ouvre le
-  gestionnaire ;
-- jusqu'à **10 LoRA par profil**, chacun avec sa case activer/désactiver et une force de
-  **0.00 à 1.00** ;
-- **Choisir…** ouvre un sélecteur avec une vue **Détails** (nom + dossier court) et une
-  vue **Grille** avec miniatures ;
-- la liste et les aperçus viennent du nœud custom **LoRA Manager** de ComfyUI
-  (`http://<comfyui>/loras`). StableCraft ne copie jamais un LoRA : il utilise
-  uniquement les fichiers déjà visibles par ComfyUI (`models/loras` ou
-  `extra_model_paths.yaml`) ;
-- utilisez **Ouvrir la page LoRA Manager** pour ajouter ou organiser vos fichiers, puis
-  **Actualiser** ;
-- le LoRA Manager sert des aperçus WebP ; StableCraft les convertit en petits PNG dans
-  `user/cache/lora_previews/` avec le Python de ComfyUI (Pillow). Aucun fichier de
-  modèle n'est copié ;
-- le gestionnaire avertit quand l'architecture d'un LoRA ne correspond pas au profil,
-  sans bloquer ;
-- la sélection est enregistrée par profil et copiée dans le `session.json` de chaque
-  calque, donc un ancien calque recharge ses propres LoRA.
-
-### Aperçu
-
-- **Document** : le composite PhotoCraft après application.
-- **Crop** : le résultat généré à la taille du crop, avant masque.
-
-## Langue
-
-L'UI prend en charge **l'anglais et le français**. L'anglais est la langue par défaut
-d'une nouvelle installation. Utilisez le sélecteur de langue dans l'en-tête ; le choix
-est enregistré dans `config.toml` (`[app] language`). Redémarrez l'UI pour l'appliquer.
-
-La version anglaise de ce README est dans [`README.md`](README.md).
-
-## Mises à jour
-
-StableCraft vérifie la dernière Release GitHub au démarrage. Si une version plus
-récente existe, une ligne cliquable apparaît dans l'en-tête et ouvre la page Releases.
-Vous pouvez également `git pull` le projet pour mettre à jour.
+- **10 max par profil**, force 0–1, enregistrée par profil et copiée dans
+  `session.json`.
+- Sélecteur avec navigation par dossiers et miniatures, issu du **LoRA Manager**
+  ComfyUI ; StableCraft ne copie aucun fichier.
+- Le gestionnaire avertit en cas d'architecture incompatible, sans bloquer.
 
 ## Stockage
 
-StableCraft stocke ses données dans `user/` et les modèles dans `models/`, à côté
-du projet.
+`user/` contient les sessions, les plots XYZ, les références en attente, les aperçus
+LoRA et les journaux ; `models/` contient les modèles.
+
+## Langue
+
+Anglais/français, sélecteur dans l'en-tête, enregistré dans `config.toml`
+(`[app] language`), redémarrage requis.
+
+## Mises à jour
+
+Vérification de la dernière Release GitHub au démarrage. `git pull` permet également
+de mettre à jour si vous avez téléchargé ce projet avec git.
 
 ## Crédits
 

@@ -209,7 +209,11 @@ class LoraApi:
             raise LoraApiError(str(exc)) from exc
 
     def list_loras(
-        self, page: int = 1, page_size: int = 40, search: str = ""
+        self,
+        page: int = 1,
+        page_size: int = 40,
+        search: str = "",
+        folder: str | None = None,
     ) -> dict[str, Any]:
         query: dict[str, Any] = {
             "page": max(1, int(page)),
@@ -219,10 +223,21 @@ class LoraApi:
         term = search.strip()
         if term:
             query["search"] = term
+        if folder is not None:
+            query["folder"] = folder
+            # Folder browsing shows the selected level only; its subfolders are
+            # in the tree and are opened explicitly.
+            query["recursive"] = "false"
         data = self._get_json("/api/lm/loras/list?" + urllib.parse.urlencode(query))
         if not isinstance(data, dict) or "items" not in data:
             raise LoraApiError("Réponse LoRA Manager invalide")
         return data
+
+    def unified_folder_tree(self) -> dict[str, Any]:
+        """Return the merged relative-folder tree exposed by LoRA Manager."""
+        data = self._get_json("/api/lm/loras/unified-folder-tree")
+        tree = data.get("tree", {}) if isinstance(data, dict) else {}
+        return tree if isinstance(tree, dict) else {}
 
     def relative_paths(self, search: str, limit: int = 100) -> list[str]:
         query = urllib.parse.urlencode(

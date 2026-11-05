@@ -41,9 +41,7 @@ control_token_file = ""
 automation_root = ""
 
 [comfyui]
-# 8188 = port par défaut de ComfyUI. Si ton ComfyUI écoute sur un autre port,
-# change endpoint ci-dessous. Sous Windows, StableCraft ajoute automatiquement
-# --port au start_command si celui-ci n'en contient pas déjà un.
+# 8188 = port par défaut de ComfyUI. Change-le si ComfyUI écoute ailleurs.
 endpoint = "http://127.0.0.1:8188"
 # true  = StableCraft peut démarrer/arrêter/redémarrer ComfyUI.
 # false = ComfyUI est géré en externe (Comfy Desktop, service, terminal).
@@ -58,8 +56,6 @@ root = ""
 # Lanceur ComfyUI.
 # Windows : vide = <root>/run_nvidia_gpu.bat
 # Linux   : vide = <root>/main.py ou <root>/ComfyUI/main.py, avec [comfyui] python.
-# Ne mets PAS le binaire Python ici : laisse vide pour lancer main.py, ou donne
-# un script .sh. Exemple : start_command = "/home/seb/ComfyUI/start.sh"
 start_command = ""
 # Linux : ouvrir ComfyUI dans une fenêtre de terminal visible.
 # false = lancer en arrière-plan, sortie dans user/logs/comfyui.log.

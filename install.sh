@@ -93,6 +93,15 @@ else
     python3 -c 'import ensurepip' >/dev/null 2>&1 || MISSING+=("$VENV_PKG")
 fi
 
+# Clipboard tools for the reference Paste button: wl-paste on Wayland,
+# xclip on X11 (also works under XWayland). Keep both available.
+case "$PM" in
+    apt|dnf|pacman)
+        command -v wl-paste >/dev/null 2>&1 || MISSING+=("wl-clipboard")
+        command -v xclip >/dev/null 2>&1 || MISSING+=("xclip")
+        ;;
+esac
+
 if [ ${#MISSING[@]} -gt 0 ]; then
     # Remove duplicates while keeping the order.
     UNIQUE=()
