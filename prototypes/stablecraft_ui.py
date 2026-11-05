@@ -326,6 +326,14 @@ class StableCraftApp(tk.Tk):
         self.batch_var = tk.StringVar(value="1")
         self.topmost_var = tk.BooleanVar(value=False)
         self.job_kind = "generate"
+        self._apply_only = False
+        # Layer created by the last normal generation. The PhotoCraft layer
+        # change it causes must not reload the prompt/settings fields.
+        self._job_layer_id: int | None = None
+        # Favorites toggled while a bridge process is running. The bridge owns
+        # session.json during a generation, so persist them at the end.
+        self._pending_favorites: dict[int, bool] = {}
+        self._pending_favorites_session: str | None = None
         self.xyz_window: Any = None
         self.progress_value = 0
         self.progress_text = "Prêt."
@@ -793,8 +801,6 @@ class StableCraftApp(tk.Tk):
     def _gallery_click(
         self, event: tk.Event, index: int, canvas: tk.Canvas
     ) -> str:
-        if self.running:
-            return "break"
         star = self._gallery_star_centers.get(index)
         if star is not None and abs(event.x - star[0]) <= 12 and abs(
             event.y - star[1]
@@ -807,11 +813,13 @@ class StableCraftApp(tk.Tk):
             if "star" in tags:
                 self._toggle_favorite(index)
                 return "break"
+        if self.running:
+            return "break"
         self._apply_generation(index)
         return "break"
 
     def _toggle_favorite(self, index: int) -> None:
-        if self.running or not self.session_data:
+        if not self.session_data:
             return
         generations = self.session_data.get("generations", [])
         if not 0 <= index < len(generations):
@@ -819,10 +827,18 @@ class StableCraftApp(tk.Tk):
         generation = generations[index]
         favorite = not bool(generation.get("favorite"))
         generation["favorite"] = favorite
-        try:
-            self.session_store.save(self.session_data)
-        except Exception as exc:  # noqa: BLE001
-            self._log(tr("Favori : {error}", error=short_error(exc)))
+        if self.running:
+            # The bridge writes session.json while it generates. Keep the
+            # change in memory and merge it back once the job is over.
+            if self._pending_favorites_session != self.session_id:
+                self._pending_favorites.clear()
+                self._pending_favorites_session = self.session_id
+            self._pending_favorites[index] = favorite
+        else:
+            try:
+                self.session_store.save(self.session_data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(tr("Favori : {error}", error=short_error(exc)))
         canvas = self.gallery_canvases.get(index)
         if canvas is not None:
             try:
@@ -835,6 +851,41 @@ class StableCraftApp(tk.Tk):
                 pass
             self._gallery_set_star(canvas, favorite)
         self._update_gallery_title()
+
+    def _apply_pending_favorites(self, data: dict[str, Any]) -> None:
+        if not self._pending_favorites:
+            return
+        if self._pending_favorites_session != str(data.get("id") or ""):
+            return
+        generations = data.get("generations", [])
+        for index, favorite in self._pending_favorites.items():
+            if 0 <= index < len(generations):
+                generations[index]["favorite"] = favorite
+
+    def _flush_pending_favorites(self) -> None:
+        """Persist favorites queued while a bridge process owned session.json."""
+        if not self._pending_favorites:
+            return
+        data: dict[str, Any] | None = None
+        if (
+            self.session_data is not None
+            and str(self.session_data.get("id") or "")
+            == self._pending_favorites_session
+        ):
+            data = self.session_data
+        elif self._pending_favorites_session:
+            try:
+                data = self.session_store.load(self._pending_favorites_session)
+            except Exception:  # noqa: BLE001
+                data = None
+        if data is not None:
+            self._apply_pending_favorites(data)
+            try:
+                self.session_store.save(data)
+            except Exception as exc:  # noqa: BLE001
+                self._log(tr("Favori : {error}", error=short_error(exc)))
+        self._pending_favorites.clear()
+        self._pending_favorites_session = None
 
     def _update_gallery_title(self) -> None:
         if not self.session_data:
@@ -3777,7 +3828,17 @@ class StableCraftApp(tk.Tk):
             # duplicate. Reload the session when the active layer changes so
             # unsaved prompt edits do not leak between them; the bridge splits
             # the duplicate into a real session on the next generation.
-            self._load_session(sid, force=True)
+            # The layer created by our own generation must not overwrite the
+            # fields the user edited while it was running.
+            keep_fields = False
+            if self._job_layer_id is not None:
+                try:
+                    active_layer = int(doc.get("activeLayer")) if doc else None
+                except (TypeError, ValueError):
+                    active_layer = None
+                keep_fields = active_layer == self._job_layer_id
+                self._job_layer_id = None
+            self._load_session(sid, force=True, keep_fields=keep_fields)
 
         if sid and self.current_selection:
             data = (
@@ -3830,15 +3891,20 @@ class StableCraftApp(tk.Tk):
             data = self.session_store.load(session_id)
         except Exception:  # noqa: BLE001
             return
+        self._apply_pending_favorites(data)
         self.session_id = session_id
         self.session_data = data
         self._populate_gallery()
 
-    def _load_session(self, session_id: str | None, force: bool = False) -> None:
+    def _load_session(
+        self, session_id: str | None, force: bool = False, keep_fields: bool = False
+    ) -> None:
         if session_id == self.session_id and not force:
             return
         previous = self.session_id
         self.session_id = session_id
+        if session_id != previous:
+            self._job_layer_id = None
         self.session_data = None
         if not session_id:
             # A fresh lasso starts in EDIT, even if the previous canvas was
@@ -3853,6 +3919,7 @@ class StableCraftApp(tk.Tk):
         if session_id:
             try:
                 self.session_data = self.session_store.load(session_id)
+                self._apply_pending_favorites(self.session_data)
             except Exception as exc:  # noqa: BLE001
                 self._log(tr("Session {session} : {error}", session=session_id, error=short_error(exc)))
         self._populate_gallery()
@@ -3869,8 +3936,9 @@ class StableCraftApp(tk.Tk):
             # `_restore_session_fields` deliberately leaves the seed field alone:
             # the seed used by a generation is shown in the gallery hint, and the
             # user's field must stay on -1 unless they typed a value themselves.
-            self._load_profile_loras()
-            self._restore_session_fields(self.session_data)
+            if not keep_fields:
+                self._load_profile_loras()
+                self._restore_session_fields(self.session_data)
 
         if session_id:
             self._clear_pending_reference()
@@ -4108,6 +4176,10 @@ class StableCraftApp(tk.Tk):
         if self.running or not self.session_id or not self.session_data:
             return
         self.job_kind = "generate"
+        self._apply_only = True
+        self._job_layer_id = None
+        self._pending_favorites.clear()
+        self._pending_favorites_session = None
         generations = self.session_data.get("generations", [])
         if not 0 <= index < len(generations):
             return
@@ -4167,6 +4239,10 @@ class StableCraftApp(tk.Tk):
         if self.running:
             return
         self.job_kind = "generate"
+        self._apply_only = False
+        self._job_layer_id = None
+        self._pending_favorites.clear()
+        self._pending_favorites_session = None
         batch = self._batch_count()
         if self.profile_key not in SUPPORTED_PROFILES:
             messagebox.showinfo(
@@ -4496,10 +4572,18 @@ class StableCraftApp(tk.Tk):
         if session_id:
             # Reload even after an apply error: the generated image is already
             # on disk and must remain selectable in the gallery.
-            self._load_session(session_id, force=True)
+            self._load_session(
+                session_id, force=True, keep_fields=not self._apply_only
+            )
+            if not self._apply_only and self.session_data:
+                try:
+                    self._job_layer_id = int(self.session_data.get("layer_id"))
+                except (TypeError, ValueError):
+                    self._job_layer_id = None
         else:
             self._update_generate_state()
         if self.session_data is not None:
+            self._apply_pending_favorites(self.session_data)
             if "loras" not in self.session_data:
                 # The bridge records only the active stack in the generation.
                 # Keep the full UI stack (including disabled entries) for the
@@ -4510,6 +4594,8 @@ class StableCraftApp(tk.Tk):
                 self.session_store.save(self.session_data)
             except Exception as exc:  # noqa: BLE001
                 self._log(tr("LoRA : {error}", error=short_error(exc)))
+        self._pending_favorites.clear()
+        self._pending_favorites_session = None
         self._update_lora_ui()
         self._update_generate_state()
         if code == 0 and not self.last_error:
@@ -4548,6 +4634,7 @@ class StableCraftApp(tk.Tk):
         self.progress_label.config(text=tr("Prêt."), fg=MUTED)
         self.job_kind = "generate"
         self.proc = None
+        self._flush_pending_favorites()
 
     def _cancel(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -4750,6 +4837,7 @@ class StableCraftApp(tk.Tk):
             except Exception:  # noqa: BLE001
                 pass
         self._stop_progress_animation()
+        self._flush_pending_favorites()
         if self.xyz_window is not None:
             try:
                 self.xyz_window.destroy()
