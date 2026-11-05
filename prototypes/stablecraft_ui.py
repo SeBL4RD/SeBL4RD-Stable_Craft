@@ -82,6 +82,11 @@ GREEN = "#22c55e"
 RED = "#ef4444"
 YELLOW = "#eab308"
 BORDER = "#3a3a44"
+# Scrollbars: the thumb keeps the panel border tone, the trough is darker so
+# the two are immediately distinguishable on every StableCraft window.
+SCROLL_THUMB = BORDER
+SCROLL_THUMB_ACTIVE = "#50505c"
+SCROLL_TROUGH = "#141418"
 
 # Gallery cells use a fixed 4:3 box.  The thumbnail is contained inside it,
 # so 16:9 and portrait results stay readable without being cropped.
@@ -310,6 +315,12 @@ class StableCraftApp(tk.Tk):
         self._gallery_columns = 0
         self._gallery_reflow_job: str | None = None
         self._gallery_scroll_to: int | None = None
+        # Repainting the same gallery (e.g. after applying an existing
+        # generation) keeps the user's scroll position instead of jumping to
+        # the current item.
+        self._gallery_restore_y: float | None = None
+        self._gallery_last_session: str | None = None
+        self._gallery_last_count: int | None = None
         self.pending_session_id: str | None = None
         self.pending_generation: int | None = None
         self.batch_var = tk.StringVar(value="1")
@@ -455,6 +466,35 @@ class StableCraftApp(tk.Tk):
         )
         style.configure("TCheckbutton", background=BG, foreground=FG)
         style.map("TCheckbutton", background=[("active", BG)])
+        for orient in ("Vertical", "Horizontal"):
+            name = f"{orient}.TScrollbar"
+            style.configure(
+                name,
+                background=SCROLL_THUMB,
+                troughcolor=SCROLL_TROUGH,
+                bordercolor=SCROLL_TROUGH,
+                lightcolor=SCROLL_THUMB,
+                darkcolor=SCROLL_THUMB,
+                arrowcolor=FG,
+                relief="flat",
+                borderwidth=0,
+                arrowsize=12,
+            )
+            style.map(
+                name,
+                background=[
+                    ("active", SCROLL_THUMB_ACTIVE),
+                    ("pressed", SCROLL_THUMB_ACTIVE),
+                ],
+                lightcolor=[
+                    ("active", SCROLL_THUMB_ACTIVE),
+                    ("pressed", SCROLL_THUMB_ACTIVE),
+                ],
+                darkcolor=[
+                    ("active", SCROLL_THUMB_ACTIVE),
+                    ("pressed", SCROLL_THUMB_ACTIVE),
+                ],
+            )
 
     def _text(self, parent: tk.Misc, height: int, font: tuple[str, int] | tuple[str, int, str] = ("Segoe UI", 10)) -> tk.Text:
         text = tk.Text(
@@ -595,12 +635,13 @@ class StableCraftApp(tk.Tk):
             self.gallery_canvas.configure(
                 scrollregion=self.gallery_canvas.bbox("all")
             )
-            if (
-                self._gallery_scroll_to is not None
-                and self.gallery_canvas.winfo_height() > 1
-            ):
-                self._scroll_gallery_to(self._gallery_scroll_to)
-                self._gallery_scroll_to = None
+            if self.gallery_canvas.winfo_height() > 1:
+                if self._gallery_restore_y is not None:
+                    self.gallery_canvas.yview_moveto(self._gallery_restore_y)
+                    self._gallery_restore_y = None
+                elif self._gallery_scroll_to is not None:
+                    self._scroll_gallery_to(self._gallery_scroll_to)
+                    self._gallery_scroll_to = None
             return
         self._gallery_columns = columns
         for index, item in enumerate(self._gallery_items):
@@ -613,12 +654,13 @@ class StableCraftApp(tk.Tk):
             )
         self.gallery_inner.update_idletasks()
         self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
-        if (
-            self._gallery_scroll_to is not None
-            and self.gallery_canvas.winfo_height() > 1
-        ):
-            self._scroll_gallery_to(self._gallery_scroll_to)
-            self._gallery_scroll_to = None
+        if self.gallery_canvas.winfo_height() > 1:
+            if self._gallery_restore_y is not None:
+                self.gallery_canvas.yview_moveto(self._gallery_restore_y)
+                self._gallery_restore_y = None
+            elif self._gallery_scroll_to is not None:
+                self._scroll_gallery_to(self._gallery_scroll_to)
+                self._gallery_scroll_to = None
 
     def _scroll_gallery_to(self, index: int) -> None:
         try:
@@ -1525,7 +1567,7 @@ class StableCraftApp(tk.Tk):
         preview_frame = self._section(main, "APERÇU")
         preview_tools = tk.Frame(preview_frame, bg=BG)
         preview_tools.pack(fill="x")
-        self.preview_mode = tk.StringVar(value="document")
+        self.preview_mode = tk.StringVar(value="result")
         tk.Radiobutton(
             preview_tools,
             text="Document",
@@ -3914,6 +3956,24 @@ class StableCraftApp(tk.Tk):
             self._load_preview(self.preview_paths["document"])
 
     def _populate_gallery(self) -> None:
+        generation_count = (
+            len(self.session_data.get("generations", []))
+            if self.session_data
+            else 0
+        )
+        # Applying an existing generation repaints the gallery without adding
+        # an item. Keep the scroll fraction in that case; a new generation or a
+        # different session may scroll to the current item.
+        preserve_y: float | None = None
+        if (
+            self.session_id is not None
+            and self.session_id == self._gallery_last_session
+            and self._gallery_last_count == generation_count
+        ):
+            try:
+                preserve_y = self.gallery_canvas.yview()[0]
+            except tk.TclError:
+                preserve_y = None
         for child in self.gallery_inner.winfo_children():
             child.destroy()
         self.gallery_images.clear()
@@ -3934,6 +3994,9 @@ class StableCraftApp(tk.Tk):
             self._set_document_preview()
             self._set_result_preview(None)
             self._gallery_scroll_to = None
+            self._gallery_restore_y = None
+            self._gallery_last_session = self.session_id
+            self._gallery_last_count = 0
             self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
             self.gallery_canvas.configure(height=160)
             return
@@ -3946,6 +4009,9 @@ class StableCraftApp(tk.Tk):
             self._set_document_preview()
             self._set_result_preview(None)
             self._gallery_scroll_to = None
+            self._gallery_restore_y = None
+            self._gallery_last_session = self.session_id
+            self._gallery_last_count = 0
             self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
             self.gallery_canvas.configure(height=160)
             return
@@ -3992,6 +4058,9 @@ class StableCraftApp(tk.Tk):
                 text=tr("Aucune génération dans cette session.")
             )
             self._gallery_scroll_to = None
+            self._gallery_restore_y = None
+            self._gallery_last_session = self.session_id
+            self._gallery_last_count = len(generations)
             self.gallery_canvas.configure(scrollregion=(0, 0, 0, 0))
             self.gallery_canvas.configure(height=160)
             return
@@ -4019,7 +4088,16 @@ class StableCraftApp(tk.Tk):
             self._gallery_item_indices.append(index)
 
         self.gallery_hint.config(text=tr("Clique sur une vignette pour appliquer."))
-        self._gallery_scroll_to = current if 0 <= current < len(generations) else 0
+        if preserve_y is not None:
+            self._gallery_restore_y = preserve_y
+            self._gallery_scroll_to = None
+        else:
+            self._gallery_restore_y = None
+            self._gallery_scroll_to = (
+                current if 0 <= current < len(generations) else 0
+            )
+        self._gallery_last_session = self.session_id
+        self._gallery_last_count = len(generations)
         self._layout_gallery()
         self.gallery_inner.update_idletasks()
         bbox = self.gallery_canvas.bbox("all")
