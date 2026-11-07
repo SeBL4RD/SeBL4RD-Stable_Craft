@@ -6,7 +6,7 @@ StableCraft is a companion app for PhotoCraft: draw a lasso around an area, desc
 the change, and the result arrives as a **new masked layer**. Everything runs locally
 on your own GPU, with ComfyUI as the generation engine.
 
-![Version](https://img.shields.io/badge/version-0.2.9-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.10-3b82f6)
 ![Status](https://img.shields.io/badge/status-working%20MVP-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![License](https://img.shields.io/badge/license-MIT-8b5cf6)
@@ -58,22 +58,10 @@ checked through the commands exposed by each build, not through a fixed version 
 
 ### Software
 
-- **PhotoCraft 0.16.0** or newer (portable or installed).
-- **ComfyUI portable** on Windows (with `python_embeded\python.exe`), recent enough:
-  `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes, `0.43+` for MOSS-Image EDIT.
-- On Linux, **ComfyUI** from Comfy Desktop, a manual venv install, or `comfy-cli
-  standalone`. There is no official Linux `python_embeded`.
-- **Python 3.11+** with **Tkinter** (the python.org Windows installer includes it;
-  Linux distributions provide it in a separate package).
-- For Krea 2: the custom node
-  [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
-- `ComfyUI-GGUF` to load GGUF UNet models.
-- MOSS-Image runs on the **native INT8 path** in ComfyUI; no custom node is
-  required. EDIT needs ComfyUI 0.43+ for the core MOSS edit node.
-- Optional: the
-  [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) custom node
-  for the browsable LoRA list and thumbnails. Without it, StableCraft falls back to
-  ComfyUI's own LoRA list, without thumbnails.
+- **PhotoCraft 0.16.0** or newer.
+- **ComfyUI** recent enough: `0.42.1+` for Qwen Image 2.1 and Krea 2,
+  `0.43+` for MOSS-Image EDIT.
+- **Python 3.11+** with **Tkinter**.
 
 ### Models
 
@@ -97,7 +85,7 @@ Notes:
   Krea 2; use the FP8 file.
 - Qwen Image 2.1 uses a dedicated VAE and a Qwen3-VL-8B text encoder. W4A8 is the
   default (6.3 GB); INT8 (9.35 GB) is available for maximum fidelity.
-- **MOSS-Image** uses the native ComfyUI INT8 path; no custom nodes. W4A8 is the
+- **MOSS-Image** uses the native ComfyUI INT8 path. W4A8 is the
   default text encoder; the 5.4 GB W4A8 is lighter but community-built, INT8 is
   maximum fidelity. EDIT loads a 297 MB LoRA (GPL-3.0) and needs ComfyUI 0.43+.
   A full scene caption works best; the optional prompt enhancer is not included.
@@ -168,10 +156,7 @@ Ubuntu 22.04 (Python 3.10) and RHEL 9 (Python 3.9) unless a newer Python is inst
 > (`sentencepiece`, `kornia-rs`); use Fedora's `python3.13` (or `python3.14`) for
 > ComfyUI's venv.
 
-On Linux, ComfyUI is usually managed externally (Comfy Desktop or its own terminal).
-`manage = false` is the default on Linux because ComfyUI can be installed in many
-ways (Desktop, comfy-cli, systemd, manual venv); StableCraft does not guess which
-instance to start. Configure `config.toml` as follows:
+On Linux, `manage = false` is the default; start ComfyUI yourself.
 
 ```toml
 [comfyui]
@@ -179,8 +164,7 @@ endpoint = "http://127.0.0.1:8188"
 manage = false
 ```
 
-Then start Comfy Desktop/ComfyUI yourself. If StableCraft should start ComfyUI, use
-`manage = true` and point to the install:
+To let StableCraft start it, set `manage = true` and point to the install:
 
 ```toml
 [comfyui]
@@ -286,10 +270,10 @@ You can add a reference image; click **Guide** if needed.
 
 - **Up to 10 per profile**, strength 0–1, stored per profile and copied into
   `session.json`.
-- Folder navigation and thumbnails in the picker, backed by ComfyUI's **LoRA
-  Manager**; StableCraft never copies model files.
+- Folder navigation and thumbnails in the picker; StableCraft never copies model
+  files.
 - A persistent **Blur NSFW LoRA** checkbox blurs mature previews in both the
-  manager and the picker, using the LoRA Manager's `preview_nsfw_level` metadata.
+  manager and the picker.
 - The manager warns on architecture mismatch without blocking.
 
 ## Storage
@@ -306,6 +290,14 @@ restart required.
 
 Checks the latest GitHub Release at startup. `git pull` also updates the project if
 you downloaded it with git.
+
+## Support
+
+Want to support my work? Buy me a Ko-fi! :)
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/sebl4rd)
+
+[ko-fi.com/sebl4rd](https://ko-fi.com/sebl4rd)
 
 ## Credits
 

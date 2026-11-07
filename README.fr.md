@@ -6,7 +6,7 @@ StableCraft est une application compagne pour PhotoCraft : on entoure une zone a
 lasso, on décrit le changement, et le résultat arrive dans un **nouveau calque masqué**.
 Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de génération.
 
-![Version](https://img.shields.io/badge/version-0.2.9-3b82f6)
+![Version](https://img.shields.io/badge/version-0.2.10-3b82f6)
 ![Statut](https://img.shields.io/badge/statut-MVP%20fonctionnel-22c55e)
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%20x64%20%2F%20Linux%20x64-6b7280)
 ![Licence](https://img.shields.io/badge/licence-MIT-8b5cf6)
@@ -60,22 +60,10 @@ numéro de version figé.
 
 ### Logiciel
 
-- **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
-- **ComfyUI portable** sous Windows (avec `python_embeded\python.exe`), récent :
-  `0.42.1+` pour Qwen Image 2.1 et les nœuds Krea 2, `0.43+` pour MOSS-Image EDIT.
-- Sous Linux, **ComfyUI** via Comfy Desktop, une installation manuelle en venv, ou
-  `comfy-cli standalone`. Il n'existe pas de `python_embeded` Linux officiel.
-- **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut sous Windows ;
-  Linux fournit Tkinter dans un paquet séparé).
-- Pour Krea 2 : le nœud custom
-  [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
-- `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
-- MOSS-Image passe par le **chemin INT8 natif** de ComfyUI ; aucun nœud custom
-  n'est requis. EDIT nécessite ComfyUI 0.43+ pour le nœud MOSS d'édition core.
-- Optionnel : le nœud custom
-  [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) pour la
-  liste et les miniatures des LoRA. Sans lui, StableCraft retombe sur la liste LoRA de
-  ComfyUI, sans miniatures.
+- **PhotoCraft 0.16.0** ou supérieur.
+- **ComfyUI** assez récent : `0.42.1+` pour Qwen Image 2.1 et Krea 2,
+  `0.43+` pour MOSS-Image EDIT.
+- **Python 3.11+** avec **Tkinter**.
 
 ### Modèles
 
@@ -101,7 +89,7 @@ Notes :
   avec Krea 2 ; utilisez le FP8.
 - Qwen Image 2.1 utilise un VAE dédié et un text encoder Qwen3-VL-8B. W4A8 est la
   valeur par défaut (6,3 Go) ; INT8 (9,35 Go) est disponible pour plus de fidélité.
-- **MOSS-Image** passe par le chemin INT8 natif de ComfyUI ; aucun nœud custom.
+- **MOSS-Image** passe par le chemin INT8 natif de ComfyUI.
   W4A8 est le text encoder par défaut ; le W4A8 5,4 Go est plus léger mais
   communautaire, INT8 est la fidélité maximale. EDIT charge un LoRA de 297 Mo
   (GPL-3.0) et nécessite ComfyUI 0.43+. Une description complète de la scène donne
@@ -172,10 +160,7 @@ récent.
 > (`sentencepiece`, `kornia-rs`) ; utilisez le `python3.13` (ou `python3.14`) de
 > Fedora pour le venv de ComfyUI.
 
-Sous Linux, ComfyUI est généralement géré en externe (Comfy Desktop ou son propre
-terminal). `manage = false` est la valeur par défaut sous Linux, car ComfyUI peut être
-installé de plusieurs façons (Desktop, comfy-cli, systemd, venv manuel) ; StableCraft ne
-devine pas quelle instance démarrer. Configurez `config.toml` comme ceci :
+Sous Linux, `manage = false` est la valeur par défaut ; démarrez ComfyUI vous-même.
 
 ```toml
 [comfyui]
@@ -183,8 +168,7 @@ endpoint = "http://127.0.0.1:8188"
 manage = false
 ```
 
-Puis démarrez Comfy Desktop/ComfyUI vous-même. Si StableCraft doit démarrer ComfyUI,
-utilisez `manage = true` et pointez l'installation :
+Pour que StableCraft le démarre, passez `manage = true` et pointez l'installation :
 
 ```toml
 [comfyui]
@@ -292,11 +276,10 @@ Vous pouvez ajouter une image de référence ; cliquez sur **Guide** en cas de b
 
 - **10 max par profil**, force 0–1, enregistrée par profil et copiée dans
   `session.json`.
-- Sélecteur avec navigation par dossiers et miniatures, issu du **LoRA Manager**
-  ComfyUI ; StableCraft ne copie aucun fichier.
+- Sélecteur avec navigation par dossiers et miniatures ; StableCraft ne copie
+  aucun fichier.
 - Une case **Flouter les LoRA NSFW** persistante floute les aperçus matures dans le
-  gestionnaire et le sélecteur, via la métadonnée `preview_nsfw_level` du LoRA
-  Manager.
+  gestionnaire et le sélecteur.
 - Le gestionnaire avertit en cas d'architecture incompatible, sans bloquer.
 
 ## Stockage
@@ -313,6 +296,14 @@ Anglais/français, sélecteur dans l'en-tête, enregistré dans `config.toml`
 
 Vérification de la dernière Release GitHub au démarrage. `git pull` permet également
 de mettre à jour si vous avez téléchargé ce projet avec git.
+
+## Soutien
+
+Vous souhaitez soutenir mon travail ? Payez-moi un Ko-fi ! :)
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/sebl4rd)
+
+[ko-fi.com/sebl4rd](https://ko-fi.com/sebl4rd)
 
 ## Crédits
 
