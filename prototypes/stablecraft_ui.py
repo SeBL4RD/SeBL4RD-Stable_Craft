@@ -366,9 +366,13 @@ class StableCraftApp(tk.Tk):
     def __init__(self, config_path: Path, initial_profile: str | None = None) -> None:
         super().__init__()
         try:
-            icon = ROOT / "demo" / "logo_full.ico"
-            if icon.exists():
-                self.iconbitmap(default=str(icon))
+            for icon in (
+                ROOT / "installer" / "logo_full.ico",
+                ROOT / "demo" / "logo_full.ico",
+            ):
+                if icon.exists():
+                    self.iconbitmap(default=str(icon))
+                    break
         except tk.TclError:
             pass
         self.config_path = config_path

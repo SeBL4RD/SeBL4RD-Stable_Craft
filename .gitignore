@@ -5,6 +5,7 @@ demo/*
 !demo/t2i_forest.png
 !demo/DEMO_StableCraft_EDIT.jpg
 !demo/DEMO_full.jpg
+!demo/logo_full.ico
 *.pyc
 
 # Local configuration (contains absolute paths)

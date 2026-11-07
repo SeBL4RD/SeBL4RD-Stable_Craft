@@ -182,6 +182,15 @@ say "Création du raccourci applicatif"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="$DATA_HOME/applications"
 mkdir -p "$APP_DIR"
+ICON="$ROOT/installer/logo_full.ico"
+if [ ! -f "$ICON" ]; then
+    ICON="$ROOT/demo/logo_full.ico"
+fi
+if [ ! -f "$ICON" ]; then
+    echo "Attention : logo StableCraft introuvable, icône système utilisée." >&2
+    ICON="applications-graphics"
+fi
+
 cat > "$APP_DIR/stablecraft.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -189,7 +198,7 @@ Name=StableCraft
 Comment=Lasso editing in PhotoCraft with ComfyUI
 Exec="$ROOT/StableCraft.sh"
 Path=$ROOT
-Icon=$ROOT/demo/logo_full.ico
+Icon=$ICON
 Terminal=false
 Categories=Graphics;
 EOF

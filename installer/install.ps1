@@ -36,7 +36,10 @@ $ExampleConfig = Join-Path $Root "config.example.toml"
 $StableCraftBat = Join-Path $Root "StableCraft.bat"
 $Launcher = Join-Path $Root "launcher.py"
 $Prototypes = Join-Path $Root "prototypes"
-$IconPath = Join-Path $Root "demo\logo_full.ico"
+$IconPath = Join-Path $PSScriptRoot "logo_full.ico"
+if (-not (Test-Path $IconPath)) {
+    $IconPath = Join-Path $Root "demo\logo_full.ico"
+}
 
 function Write-Step([string]$Text) {
     Write-Host ""
@@ -299,6 +302,7 @@ if (-not $NoShortcuts) {
     if (Test-Path $IconPath) {
         $ShortcutIcon = "$IconPath,0"
     } else {
+        Write-Warning "Logo StableCraft introuvable : $IconPath. Icône PhotoCraft utilisée pour les raccourcis."
         $ShortcutIcon = "$PhotoCraft,0"
     }
 
