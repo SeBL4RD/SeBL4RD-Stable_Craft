@@ -96,7 +96,9 @@ function Write-Utf8Bom([string]$Path, [string]$Text) {
 }
 
 function Set-ConfigPaths([string]$Text) {
-    $text = $Text -replace '(?m)^\s*executable\s*=.*$', "executable = `"$script:PhotoToml`""
+    # Un CR isole (fins de ligne mixtes) rend le TOML invalide.
+    $text = $Text -replace "\r(?!`n)", ""
+    $text = $text -replace '(?m)^\s*executable\s*=.*$', "executable = `"$script:PhotoToml`""
     $text = $text -replace '(?m)^\s*control_port\s*=\s*7878\s*$', 'control_port = 7990'
     $text = $text -replace '(?m)^\s*root\s*=.*$', "root = `"$script:ComfyRootToml`""
     $text = $text -replace '(?m)^\s*start_command\s*=.*$', "start_command = `"$script:StartToml`""
@@ -108,8 +110,11 @@ function Set-ConfigPaths([string]$Text) {
     if ($text -match '(?m)^\s*sessions_dir\s*=') {
         $text = $text -replace '(?m)^\s*sessions_dir\s*=.*$', "sessions_dir = `"$script:SessionsToml`""
     } else {
-        $text = $text -replace '(?m)^(default_profile\s*=.*)$', ('$1' + "`r`nsessions_dir = `"$script:SessionsToml`"")
+        # [^\r\n]* evite de capturer le CR de la fin de ligne.
+        $text = $text -replace '(?m)^(default_profile\s*=[^\r\n]*)\r?$', ('$1' + "`r`nsessions_dir = `"$script:SessionsToml`"")
     }
+    # Securite : ne jamais laisser un CR isole dans le fichier final.
+    $text = $text -replace "\r(?!`n)", ""
     return $text
 }
 
@@ -162,12 +167,16 @@ Write-Host "Python ComfyUI : $ComfyPython" -ForegroundColor Green
 Write-Step "Vérification du Python de l'UI"
 $uiPythonOk = $false
 $uiPythonLabel = $null
+$uiPythonExe = $null
+$uiPythonArgs = @()
 $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
 if ($pyLauncher) {
     & $pyLauncher.Source -3 -c "import sys, tkinter; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
     if ($LASTEXITCODE -eq 0) {
         $uiPythonOk = $true
         $uiPythonLabel = "$($pyLauncher.Source) -3"
+        $uiPythonExe = $pyLauncher.Source
+        $uiPythonArgs = @("-3")
     }
 }
 if (-not $uiPythonOk) {
@@ -177,6 +186,8 @@ if (-not $uiPythonOk) {
         if ($LASTEXITCODE -eq 0) {
             $uiPythonOk = $true
             $uiPythonLabel = $pythonExe
+            $uiPythonExe = $pythonExe
+            $uiPythonArgs = @()
         }
     }
 }
@@ -264,6 +275,21 @@ if ($ConfigFile) {
     $text = Set-ConfigPaths $text
     Write-Utf8NoBom $configTarget $text
     Write-Host "config.toml créé depuis config.example.toml." -ForegroundColor Green
+}
+
+if ($uiPythonOk) {
+    $tomlOk = $false
+    try {
+        & $uiPythonExe @uiPythonArgs -c "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb'))" $configTarget *> $null
+        $tomlOk = $LASTEXITCODE -eq 0
+    } catch {
+        $tomlOk = $false
+    }
+    if ($tomlOk) {
+        Write-Host "config.toml validé." -ForegroundColor Green
+    } else {
+        Write-Warning "config.toml généré invalide : $configTarget. Corrige-le ou repart de config.example.toml."
+    }
 }
 
 # ---------------------------------------------------------------------------
