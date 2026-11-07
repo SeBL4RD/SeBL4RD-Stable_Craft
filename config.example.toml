@@ -165,3 +165,25 @@ sampler = "euler"
 scheduler = "simple"
 context_padding = 96
 feather = 10
+
+# MOSS-Image SFT : DiT 5B orienté texte et mise en page.
+# INT8 ConvRot natif ComfyUI, sans nœud custom. Le mode EDIT utilise le LoRA
+# d'édition et nécessite ComfyUI 0.43+.
+[profiles.moss_image_sft]
+enabled = true
+# unet = "F:/.../moss_image_sft_int8_convrot.safetensors"
+# text_encoder = "F:/.../qwen3.5_9b_w4a8_gptq.safetensors"
+# vae = "F:/.../flux2-vae_small.safetensors"
+# lora = "F:/.../moss_image_edit_lora_rank_64_bf16.safetensors"
+steps = 50
+cfg = 3.0
+sampler = "euler"
+scheduler = "sgm_uniform"
+# Valeurs propres au mode EDIT (sinon valeurs EDIT de models.json, puis
+# steps/cfg/sampler/scheduler ci-dessus).
+# edit_steps = 30
+# edit_cfg = 4.0
+# edit_sampler = "euler"
+# edit_scheduler = "normal"
+context_padding = 96
+feather = 10

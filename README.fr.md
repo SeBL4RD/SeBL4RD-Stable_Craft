@@ -23,9 +23,9 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
 - régénération possible même si la sélection a été perdue ;
 - **deux modes** : EDIT (image source) ou T2I (texte seul), EDIT par défaut ;
 - **gestion des LoRA** avec une UI ergonomique et des miniatures ;
-- **5 modèles disponibles** pour le moment ;
+- **6 modèles disponibles** pour le moment ;
 - gestionnaire de modèles à la demande (**Localiser** / **Télécharger**) et vérification
-  automatique du nœud `comfyui-krea2edit` ;
+  automatique des nœuds custom requis ;
 - UI anglais/français, anglais par défaut.
 
 
@@ -53,7 +53,8 @@ numéro de version figé.
 - Windows 10/11 **x64**, ou Linux **x86_64**.
 - GPU **NVIDIA** seulement, pour le moment.
 - **12 Go de VRAM** testés sur RTX 3080 Ti ; 32 Go de RAM.
-- En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui.
+- En dessous de 12 Go de VRAM, ce n'est pas validé aujourd'hui ; MOSS INT8 peut
+  passer en 12 Go avec l'offloading ComfyUI.
 - Sous Linux, AMD/ROCm peut fonctionner via ComfyUI mais n'est pas validé par
   StableCraft.
 
@@ -61,7 +62,7 @@ numéro de version figé.
 
 - **PhotoCraft 0.16.0** ou supérieur (portable ou installé).
 - **ComfyUI portable** sous Windows (avec `python_embeded\python.exe`), récent :
-  `0.42.1+` pour Qwen Image 2.1 et les nœuds Krea 2.
+  `0.42.1+` pour Qwen Image 2.1 et les nœuds Krea 2, `0.43+` pour MOSS-Image EDIT.
 - Sous Linux, **ComfyUI** via Comfy Desktop, une installation manuelle en venv, ou
   `comfy-cli standalone`. Il n'existe pas de `python_embeded` Linux officiel.
 - **Python 3.11+** avec **Tkinter** (l'installateur python.org l'inclut sous Windows ;
@@ -69,6 +70,8 @@ numéro de version figé.
 - Pour Krea 2 : le nœud custom
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` pour charger les modèles UNet GGUF.
+- MOSS-Image passe par le **chemin INT8 natif** de ComfyUI ; aucun nœud custom
+  n'est requis. EDIT nécessite ComfyUI 0.43+ pour le nœud MOSS d'édition core.
 - Optionnel : le nœud custom
   [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) pour la
   liste et les miniatures des LoRA. Sans lui, StableCraft retombe sur la liste LoRA de
@@ -87,6 +90,7 @@ confirmation explicite.
 | **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 disponibles) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (ou Q8_0) | `qwen3vl_8b_w4a8.safetensors` (ou INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
+| **MOSS-Image SFT** | `moss_image_sft_int8_convrot.safetensors` | `qwen3.5_9b_w4a8_gptq.safetensors` (ou W4A8 5,4 Go / INT8) | `flux2-vae_small.safetensors` | 50 / 3.0 (T2I) · 30 / 4.0 (EDIT) |
 
 Notes :
 
@@ -97,6 +101,12 @@ Notes :
   avec Krea 2 ; utilisez le FP8.
 - Qwen Image 2.1 utilise un VAE dédié et un text encoder Qwen3-VL-8B. W4A8 est la
   valeur par défaut (6,3 Go) ; INT8 (9,35 Go) est disponible pour plus de fidélité.
+- **MOSS-Image** passe par le chemin INT8 natif de ComfyUI ; aucun nœud custom.
+  W4A8 est le text encoder par défaut ; le W4A8 5,4 Go est plus léger mais
+  communautaire, INT8 est la fidélité maximale. EDIT charge un LoRA de 297 Mo
+  (GPL-3.0) et nécessite ComfyUI 0.43+. Une description complète de la scène donne
+  les meilleurs résultats ; l'enhancer de prompt optionnel n'est pas inclus. Le
+  LoRA 8-step communautaire n'est pas fourni.
 
 ---
 
@@ -284,6 +294,9 @@ Vous pouvez ajouter une image de référence ; cliquez sur **Guide** en cas de b
   `session.json`.
 - Sélecteur avec navigation par dossiers et miniatures, issu du **LoRA Manager**
   ComfyUI ; StableCraft ne copie aucun fichier.
+- Une case **Flouter les LoRA NSFW** persistante floute les aperçus matures dans le
+  gestionnaire et le sélecteur, via la métadonnée `preview_nsfw_level` du LoRA
+  Manager.
 - Le gestionnaire avertit en cas d'architecture incompatible, sans bloquer.
 
 ## Stockage
@@ -312,6 +325,8 @@ de mettre à jour si vous avez téléchargé ce projet avec git.
 - **FLUX.3 Klein / FLUX.2 Klein** — Black Forest Labs.
 - **Krea 2** — Krea.
 - **Qwen** — équipe Qwen, Alibaba.
+- **MOSS-Image** — équipe OpenMOSS, LoRA d'édition par
+  [chinoll](https://huggingface.co/chinoll/Moss-Image-Edit).
 - **ComfyUI-GGUF** — [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF).
 - **comfyui-krea2edit** — [lbouaraba/comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit).
 

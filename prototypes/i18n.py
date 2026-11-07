@@ -216,6 +216,11 @@ EN: dict[str, str] = {
     "LoRA": "LoRA",
     "LoRA Manager": "LoRA Manager",
     "Sélectionner un LoRA": "Select a LoRA",
+    "Flouter les LoRA NSFW": "Blur NSFW LoRA",
+    "Flouter NSFW": "Blur NSFW",
+    "MOSS-Image utilise la référence en EDIT ; en T2I, le modèle ne prend pas d'image.": (
+        "MOSS-Image uses the reference in EDIT; in T2I the model takes no image."
+    ),
     "Monter": "Up",
     "Dossiers": "Folders",
     "Racine": "Root",
@@ -576,6 +581,13 @@ EN: dict[str, str] = {
         "The clipboard does not contain an image."
     ),
     "Favori : {error}": "Favorite: {error}",
+    "Supprimer la génération": "Delete generation",
+    "Supprimer la génération #{index} ? Le fichier sera effacé du disque.": (
+        "Delete generation #{index}? The file will be removed from disk."
+    ),
+    "Suppression : {error}": "Deletion: {error}",
+    "Suppression impossible": "Deletion failed",
+    "Génération #{index} supprimée.": "Generation #{index} deleted.",
     " · {count} favori(s)": " · {count} favorite(s)",
     "Clique sur une vignette pour appliquer.": "Click a thumbnail to apply.",
     "Image {index}/{count}": "Image {index}/{count}",

@@ -97,12 +97,14 @@ GALLERY_CELL_H = GALLERY_IMAGE_H + 4
 
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
+MOSS_PROFILE = "moss_image_sft"
 SUPPORTED_PROFILES = {
     "flux3_klein",
     "flux2_klein_9b",
     "krea2_general_edit",
     "krea2_edit",
     QWEN_PROFILE,
+    MOSS_PROFILE,
 }
 REFERENCE_PROFILES = {
     "krea2_edit",
@@ -110,6 +112,7 @@ REFERENCE_PROFILES = {
     "flux3_klein",
     "flux2_klein_9b",
     QWEN_PROFILE,
+    MOSS_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
 # Only FLUX.2 Klein EDIT starts from the source crop latent. Other profiles
@@ -246,6 +249,80 @@ def manifest() -> dict[str, Any]:
     return json.loads((ROOT / "models.json").read_text(encoding="utf-8"))
 
 
+class Tooltip:
+    """Minimal hover tooltip for Tk widgets."""
+
+    def __init__(
+        self, widget: tk.Misc, text: str = "", delay: int = 400
+    ) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id: str | None = None
+        self._tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+        widget.bind("<Destroy>", self._hide, add="+")
+
+    def set_text(self, text: str) -> None:
+        self.text = text
+        self._hide()
+
+    def _schedule(self, _event: object = None) -> None:
+        self._cancel()
+        if self.text:
+            self._after_id = self.widget.after(self.delay, self._show)
+
+    def _show(self) -> None:
+        self._after_id = None
+        if not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 8
+            y = (
+                self.widget.winfo_rooty()
+                + self.widget.winfo_height()
+                + 6
+            )
+            self._tip = tk.Toplevel(self.widget)
+            self._tip.wm_overrideredirect(True)
+            self._tip.attributes("-topmost", True)
+            self._tip.wm_geometry(f"+{x}+{y}")
+            tk.Label(
+                self._tip,
+                text=self.text,
+                justify="left",
+                background=PANEL_2,
+                foreground=FG,
+                relief="solid",
+                bd=1,
+                padx=6,
+                pady=4,
+                wraplength=360,
+                font=("Segoe UI", 8),
+            ).pack()
+        except tk.TclError:
+            self._tip = None
+
+    def _cancel(self) -> None:
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+
+    def _hide(self, _event: object = None) -> None:
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except tk.TclError:
+                pass
+            self._tip = None
+
+
 def comfy_json(endpoint: str, path: str, timeout: float = 3.0) -> Any:
     with urllib.request.urlopen(endpoint.rstrip("/") + path, timeout=timeout) as response:
         return json.load(response)
@@ -288,6 +365,12 @@ def version_tuple(value: str) -> tuple[int, ...]:
 class StableCraftApp(tk.Tk):
     def __init__(self, config_path: Path, initial_profile: str | None = None) -> None:
         super().__init__()
+        try:
+            icon = ROOT / "demo" / "logo_full.ico"
+            if icon.exists():
+                self.iconbitmap(default=str(icon))
+        except tk.TclError:
+            pass
         self.config_path = config_path
         self.cfg = load_config(config_path)
         set_language(str(self.cfg.get("app", {}).get("language", "en")))
@@ -310,6 +393,7 @@ class StableCraftApp(tk.Tk):
         self._gallery_items: list[tk.Canvas] = []
         self._gallery_item_indices: list[int] = []
         self._gallery_star_centers: dict[int, tuple[int, int]] = {}
+        self._gallery_delete_centers: dict[int, tuple[int, int]] = {}
         self._gallery_cell_w = GALLERY_CELL_W
         self._gallery_cell_h = GALLERY_CELL_H
         self._gallery_columns = 0
@@ -325,6 +409,8 @@ class StableCraftApp(tk.Tk):
         self.pending_generation: int | None = None
         self.batch_var = tk.StringVar(value="1")
         self.topmost_var = tk.BooleanVar(value=False)
+        self._topmost_state = False
+        self._topmost_job: str | None = None
         self.job_kind = "generate"
         self._apply_only = False
         # Layer created by the last normal generation. The PhotoCraft layer
@@ -385,6 +471,9 @@ class StableCraftApp(tk.Tk):
         self.lora_items: list[dict[str, Any]] = []
         self.lora_enabled_var = tk.BooleanVar(
             value=bool(self.lora_settings.get("enabled", True))
+        )
+        self.lora_blur_var = tk.BooleanVar(
+            value=bool(self.lora_settings.get("blur_nsfw", True))
         )
         self.lora_manager: Any = None
         self._lora_available: set[str] | None = None
@@ -694,6 +783,16 @@ class StableCraftApp(tk.Tk):
         except tk.TclError:
             pass
 
+    def _gallery_set_delete(self, canvas: tk.Canvas, visible: bool) -> None:
+        try:
+            canvas.itemconfigure("del", state="normal" if visible else "hidden")
+        except tk.TclError:
+            pass
+
+    def _gallery_enter(self, canvas: tk.Canvas) -> None:
+        self._gallery_set_star(canvas, True)
+        self._gallery_set_delete(canvas, True)
+
     def _gallery_leave(self, index: int, canvas: tk.Canvas) -> None:
         # Read the current favorite instead of the value captured when the item
         # was created: toggling the star must survive the mouse leaving.
@@ -703,6 +802,7 @@ class StableCraftApp(tk.Tk):
             if 0 <= index < len(generations):
                 favorite = bool(generations[index].get("favorite"))
         self._gallery_set_star(canvas, favorite)
+        self._gallery_set_delete(canvas, False)
 
     def _make_gallery_item(
         self,
@@ -753,7 +853,7 @@ class StableCraftApp(tk.Tk):
         if not favorite:
             canvas.itemconfigure("star", state="hidden")
 
-        # Number badge, on the image's bottom-left corner.
+        # Number badge, on the image's bottom-right corner.
         label = f"#{index + 1}"
         try:
             number_font = tkfont.Font(family="Segoe UI", size=8, weight="bold")
@@ -783,9 +883,32 @@ class StableCraftApp(tk.Tk):
             tags=("num", "num_fg"),
         )
 
+        # Delete badge, on the case's bottom-left corner. Hidden until hover.
+        del_x = 10
+        del_y = cell_h - 10
+        self._gallery_delete_centers[index] = (del_x, del_y)
+        canvas.create_oval(
+            del_x - 8,
+            del_y - 8,
+            del_x + 8,
+            del_y + 8,
+            fill="#111114",
+            outline="#000000",
+            tags=("del", "del_bg"),
+        )
+        canvas.create_text(
+            del_x,
+            del_y,
+            text="✕",
+            fill=MUTED,
+            font=("Segoe UI", 9, "bold"),
+            tags=("del", "del_fg"),
+        )
+        canvas.itemconfigure("del", state="hidden")
+
         canvas.bind(
             "<Enter>",
-            lambda _event, c=canvas: self._gallery_set_star(c, True),
+            lambda _event, c=canvas: self._gallery_enter(c),
         )
         canvas.bind(
             "<Leave>",
@@ -801,13 +924,24 @@ class StableCraftApp(tk.Tk):
     def _gallery_click(
         self, event: tk.Event, index: int, canvas: tk.Canvas
     ) -> str:
+        delete = self._gallery_delete_centers.get(index)
+        if delete is not None and abs(event.x - delete[0]) <= 12 and abs(
+            event.y - delete[1]
+        ) <= 12:
+            self._delete_generation(index)
+            return "break"
+        closest = canvas.find_closest(event.x, event.y)
+        if closest:
+            tags = canvas.gettags(closest[0])
+            if "del" in tags:
+                self._delete_generation(index)
+                return "break"
         star = self._gallery_star_centers.get(index)
         if star is not None and abs(event.x - star[0]) <= 12 and abs(
             event.y - star[1]
         ) <= 12:
             self._toggle_favorite(index)
             return "break"
-        closest = canvas.find_closest(event.x, event.y)
         if closest:
             tags = canvas.gettags(closest[0])
             if "star" in tags:
@@ -851,6 +985,40 @@ class StableCraftApp(tk.Tk):
                 pass
             self._gallery_set_star(canvas, favorite)
         self._update_gallery_title()
+
+    def _delete_generation(self, index: int) -> None:
+        if self.running or not self.session_id or not self.session_data:
+            return
+        generations = self.session_data.get("generations", [])
+        if not 0 <= index < len(generations):
+            return
+        if not messagebox.askyesno(
+            tr("Supprimer la génération"),
+            tr(
+                "Supprimer la génération #{index} ? Le fichier sera effacé du disque.",
+                index=index + 1,
+            ),
+            parent=self,
+        ):
+            return
+        try:
+            self.session_store.delete_generation(self.session_data, index)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                self.session_data = self.session_store.load(self.session_id)
+            except Exception:  # noqa: BLE001
+                pass
+            self._log(tr("Suppression : {error}", error=short_error(exc)))
+            messagebox.showerror(
+                tr("Suppression impossible"),
+                short_error(exc),
+                parent=self,
+            )
+            return
+        self._pending_favorites.clear()
+        self._pending_favorites_session = None
+        self._populate_gallery()
+        self._log(tr("Génération #{index} supprimée.", index=index + 1))
 
     def _apply_pending_favorites(self, data: dict[str, Any]) -> None:
         if not self._pending_favorites:
@@ -1456,19 +1624,8 @@ class StableCraftApp(tk.Tk):
         )
         self.denoise_spin.grid(row=5, column=1, sticky="w", pady=2)
         self._lock_scroll_wheel(self.denoise_spin)
-        self.denoise_hint = tk.Label(
-            grid,
-            text="",
-            bg=BG,
-            fg=MUTED,
-            anchor="w",
-            justify="left",
-            wraplength=400,
-            font=("Segoe UI", 8),
-        )
-        self.denoise_hint.grid(
-            row=6, column=0, columnspan=4, sticky="w", pady=(2, 0)
-        )
+        self.denoise_tooltip = Tooltip(self.denoise_spin)
+        self.denoise_label_tooltip = Tooltip(self.denoise_label)
 
         actions = tk.Frame(main, bg=BG)
         actions.pack(fill="x", pady=(12, 0))
@@ -1767,6 +1924,7 @@ class StableCraftApp(tk.Tk):
             ):
                 self.ref_var.set(True)
                 self._set_session_reference_enabled(True)
+        self._sync_mode_defaults(self._last_mode, mode)
         self._last_mode = mode
         self._update_mode_hint()
         self._update_reference_for_profile()
@@ -1774,26 +1932,78 @@ class StableCraftApp(tk.Tk):
         self._update_generate_state()
         self._check_models()
 
-    def _profile_settings(self, key: str) -> dict[str, Any]:
+    def _profile_settings(
+        self, key: str, mode: str | None = None
+    ) -> dict[str, Any]:
         """Profile defaults from config.toml, then models.json, then the UI."""
         profile = self.manifest["profiles"].get(key, {})
         pcfg = self.cfg.get("profiles", {}).get(key, {})
         settings = profile.get("settings", {})
+        mode = mode or self._mode()
+        edit_settings = profile.get("edit_settings", {}) if mode == "edit" else {}
+        if mode == "edit":
+            steps = pcfg.get(
+                "edit_steps",
+                edit_settings.get(
+                    "steps", pcfg.get("steps", settings.get("steps", 16))
+                ),
+            )
+            cfg_value = pcfg.get(
+                "edit_cfg",
+                edit_settings.get(
+                    "cfg", pcfg.get("cfg", settings.get("cfg", 1.0))
+                ),
+            )
+            sampler = pcfg.get(
+                "edit_sampler",
+                edit_settings.get(
+                    "sampler", pcfg.get("sampler", settings.get("sampler", "euler"))
+                ),
+            )
+            scheduler = pcfg.get(
+                "edit_scheduler",
+                edit_settings.get(
+                    "scheduler",
+                    pcfg.get("scheduler", settings.get("scheduler", "simple")),
+                ),
+            )
+        else:
+            steps = pcfg.get("steps", settings.get("steps", 16))
+            cfg_value = pcfg.get("cfg", settings.get("cfg", 1.0))
+            sampler = pcfg.get("sampler", settings.get("sampler", "euler"))
+            scheduler = pcfg.get(
+                "scheduler", settings.get("scheduler", "simple")
+            )
         return {
             "padding": pcfg.get("context_padding", 96),
             "feather": pcfg.get("feather", 10),
-            "steps": pcfg.get("steps", settings.get("steps", 16)),
-            "cfg": pcfg.get("cfg", settings.get("cfg", 1.0)),
-            "sampler": pcfg.get("sampler", settings.get("sampler", "euler")),
-            "scheduler": pcfg.get("scheduler", settings.get("scheduler", "simple")),
+            "steps": steps,
+            "cfg": cfg_value,
+            "sampler": sampler,
+            "scheduler": scheduler,
             "denoise": pcfg.get("denoise", settings.get("denoise", 1.0)),
         }
+
+    def _sync_mode_defaults(self, previous_mode: str, mode: str) -> None:
+        """Move untouched fields to the new mode's profile defaults."""
+        if previous_mode == mode:
+            return
+        old = self._profile_settings(self.profile_key, previous_mode)
+        new = self._profile_settings(self.profile_key, mode)
+        for var, key in (
+            (self.steps_var, "steps"),
+            (self.cfg_var, "cfg"),
+            (self.sampler_var, "sampler"),
+            (self.scheduler_var, "scheduler"),
+        ):
+            if str(var.get()) == str(old[key]):
+                var.set(str(new[key]))
 
     def _reset_generation_fields(self, *, clear_reference: bool = True) -> None:
         """Clear the prompt/settings for a new selection or a new layer."""
         if self.running:
             return
-        values = self._profile_settings(self.profile_key)
+        values = self._profile_settings(self.profile_key, "edit")
         self.prompt_text.delete("1.0", "end")
         self.neg_text.delete("1.0", "end")
         self.neg_var.set(False)
@@ -1830,7 +2040,7 @@ class StableCraftApp(tk.Tk):
         if label:
             self.profile_var.set(label)
         profile = self.manifest["profiles"].get(key, {})
-        values = self._profile_settings(key)
+        values = self._profile_settings(key, self._mode())
         self.padding_var.set(str(values["padding"]))
         self.feather_var.set(str(values["feather"]))
         self.steps_var.set(str(values["steps"]))
@@ -1883,29 +2093,32 @@ class StableCraftApp(tk.Tk):
         if self._mode() != "edit":
             self.denoise_label.grid_remove()
             self.denoise_spin.grid_remove()
-            self.denoise_hint.grid_remove()
+            self._set_denoise_tooltip("")
             return
         self.denoise_label.grid()
         self.denoise_spin.grid()
-        self.denoise_hint.grid()
         supported = self.profile_key in DENOISE_PROFILES
         self.denoise_spin.config(state="normal" if supported else "disabled")
         if not supported:
             self.denoise_var.set("1.00")
-        self.denoise_hint.config(
-            text=(
-                tr(
-                    "1.0 = édition complète. En dessous, le résultat conserve "
-                    "davantage l'image source ; 0.8–1.0 recommandé avec FLUX.2 Klein."
-                )
-                if supported
-                else tr(
-                    "Fixé à 1.0 : ce modèle part d'un latent vide ; un denoise "
-                    "partiel produirait des artefacts."
-                )
-            ),
-            fg=MUTED if supported else YELLOW,
+        text = (
+            tr(
+                "1.0 = édition complète. En dessous, le résultat conserve "
+                "davantage l'image source ; 0.8-1.0 recommandé avec FLUX.2 Klein."
+            )
+            if supported
+            else tr(
+                "Fixé à 1.0 : ce modèle part d'un latent vide ; un denoise "
+                "partiel produirait des artefacts."
+            )
         )
+        self._set_denoise_tooltip(text)
+
+    def _set_denoise_tooltip(self, text: str) -> None:
+        if hasattr(self, "denoise_tooltip"):
+            self.denoise_tooltip.set_text(text)
+        if hasattr(self, "denoise_label_tooltip"):
+            self.denoise_label_tooltip.set_text(text)
 
     def _populate_quantizations(self) -> None:
         profile = self.manifest["profiles"].get(self.profile_key, {})
@@ -2368,16 +2581,37 @@ class StableCraftApp(tk.Tk):
                         "ComfyUI-GGUF est requis pour charger ce text encoder GGUF. "
                         "Installe le nœud puis redémarre ComfyUI.",
                     )
-                if unet not in model_files["unet"]:
+                def visible(kind: str, filename: str) -> bool:
+                    return any(
+                        same_model_file(option, filename)
+                        for option in model_files.get(kind, [])
+                    )
+
+                if not visible("unet", unet):
                     add_missing("unet", unet)
-                if clip not in model_files["text_encoder"]:
+                if not visible("text_encoder", clip):
                     add_missing("text_encoder", clip)
-                if vae not in model_files["vae"]:
+                if not visible("vae", vae):
                     add_missing("vae", vae)
                 if files.get("lora") and mode == "edit":
                     lora = resolve_filename(key, "lora", pcfg, profile)
-                    if lora not in comfy_options(endpoint, "LoraLoaderModelOnly", "lora_name"):
+                    lora_options = comfy_options(
+                        endpoint, "LoraLoaderModelOnly", "lora_name"
+                    )
+                    if not any(
+                        same_model_file(option, lora) for option in lora_options
+                    ):
                         add_missing("lora", lora)
+                if key == MOSS_PROFILE and mode == "edit":
+                    if not comfy_node_exists(
+                        endpoint, "TextEncodeMOSSImageEdit"
+                    ):
+                        add_missing(
+                            "node",
+                            "TextEncodeMOSSImageEdit",
+                            "Le nœud MOSS-Image Edit est natif dans "
+                            "ComfyUI 0.43+ ; mets ComfyUI à jour.",
+                        )
                 needs_edit_nodes = mode == "edit" and key in KREA_PROFILES
                 if needs_edit_nodes or key == QWEN_PROFILE:
                     for node in profile.get("requires_nodes", []):
@@ -2738,6 +2972,11 @@ class StableCraftApp(tk.Tk):
                 "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1."
             )
         if self._mode() == "t2i":
+            if self.profile_key == MOSS_PROFILE:
+                return tr(
+                    "MOSS-Image utilise la référence en EDIT ; en T2I, le modèle "
+                    "ne prend pas d'image."
+                )
             if self.profile_key in KREA_PROFILES:
                 return tr(
                     "Krea 2 utilise la référence en EDIT ; en T2I, passe en EDIT "
@@ -3170,6 +3409,9 @@ class StableCraftApp(tk.Tk):
     def _load_profile_loras(self) -> None:
         self.lora_settings = load_lora_settings()
         self.lora_enabled_var.set(bool(self.lora_settings.get("enabled", True)))
+        blur = bool(self.lora_settings.get("blur_nsfw", True))
+        if bool(self.lora_blur_var.get()) != blur:
+            self.lora_blur_var.set(blur)
         self.lora_items = profile_lora_items(self.lora_settings, self.profile_key)
         self._update_lora_ui()
 
@@ -4717,10 +4959,68 @@ class StableCraftApp(tk.Tk):
 
     def _toggle_topmost(self) -> None:
         """Keep only the main window above other applications."""
+        self._cancel_topmost_job()
+        if not self.topmost_var.get():
+            self._set_main_topmost(False)
+            return
+        self._set_main_topmost(True)
+        self._maintain_topmost()
+
+    def _set_main_topmost(self, state: bool) -> None:
         try:
-            self.attributes("-topmost", bool(self.topmost_var.get()))
+            self.attributes("-topmost", state)
+            self._topmost_state = state
         except tk.TclError:
             pass
+
+    def _demote_for_child(self) -> None:
+        """Release the main window as soon as a child window is used."""
+        if self._closing or not self.topmost_var.get():
+            return
+        self._set_main_topmost(False)
+
+    def _cancel_topmost_job(self) -> None:
+        if self._topmost_job is not None:
+            try:
+                self.after_cancel(self._topmost_job)
+            except tk.TclError:
+                pass
+            self._topmost_job = None
+
+    def _maintain_topmost(self) -> None:
+        self._topmost_job = None
+        if self._closing or not self.topmost_var.get():
+            self._set_main_topmost(False)
+            return
+        desired = not self._has_visible_child()
+        if desired != self._topmost_state:
+            self._set_main_topmost(desired)
+        self._topmost_job = self.after(200, self._maintain_topmost)
+
+    def _has_visible_child(self) -> bool:
+        """True when a normal Toplevel (LoRA, models, XYZ, guide…) is visible."""
+        def walk(widget: tk.Misc) -> bool:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.overrideredirect():
+                            continue
+                    except tk.TclError:
+                        continue
+                    try:
+                        if (
+                            child.winfo_exists()
+                            and child.winfo_viewable()
+                            and child.state() not in {"withdrawn", "iconic"}
+                        ):
+                            return True
+                    except tk.TclError:
+                        pass
+                if walk(child):
+                    return True
+            return False
+
+        return walk(self)
 
     def _check_krea_node(self) -> None:
         try:
@@ -4823,6 +5123,7 @@ class StableCraftApp(tk.Tk):
 
     def _on_close(self) -> None:
         self._closing = True
+        self._cancel_topmost_job()
         self.stop_event.set()
         self._disable_windows_drop()
         if self.proc and self.proc.poll() is None:

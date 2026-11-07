@@ -63,12 +63,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
+MOSS_PROFILE = "moss_image_sft"
 REFERENCE_PROFILES = {
     "krea2_edit",
     "krea2_general_edit",
     "flux3_klein",
     "flux2_klein_9b",
     QWEN_PROFILE,
+    MOSS_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
 # Only FLUX.2 Klein EDIT feeds the source crop as the sampling latent. The other
@@ -364,18 +366,9 @@ def build_workflow(
         }
         model: list[Any] = ["1", 0]
         next_id = 900
-        if apply_lora and lora:
-            workflow[str(next_id)] = {
-                "class_type": "LoraLoaderModelOnly",
-                "inputs": {
-                    "model": model,
-                    "lora_name": lora,
-                    "strength_model": lora_strength,
-                },
-            }
-            model = [str(next_id), 0]
-            next_id += 1
-        for name, strength in loras or []:
+
+        def add_lora(name: str, strength: float) -> None:
+            nonlocal model, next_id
             workflow[str(next_id)] = {
                 "class_type": "LoraLoaderModelOnly",
                 "inputs": {
@@ -386,6 +379,11 @@ def build_workflow(
             }
             model = [str(next_id), 0]
             next_id += 1
+
+        if apply_lora and lora:
+            add_lora(lora, lora_strength)
+        for name, strength in loras or []:
+            add_lora(name, strength)
         return workflow, model
 
     # ------------------------------------------------------------------
@@ -682,6 +680,73 @@ def build_workflow(
                         "images.image_1": ["10", 0],
                     }
                 )
+            return workflow
+
+        if profile == MOSS_PROFILE:
+            workflow, model = start()
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": "CLIPLoader",
+                        "inputs": {
+                            "clip_name": text_encoder,
+                            "type": "moss_image",
+                        },
+                    },
+                    "3": {
+                        "class_type": "VAELoader",
+                        "inputs": {"vae_name": vae},
+                    },
+                    "4": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": prompt},
+                    },
+                    "5": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {"clip": ["2", 0], "text": negative},
+                    },
+                    "6": {
+                        "class_type": "EmptyFlux2LatentImage",
+                        "inputs": {"width": width, "height": height, "batch_size": 1},
+                    },
+                    "9": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["8", 0], "vae": ["3", 0]},
+                    },
+                    "10": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["9", 0]},
+                    },
+                }
+            )
+            sampler_model = model
+            if cfg > 1.0:
+                workflow["7"] = {
+                    "class_type": "SkipLayerGuidanceDiTSimple",
+                    "inputs": {
+                        "model": model,
+                        "double_layers": "",
+                        "single_layers": "22",
+                        "start_percent": 0.0,
+                        "end_percent": 1.0,
+                    },
+                }
+                sampler_model = ["7", 0]
+            workflow["8"] = {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": sampler_model,
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": sampler,
+                    "scheduler": scheduler,
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "latent_image": ["6", 0],
+                    "denoise": denoise,
+                },
+            }
             return workflow
 
         raise ComfyError(f"unknown profile {profile!r}")
@@ -1012,6 +1077,109 @@ def build_workflow(
                 "inputs": {"image": reference_image},
             }
             workflow["5"]["inputs"]["images.image_2"] = ["10", 0]
+        return workflow
+
+    if profile == MOSS_PROFILE:
+        workflow, model = start(apply_lora=True)
+        workflow.update(
+            {
+                "2": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {
+                        "clip_name": text_encoder,
+                        "type": "moss_image",
+                    },
+                },
+                "3": {
+                    "class_type": "VAELoader",
+                    "inputs": {"vae_name": vae},
+                },
+                "4": {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": image_name},
+                },
+                "5": {
+                    "class_type": "TextEncodeMOSSImageEdit",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "prompt": prompt,
+                        "vae": ["3", 0],
+                        "edit_format": "Moss-Image-Edit",
+                        "image_strength": 1.0,
+                        "images.image_0": ["4", 0],
+                    },
+                },
+                "6": {
+                    "class_type": "TextEncodeMOSSImageEdit",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "prompt": negative,
+                        "vae": ["3", 0],
+                        "edit_format": "Moss-Image-Edit",
+                        "image_strength": 1.0,
+                        "images.image_0": ["4", 0],
+                    },
+                },
+                "8": {
+                    "class_type": "EmptyFlux2LatentImage",
+                    "inputs": {"width": width, "height": height, "batch_size": 1},
+                },
+                "9": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": ["7", 0],
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
+                        "positive": ["5", 0],
+                        "negative": ["6", 0],
+                        "latent_image": ["8", 0],
+                        "denoise": denoise,
+                    },
+                },
+                "10": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["9", 0], "vae": ["3", 0]},
+                },
+                "11": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["10", 0]},
+                },
+            }
+        )
+        sampler_model = model
+        if cfg > 1.0:
+            workflow["7"] = {
+                "class_type": "SkipLayerGuidanceDiTSimple",
+                "inputs": {
+                    "model": model,
+                    "double_layers": "",
+                    "single_layers": "22",
+                    "start_percent": 0.0,
+                    "end_percent": 1.0,
+                },
+            }
+            sampler_model = ["7", 0]
+        workflow["9"]["inputs"]["model"] = sampler_model
+        if reference_image:
+            workflow["12"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": reference_image},
+            }
+            workflow["13"] = {
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": ["12", 0],
+                    "upscale_method": "lanczos",
+                    "width": width,
+                    "height": height,
+                    "crop": "disabled",
+                },
+            }
+            for node in ("5", "6"):
+                workflow[node]["inputs"]["images.image_1"] = ["13", 0]
         return workflow
 
     raise ComfyError(f"unknown profile {profile!r}")
@@ -1712,6 +1880,8 @@ def comfy_generate(
 ) -> Image.Image:
     mode = ctx["mode"]
     profile = ctx["profile_name"]
+    if profile == MOSS_PROFILE and mode == "edit":
+        comfy.require_node("TextEncodeMOSSImageEdit")
     ctx["loras"] = validate_loras(comfy, list(ctx.get("loras") or []))
     sampler = str(ctx.get("sampler") or "euler")
     scheduler = str(ctx.get("scheduler") or "simple")
@@ -2776,15 +2946,69 @@ def main() -> None:
 
     padding = args.padding if args.padding is not None else int(pcfg.get("context_padding", 96))
     feather = args.feather if args.feather is not None else int(pcfg.get("feather", 10))
-    steps = args.steps if args.steps is not None else int(pcfg.get("steps", manifest["settings"]["steps"]))
-    cfg_scale = args.cfg if args.cfg is not None else float(pcfg.get("cfg", manifest["settings"]["cfg"]))
+    mode = args.mode or "edit"
     settings = manifest.get("settings", {})
-    sampler = args.sampler or str(
-        pcfg.get("sampler", settings.get("sampler", "euler"))
-    )
-    scheduler = args.scheduler or str(
-        pcfg.get("scheduler", settings.get("scheduler", "simple"))
-    )
+    edit_settings = manifest.get("edit_settings", {}) if mode == "edit" else {}
+    if mode == "edit":
+        steps = (
+            args.steps
+            if args.steps is not None
+            else int(
+                pcfg.get(
+                    "edit_steps",
+                    edit_settings.get(
+                        "steps", pcfg.get("steps", settings.get("steps", 16))
+                    ),
+                )
+            )
+        )
+        cfg_scale = (
+            args.cfg
+            if args.cfg is not None
+            else float(
+                pcfg.get(
+                    "edit_cfg",
+                    edit_settings.get(
+                        "cfg", pcfg.get("cfg", settings.get("cfg", 1.0))
+                    ),
+                )
+            )
+        )
+        sampler = args.sampler or str(
+            pcfg.get(
+                "edit_sampler",
+                edit_settings.get(
+                    "sampler",
+                    pcfg.get("sampler", settings.get("sampler", "euler")),
+                ),
+            )
+        )
+        scheduler = args.scheduler or str(
+            pcfg.get(
+                "edit_scheduler",
+                edit_settings.get(
+                    "scheduler",
+                    pcfg.get("scheduler", settings.get("scheduler", "simple")),
+                ),
+            )
+        )
+    else:
+        steps = (
+            args.steps
+            if args.steps is not None
+            else int(pcfg.get("steps", settings.get("steps", 16)))
+        )
+        cfg_scale = (
+            args.cfg
+            if args.cfg is not None
+            else float(pcfg.get("cfg", settings.get("cfg", 1.0)))
+        )
+        sampler = args.sampler or str(
+            pcfg.get("sampler", settings.get("sampler", "euler"))
+        )
+        scheduler = args.scheduler or str(
+            pcfg.get("scheduler", settings.get("scheduler", "simple"))
+        )
     denoise = (
         args.denoise
         if args.denoise is not None
@@ -2807,7 +3031,6 @@ def main() -> None:
             manifest.get("settings", {}).get("lora_strength", 1.0),
         )
     )
-    mode = args.mode or "edit"
     if mode != "edit" or profile_name not in DENOISE_PROFILES:
         denoise = 1.0
 
@@ -2878,6 +3101,8 @@ def main() -> None:
     comfy = ComfyClient(
         comfy_endpoint, timeout=args.timeout, temp_dir=comfy_temp_dir(cfg)
     )
+    if profile_name == MOSS_PROFILE and mode == "edit":
+        comfy.require_node("TextEncodeMOSSImageEdit")
     result_doc_index: int | None = None
 
     try:
@@ -2929,7 +3154,7 @@ def main() -> None:
             print("Dry run: stopping before ComfyUI.")
             return
 
-        comfy.require("UnetLoaderGGUF", "unet_name", unet)
+        comfy.require(unet_loader_for(unet), "unet_name", unet)
         comfy.require(clip_loader_for(text_encoder), "clip_name", text_encoder)
         comfy.require("VAELoader", "vae_name", vae)
         validate_sampling(comfy, sampler, scheduler)
@@ -2962,6 +3187,9 @@ def main() -> None:
             ref_boost=ref_boost,
             grounding_px=grounding_px,
             loras=loras,
+            mode=mode,
+            lora=lora,
+            lora_strength=lora_strength,
         )
         started = time.time()
         prompt_id = comfy.queue(workflow)

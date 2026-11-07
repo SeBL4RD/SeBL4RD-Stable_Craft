@@ -23,9 +23,9 @@ on your own GPU, with ComfyUI as the generation engine.
 - regeneration works even after the selection is lost;
 - **two modes**: EDIT (source image) or T2I (text only), EDIT by default;
 - **LoRA management** with an ergonomic UI and thumbnails;
-- **5 models available** for now;
+- **6 models available** for now;
 - on-demand model manager (**Locate** / **Download**) and automatic check for the
-  `comfyui-krea2edit` node;
+  required custom nodes;
 - English/French UI, English by default.
 
 
@@ -52,14 +52,15 @@ checked through the commands exposed by each build, not through a fixed version 
 - Windows 10/11 **x64**, or Linux **x86_64**.
 - **NVIDIA** GPU only, for now.
 - **12 GB of VRAM** tested on an RTX 3080 Ti; 32 GB of RAM.
-- Below 12 GB of VRAM is not validated today.
+- Below 12 GB of VRAM is not validated today; MOSS INT8 may fit in 12 GB with
+  ComfyUI offloading.
 - On Linux, AMD/ROCm may work through ComfyUI but is not validated by StableCraft.
 
 ### Software
 
 - **PhotoCraft 0.16.0** or newer (portable or installed).
 - **ComfyUI portable** on Windows (with `python_embeded\python.exe`), recent enough:
-  `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes.
+  `0.42.1+` for Qwen Image 2.1 and the Krea 2 nodes, `0.43+` for MOSS-Image EDIT.
 - On Linux, **ComfyUI** from Comfy Desktop, a manual venv install, or `comfy-cli
   standalone`. There is no official Linux `python_embeded`.
 - **Python 3.11+** with **Tkinter** (the python.org Windows installer includes it;
@@ -67,6 +68,8 @@ checked through the commands exposed by each build, not through a fixed version 
 - For Krea 2: the custom node
   [`comfyui-krea2edit`](https://github.com/lbouaraba/comfyui-krea2edit).
 - `ComfyUI-GGUF` to load GGUF UNet models.
+- MOSS-Image runs on the **native INT8 path** in ComfyUI; no custom node is
+  required. EDIT needs ComfyUI 0.43+ for the core MOSS edit node.
 - Optional: the
   [`ComfyUI-Lora-Manager`](https://github.com/willmiao/ComfyUI-Lora-Manager) custom node
   for the browsable LoRA list and thumbnails. Without it, StableCraft falls back to
@@ -84,6 +87,7 @@ or download missing files on demand, with explicit confirmation.
 | **Krea 2 General Edit** | `krea2_turbo_fp8_scaled.safetensors` + `krea2_general_edit_v2.safetensors` | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 available) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (or Q8_0) | `qwen3vl_8b_w4a8.safetensors` (or INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
+| **MOSS-Image SFT** | `moss_image_sft_int8_convrot.safetensors` | `qwen3.5_9b_w4a8_gptq.safetensors` (or W4A8 5.4 GB / INT8) | `flux2-vae_small.safetensors` | 50 / 3.0 (T2I) · 30 / 4.0 (EDIT) |
 
 Notes:
 
@@ -93,6 +97,11 @@ Notes:
   Krea 2; use the FP8 file.
 - Qwen Image 2.1 uses a dedicated VAE and a Qwen3-VL-8B text encoder. W4A8 is the
   default (6.3 GB); INT8 (9.35 GB) is available for maximum fidelity.
+- **MOSS-Image** uses the native ComfyUI INT8 path; no custom nodes. W4A8 is the
+  default text encoder; the 5.4 GB W4A8 is lighter but community-built, INT8 is
+  maximum fidelity. EDIT loads a 297 MB LoRA (GPL-3.0) and needs ComfyUI 0.43+.
+  A full scene caption works best; the optional prompt enhancer is not included.
+  The community 8-step LoRA is not bundled.
 
 ---
 
@@ -279,6 +288,8 @@ You can add a reference image; click **Guide** if needed.
   `session.json`.
 - Folder navigation and thumbnails in the picker, backed by ComfyUI's **LoRA
   Manager**; StableCraft never copies model files.
+- A persistent **Blur NSFW LoRA** checkbox blurs mature previews in both the
+  manager and the picker, using the LoRA Manager's `preview_nsfw_level` metadata.
 - The manager warns on architecture mismatch without blocking.
 
 ## Storage
@@ -307,6 +318,8 @@ you downloaded it with git.
 - **FLUX.3 Klein / FLUX.2 Klein** — Black Forest Labs.
 - **Krea 2** — Krea.
 - **Qwen** — Qwen team, Alibaba.
+- **MOSS-Image** — OpenMOSS team, edit LoRA by
+  [chinoll](https://huggingface.co/chinoll/Moss-Image-Edit).
 - **ComfyUI-GGUF** — [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF).
 - **comfyui-krea2edit** — [lbouaraba/comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit).
 

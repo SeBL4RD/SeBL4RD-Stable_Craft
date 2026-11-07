@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-25",
+  "updated": "2026-11-07",
   "profiles": {
     "flux3_klein": {
       "label": "FLUX.3 Klein",
@@ -166,7 +166,10 @@
       "warning_en": "Krea 2 EDIT is experimental: results are inconsistent, especially on large areas. For general use, prefer Qwen Image 2.1 or FLUX.3.",
       "vram_gb": 12,
       "weights_gb": 14.2,
-      "requires_nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+      "requires_nodes": [
+        "Krea2EditModelPatch",
+        "Krea2EditGroundedEncode"
+      ],
       "settings": {
         "steps": 8,
         "cfg": 1.0,
@@ -224,7 +227,10 @@
       "warning_en": "Krea 2 EDIT is experimental: this merged file targets identity and characters, not general edits. For general use, prefer Qwen Image 2.1 or FLUX.3.",
       "vram_gb": 12,
       "weights_gb": 12.6,
-      "requires_nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+      "requires_nodes": [
+        "Krea2EditModelPatch",
+        "Krea2EditGroundedEncode"
+      ],
       "settings": {
         "steps": 8,
         "cfg": 1.0,
@@ -293,7 +299,10 @@
       "recommended": false,
       "vram_gb": 12,
       "weights_gb": 11.2,
-      "requires_nodes": ["TextEncodeQwenImage21", "QwenImage21Cache"],
+      "requires_nodes": [
+        "TextEncodeQwenImage21",
+        "QwenImage21Cache"
+      ],
       "settings": {
         "steps": 25,
         "cfg": 1.0,
@@ -357,6 +366,87 @@
           "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9",
           "download_url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
           "note": "VAE propre à Qwen Image 2.1, différent de qwen_image_vae.safetensors."
+        }
+      }
+    },
+    "moss_image_sft": {
+      "label": "MOSS-Image SFT",
+      "label_en": "MOSS-Image SFT",
+      "description": "DiT 5B orienté texte et mise en page. INT8 ConvRot natif ComfyUI, sans nœud custom. T2I 50 steps/CFG 3, EDIT 30 steps/CFG 4 avec LoRA.",
+      "description_en": "5B text-and-layout DiT. ComfyUI-native INT8 ConvRot, no custom nodes. T2I 50 steps/CFG 3, EDIT 30 steps/CFG 4 with a LoRA.",
+      "license": "Apache 2.0 (MOSS) ; LoRA d'édition GPL-3.0",
+      "license_url": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT",
+      "source": "https://huggingface.co/Comfy-Org/MOSS-Image",
+      "recommended": false,
+      "vram_gb": 12,
+      "weights_gb": 13.3,
+      "settings": {
+        "steps": 50,
+        "cfg": 3.0,
+        "sampler": "euler",
+        "scheduler": "sgm_uniform",
+        "resolution_megapixels": 1.0
+      },
+      "edit_settings": {
+        "steps": 30,
+        "cfg": 4.0,
+        "sampler": "euler",
+        "scheduler": "normal"
+      },
+      "files": {
+        "unet": {
+          "filename": "moss_image_sft_int8_convrot.safetensors",
+          "folder": "unet",
+          "size": 5413698958,
+          "sha256": "b4d1475bc7eeffd7b809e82ea13a1fba1fb85c4e18365af3813722faa5c0fe4f",
+          "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_int8_convrot.safetensors",
+          "note": "INT8 ConvRot officiel Comfy-Org, chargé nativement par Load Diffusion Model (UNETLoader). Aucun nœud custom."
+        },
+        "text_encoder": {
+          "filename": "qwen3.5_9b_w4a8_gptq.safetensors",
+          "folder": "text_encoders",
+          "size": 7343591088,
+          "sha256": "4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c",
+          "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+          "note": "W4A8 GPTQ officiel Comfy-Org. Le W4A8 5,4 Go est plus léger mais communautaire ; INT8 pour la fidélité maximale.",
+          "quantizations": [
+            {
+              "label": "W4A8",
+              "filename": "qwen3.5_9b_w4a8_gptq.safetensors",
+              "size": 7343591088,
+              "sha256": "4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c",
+              "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors"
+            },
+            {
+              "label": "W4A8 5.4 Go",
+              "filename": "qwen3.5_9b_moss_image_sft_w4a8_gptq.safetensors",
+              "size": 5428937108,
+              "sha256": "b5f31a430e4912decb152f3a0761350f52282176823b597edd43b2e3f6403da4",
+              "download_url": "https://huggingface.co/synta/qwen3.5_9b_moss_image_sft_w4a8_gptq/resolve/main/qwen3.5_9b_moss_image_sft_w4a8_gptq.safetensors"
+            },
+            {
+              "label": "INT8",
+              "filename": "qwen3.5_9b_int8_convrot.safetensors",
+              "size": 9748121532,
+              "sha256": "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
+              "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_int8_convrot.safetensors"
+            }
+          ]
+        },
+        "vae": {
+          "filename": "flux2-vae_small.safetensors",
+          "folder": "vae",
+          "size": 249521340,
+          "sha256": "d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b",
+          "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae_small.safetensors"
+        },
+        "lora": {
+          "filename": "moss_image_edit_lora_rank_64_bf16.safetensors",
+          "folder": "loras",
+          "size": 297382216,
+          "sha256": "17a48b8c605dcffdedb92a2b887d18cf316505be90802717669fb6556098dcdf",
+          "download_url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/loras/moss_image_edit_lora_rank_64_bf16.safetensors",
+          "note": "LoRA d'édition, chargé uniquement en mode EDIT."
         }
       }
     }

@@ -132,6 +132,12 @@ def normalize_item(item: object) -> dict[str, Any] | None:
     modified = item.get("modified")
     if modified not in (None, "", 0):
         result["modified"] = modified
+    if "preview_nsfw_level" in item:
+        try:
+            nsfw_level = int(item.get("preview_nsfw_level") or 0)
+        except (TypeError, ValueError):
+            nsfw_level = 0
+        result["preview_nsfw_level"] = nsfw_level
     return result
 
 
@@ -476,5 +482,6 @@ def normalize_api_item(
         "preview_url": preview_url,
         "preview_file": preview_file,
         "modified": item.get("modified") or 0,
+        "preview_nsfw_level": int(item.get("preview_nsfw_level") or 0),
     }
     return result

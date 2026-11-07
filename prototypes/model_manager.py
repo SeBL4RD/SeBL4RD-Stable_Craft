@@ -701,6 +701,8 @@ class ModelManager(tk.Toplevel):
                     bg=ACCENT,
                 ).pack(side="left", padx=(5, 0))
                 node_url = str(NODE_SOURCES[filename]["url"])
+            elif filename == "TextEncodeMOSSImageEdit":
+                node_url = "https://github.com/comfyanonymous/ComfyUI"
             elif "gguf" in filename.lower() or "gguf" in note:
                 node_url = "https://github.com/city96/ComfyUI-GGUF"
             else:

@@ -642,7 +642,7 @@ class XYZPlotWindow(tk.Toplevel):
         row["lora_btn"].config(text=text or tr("Choisir un LoRA…"))
 
     def _choose_lora(self, axis_id: str) -> None:
-        if self.busy:
+        if self.busy or getattr(self, "_lora_picker", None) is not None:
             return
         row = self.axis_rows.get(axis_id)
         if row is None:
@@ -664,8 +664,11 @@ class XYZPlotWindow(tk.Toplevel):
                 used=used,
                 app=self.app,
             )
+            self._lora_picker = picker
             self.wait_window(picker)
+            self._lora_picker = None
         except Exception as exc:  # noqa: BLE001
+            self._lora_picker = None
             messagebox.showerror(tr("LoRA"), str(exc))
             return
         result = picker.result

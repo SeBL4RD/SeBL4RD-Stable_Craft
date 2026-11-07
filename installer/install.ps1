@@ -36,6 +36,7 @@ $ExampleConfig = Join-Path $Root "config.example.toml"
 $StableCraftBat = Join-Path $Root "StableCraft.bat"
 $Launcher = Join-Path $Root "launcher.py"
 $Prototypes = Join-Path $Root "prototypes"
+$IconPath = Join-Path $Root "demo\logo_full.ico"
 
 function Write-Step([string]$Text) {
     Write-Host ""
@@ -295,11 +296,16 @@ if (-not $NoShortcuts) {
     $shell = New-Object -ComObject WScript.Shell
     $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\StableCraft"
     New-Item -ItemType Directory -Force -Path $startMenu | Out-Null
+    if (Test-Path $IconPath) {
+        $ShortcutIcon = "$IconPath,0"
+    } else {
+        $ShortcutIcon = "$PhotoCraft,0"
+    }
 
     $mainShortcut = $shell.CreateShortcut((Join-Path $startMenu "StableCraft.lnk"))
     $mainShortcut.TargetPath = $StableCraftBat
     $mainShortcut.WorkingDirectory = $Root
-    $mainShortcut.IconLocation = "$PhotoCraft,0"
+    $mainShortcut.IconLocation = $ShortcutIcon
     $mainShortcut.Description = "Lancer ComfyUI, PhotoCraft et StableCraft"
     $mainShortcut.Save()
 
@@ -307,6 +313,9 @@ if (-not $NoShortcuts) {
     $uninstallShortcut.TargetPath = "powershell.exe"
     $uninstallShortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$uninstaller`""
     $uninstallShortcut.WorkingDirectory = $Root
+    if (Test-Path $IconPath) {
+        $uninstallShortcut.IconLocation = $ShortcutIcon
+    }
     $uninstallShortcut.Save()
 
     if (-not $NoDesktopShortcut) {
@@ -314,7 +323,7 @@ if (-not $NoShortcuts) {
         $desktopShortcut = $shell.CreateShortcut((Join-Path $desktop "StableCraft.lnk"))
         $desktopShortcut.TargetPath = $StableCraftBat
         $desktopShortcut.WorkingDirectory = $Root
-        $desktopShortcut.IconLocation = "$PhotoCraft,0"
+        $desktopShortcut.IconLocation = $ShortcutIcon
         $desktopShortcut.Save()
     }
     Write-Host "Raccourcis créés dans $startMenu" -ForegroundColor Green

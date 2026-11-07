@@ -94,6 +94,40 @@ class SessionStore:
         self.save(data)
         return index
 
+    def delete_generation(self, data: dict[str, Any], index: int) -> None:
+        """Remove one generation and renumber the following folders."""
+        generations = data.get("generations", [])
+        if not 0 <= index < len(generations):
+            raise IndexError(f"génération {index} hors limites")
+        session_dir = self.directory(str(data["id"]))
+        generations_dir = session_dir / "generations"
+        shutil.rmtree(generations_dir / str(index), ignore_errors=True)
+        generations.pop(index)
+        for new_index in range(index, len(generations)):
+            old_index = new_index + 1
+            old_folder = generations_dir / str(old_index)
+            new_folder = generations_dir / str(new_index)
+            if old_folder.exists():
+                if new_folder.exists():
+                    shutil.rmtree(new_folder, ignore_errors=True)
+                old_folder.rename(new_folder)
+            generation = generations[new_index]
+            generation["index"] = new_index
+            old_prefix = f"generations/{old_index}/"
+            for key in ("result", "thumb"):
+                value = str(generation.get(key) or "").replace("\\", "/")
+                if value.startswith(old_prefix):
+                    generation[key] = (
+                        f"generations/{new_index}/" + value[len(old_prefix) :]
+                    )
+        current = int(data.get("current", -1))
+        if current == index:
+            current = min(index, len(generations) - 1)
+        elif current > index:
+            current -= 1
+        data["current"] = current
+        self.save(data)
+
     def base_path(self, data: dict[str, Any]) -> Path:
         return self.directory(str(data["id"])) / data.get("base", "base.png")
 

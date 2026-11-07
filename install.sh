@@ -189,6 +189,7 @@ Name=StableCraft
 Comment=Lasso editing in PhotoCraft with ComfyUI
 Exec="$ROOT/StableCraft.sh"
 Path=$ROOT
+Icon=$ROOT/demo/logo_full.ico
 Terminal=false
 Categories=Graphics;
 EOF

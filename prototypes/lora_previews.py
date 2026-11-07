@@ -19,7 +19,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 def _load_source(job: dict[str, str]) -> Image.Image:
@@ -70,6 +70,12 @@ def main() -> int:
                 image.seek(0)
             image = image.convert("RGB")
             image.thumbnail((size, size), Image.LANCZOS)
+            try:
+                blur = float(job.get("blur") or 0)
+            except (TypeError, ValueError):
+                blur = 0.0
+            if blur > 0:
+                image = image.filter(ImageFilter.GaussianBlur(blur))
             image.save(output, "PNG")
             print(
                 json.dumps(

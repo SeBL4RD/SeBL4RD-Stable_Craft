@@ -23,10 +23,12 @@ from lora_store import (
     LoraApi,
     compatibility,
     family_label,
+    load_settings,
     normalize_api_item,
     normalize_item,
     preview_cache_key,
     preview_cache_path,
+    save_settings,
 )
 
 BG = "#1b1b1f"
@@ -46,6 +48,41 @@ PICKER_PAGE_SIZE = 100
 ROOT_FOLDER_IID = "__root__"
 PREVIEW_SIZE = 160
 ROW_THUMB_SIZE = 84
+NSFW_LEVEL_R = 4
+NSFW_BLUR_RADIUS = 8
+
+
+def item_nsfw_level(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("preview_nsfw_level") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def item_is_nsfw(item: dict[str, Any]) -> bool:
+    return item_nsfw_level(item) >= NSFW_LEVEL_R
+
+
+def lora_blur_enabled(app: Any) -> bool:
+    var = getattr(app, "lora_blur_var", None)
+    if var is not None:
+        return bool(var.get())
+    return bool(load_settings().get("blur_nsfw", True))
+
+
+def lora_blur_key(key: str) -> str:
+    return f"{key}-nsfw" if key else key
+
+
+def thumb_cache_key(item: dict[str, Any], blurred: bool) -> str:
+    key = preview_cache_key(item)
+    return lora_blur_key(key) if blurred else key
+
+
+def save_lora_blur(enabled: bool) -> None:
+    settings = load_settings()
+    settings["blur_nsfw"] = bool(enabled)
+    save_settings(settings)
 
 
 def _short(text: str, limit: int) -> str:
@@ -86,7 +123,7 @@ def preview_source(item: dict[str, Any], endpoint: str) -> dict[str, str]:
 
 def start_preview_conversion(
     app: Any,
-    jobs: list[dict[str, str]],
+    jobs: list[dict[str, Any]],
     target_queue: "queue.Queue[tuple[Any, ...]]",
     holder: dict[str, Any],
 ) -> str | None:
@@ -184,6 +221,11 @@ class LoraManager(tk.Toplevel):
 
     def __init__(self, app: Any) -> None:
         super().__init__(app)
+        demote = getattr(app, "_demote_for_child", None)
+        if callable(demote):
+            demote()
+            self.bind("<Map>", lambda _event: demote(), add="+")
+            self.bind("<FocusIn>", lambda _event: demote(), add="+")
         self.app = app
         self.api = LoraApi(str(app.cfg["comfyui"]["endpoint"]))
         self.profile_key = str(app.profile_key)
@@ -202,12 +244,19 @@ class LoraManager(tk.Toplevel):
         self._picker: LoraPicker | None = None
         self._thumb_images: dict[str, tk.PhotoImage] = {}
         self._thumb_labels: dict[str, tk.Label] = {}
+        self._thumb_paths: dict[str, str] = {}
+        self._thumb_items: dict[str, dict[str, Any]] = {}
+        self._blur_bases: dict[str, str] = {}
         self._pending_thumbs: set[str] = set()
         self._thumb_failed: set[str] = set()
         self._thumbs_running = False
         self._thumb_holder: dict[str, Any] = {}
         self._thumb_total = 0
         self._thumb_done = 0
+        self._blur_var = getattr(app, "lora_blur_var", None)
+        if self._blur_var is None:
+            self._blur_var = tk.BooleanVar(value=lora_blur_enabled(app))
+        self._blur_trace = self._blur_var.trace_add("write", self._on_blur_change)
 
         self.title(
             tr(
@@ -215,11 +264,9 @@ class LoraManager(tk.Toplevel):
                 profile=profile_text(self.profile, "label") or self.profile_key,
             )
         )
-        self.geometry("860x780+420+50")
-        self.minsize(760, 620)
+        self.geometry("800x720+420+50")
+        self.minsize(560, 420)
         self.configure(bg=BG)
-        self.transient(app)
-        self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._apply_and_close)
 
         self._build()
@@ -250,7 +297,7 @@ class LoraManager(tk.Toplevel):
             bg=BG,
             fg=MUTED,
             justify="left",
-            wraplength=820,
+            wraplength=520,
             anchor="w",
             font=("Segoe UI", 9),
         ).pack(fill="x", pady=(2, 4))
@@ -263,6 +310,19 @@ class LoraManager(tk.Toplevel):
             font=("Segoe UI", 9, "bold"),
         )
         self.count_label.pack(fill="x")
+
+        self.blur_check = tk.Checkbutton(
+            header,
+            text=tr("Flouter les LoRA NSFW"),
+            variable=self._blur_var,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 8),
+        )
+        self.blur_check.pack(anchor="w", pady=(2, 0))
 
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True, padx=12)
@@ -295,7 +355,7 @@ class LoraManager(tk.Toplevel):
             fg=MUTED,
             anchor="w",
             justify="left",
-            wraplength=820,
+            wraplength=520,
             font=("Segoe UI", 8),
         )
         self.status.pack(fill="x", pady=(0, 6))
@@ -364,7 +424,7 @@ class LoraManager(tk.Toplevel):
                 fg=MUTED,
                 anchor="w",
                 justify="left",
-                wraplength=760,
+                wraplength=520,
                 font=("Segoe UI", 9),
             ).pack(fill="x", pady=16)
         for index, item in enumerate(self.items):
@@ -405,7 +465,9 @@ class LoraManager(tk.Toplevel):
         thumb_key = preview_cache_key(item)
         if thumb_key:
             self._thumb_labels[thumb_key] = thumb_label
-            cached = preview_cache_path(thumb_key)
+            self._thumb_items[thumb_key] = item
+            blurred = lora_blur_enabled(self.app) and item_is_nsfw(item)
+            cached = preview_cache_path(thumb_cache_key(item, blurred))
             if cached.exists():
                 self._load_row_thumb(thumb_key, str(cached))
 
@@ -499,7 +561,7 @@ class LoraManager(tk.Toplevel):
                 fg=YELLOW,
                 anchor="w",
                 justify="left",
-                wraplength=660,
+                wraplength=520,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(4, 0))
 
@@ -518,25 +580,44 @@ class LoraManager(tk.Toplevel):
     # Row thumbnails
     # ------------------------------------------------------------------
 
+    def _on_blur_change(self, *_args: Any) -> None:
+        if self._closed:
+            return
+        try:
+            save_lora_blur(bool(self._blur_var.get()))
+        except Exception as exc:  # noqa: BLE001
+            self.status.config(text=tr("LoRA : {error}", error=str(exc)), fg=YELLOW)
+        self._thumb_images.clear()
+        self._thumb_paths.clear()
+        self._thumb_failed.clear()
+        self._rebuild_rows()
+
     def _ensure_row_thumbs(self) -> None:
         if self._closed or self._thumbs_running:
             return
-        jobs: list[dict[str, str]] = []
+        jobs: list[dict[str, Any]] = []
         for item in self.items:
             key = preview_cache_key(item)
             if not key:
                 continue
-            cached = preview_cache_path(key)
+            self._thumb_items[key] = item
+            blurred = lora_blur_enabled(self.app) and item_is_nsfw(item)
+            cache_key = thumb_cache_key(item, blurred)
+            cached = preview_cache_path(cache_key)
             if cached.exists():
                 self._load_row_thumb(key, str(cached))
                 continue
-            if key in self._pending_thumbs or key in self._thumb_failed:
+            if cache_key in self._pending_thumbs or cache_key in self._thumb_failed:
                 continue
             source = preview_source(item, self.api.endpoint)
             if not source:
                 continue
-            jobs.append({"key": key, **source})
-            self._pending_thumbs.add(key)
+            job: dict[str, Any] = {"key": cache_key, **source}
+            if blurred:
+                job["blur"] = NSFW_BLUR_RADIUS
+                self._blur_bases[cache_key] = key
+            jobs.append(job)
+            self._pending_thumbs.add(cache_key)
         if not jobs:
             return
         self._thumbs_running = True
@@ -559,7 +640,7 @@ class LoraManager(tk.Toplevel):
         if label is None:
             return
         image = self._thumb_images.get(key)
-        if image is None:
+        if image is None or self._thumb_paths.get(key) != path:
             try:
                 full = tk.PhotoImage(file=path)
             except Exception:  # noqa: BLE001
@@ -568,13 +649,22 @@ class LoraManager(tk.Toplevel):
             factor = max(1, (longest + ROW_THUMB_SIZE - 1) // ROW_THUMB_SIZE)
             image = full.subsample(factor, factor) if factor > 1 else full
             self._thumb_images[key] = image
+            self._thumb_paths[key] = path
         label.config(image=image, text="")
 
-    def _handle_row_thumb(self, key: str, ok: bool) -> None:
+    def _handle_row_thumb(self, key: str, ok: bool, value: str = "") -> None:
         self._pending_thumbs.discard(key)
         self._thumb_done += 1
+        base = self._blur_bases.get(key, key)
+        item = self._thumb_items.get(base)
         if ok:
-            self._load_row_thumb(key, str(preview_cache_path(key)))
+            path = value or str(preview_cache_path(key))
+            if item is None:
+                self._load_row_thumb(base, path)
+                return
+            desired_blur = lora_blur_enabled(self.app) and item_is_nsfw(item)
+            if key == thumb_cache_key(item, desired_blur):
+                self._load_row_thumb(base, path)
         else:
             self._thumb_failed.add(key)
 
@@ -654,11 +744,12 @@ class LoraManager(tk.Toplevel):
             Path(str(item.get("label") or "")).stem.casefold()
             for item in self.items
             if not (item.get("preview_url") or item.get("preview_file"))
+            or "preview_nsfw_level" not in item
         }
         if not missing:
             return {}
         patches: dict[str, dict[str, Any]] = {}
-        for page in range(1, 6):
+        for page in range(1, 51):
             data = self.api.list_loras(page, 100, "")
             for raw in data.get("items", []):
                 # The LoRA Manager reports `file_name` without its extension.
@@ -688,7 +779,7 @@ class LoraManager(tk.Toplevel):
             messagebox.showerror(tr("LoRA Manager"), str(exc), parent=self)
 
     def _choose(self, index: int) -> None:
-        if self.app.running or not 0 <= index < len(self.items):
+        if self.app.running or self._picker is not None or not 0 <= index < len(self.items):
             return
         used = {
             str(item.get("name") or "").replace("\\", "/").casefold()
@@ -708,7 +799,8 @@ class LoraManager(tk.Toplevel):
         self._picker = None
         if self._closed:
             return
-        self.grab_set()
+        self.lift()
+        self.focus_force()
         result = picker.result
         if not result:
             return
@@ -721,7 +813,7 @@ class LoraManager(tk.Toplevel):
             self._rebuild_rows()
 
     def _add(self) -> None:
-        if self.app.running:
+        if self.app.running or self._picker is not None:
             return
         if len(self.items) >= MAX_LORAS:
             messagebox.showinfo(
@@ -747,7 +839,8 @@ class LoraManager(tk.Toplevel):
         self._picker = None
         if self._closed:
             return
-        self.grab_set()
+        self.lift()
+        self.focus_force()
         result = picker.result
         if not result:
             return
@@ -806,7 +899,9 @@ class LoraManager(tk.Toplevel):
                 elif kind == "previews":
                     changed = False
                     for entry in self.items:
-                        if entry.get("preview_url") or entry.get("preview_file"):
+                        if (
+                            entry.get("preview_url") or entry.get("preview_file")
+                        ) and "preview_nsfw_level" in entry:
                             continue
                         match = item[1].get(
                             Path(str(entry.get("label") or "")).stem.casefold()
@@ -820,14 +915,22 @@ class LoraManager(tk.Toplevel):
                             "modified",
                             "arch",
                             "architecture",
+                            "preview_nsfw_level",
                         ):
-                            if match.get(field):
+                            if field == "preview_nsfw_level":
+                                if field in match:
+                                    entry[field] = match[field]
+                            elif match.get(field):
                                 entry[field] = match[field]
                         changed = True
                     if changed:
                         self._rebuild_rows()
                 elif kind == "thumb":
-                    self._handle_row_thumb(str(item[1]), bool(item[2]))
+                    self._handle_row_thumb(
+                        str(item[1]),
+                        bool(item[2]),
+                        str(item[3]) if len(item) > 3 else "",
+                    )
                 elif kind == "thumbs_done":
                     self._thumbs_running = False
                     self._thumb_done = self._thumb_total
@@ -864,6 +967,10 @@ class LoraManager(tk.Toplevel):
         if self._closed:
             return
         self._closed = True
+        try:
+            self._blur_var.trace_remove("write", self._blur_trace)
+        except tk.TclError:
+            pass
         proc = self._thumb_holder.get("proc")
         if proc is not None and proc.poll() is None:
             try:
@@ -891,6 +998,11 @@ class LoraPicker(tk.Toplevel):
         app: Any = None,
     ) -> None:
         super().__init__(parent)
+        demote = getattr(app, "_demote_for_child", None) if app is not None else None
+        if callable(demote):
+            demote()
+            self.bind("<Map>", lambda _event: demote(), add="+")
+            self.bind("<FocusIn>", lambda _event: demote(), add="+")
         self.parent = parent
         self.api = api
         self.profile_key = profile_key
@@ -918,6 +1030,9 @@ class LoraPicker(tk.Toplevel):
         self._comfy_names: list[str] = []
         self._comfy_loaded = False
         self._tiles: dict[str, dict[str, Any]] = {}
+        self._grid_tiles: list[tk.Frame] = []
+        self._grid_inner: tk.Frame | None = None
+        self._grid_columns = 0
         self._thumb_images: dict[str, tk.PhotoImage] = {}
         self._thumb_keys: dict[str, str] = {}
         self._pending_thumbs: set[str] = set()
@@ -926,17 +1041,22 @@ class LoraPicker(tk.Toplevel):
         self._thumb_holder: dict[str, Any] = {}
         self._thumb_total = 0
         self._thumb_done = 0
+        self._thumb_paths: dict[str, str] = {}
+        self._thumb_items: dict[str, dict[str, Any]] = {}
+        self._blur_bases: dict[str, str] = {}
+        self._blur_var = getattr(app, "lora_blur_var", None)
+        if self._blur_var is None:
+            self._blur_var = tk.BooleanVar(value=lora_blur_enabled(app))
+        self._blur_trace = self._blur_var.trace_add("write", self._on_blur_change)
         self._fallback = False
         self._tree: ttk.Treeview | None = None
 
         profile = app.manifest["profiles"].get(profile_key, {}) if app else {}
         label = profile_text(profile, "label") or profile_key
         self.title(tr("Sélectionner un LoRA"))
-        self.geometry("980x800+360+30")
-        self.minsize(840, 620)
+        self.geometry("920x740+360+30")
+        self.minsize(620, 460)
         self.configure(bg=BG)
-        self.transient(parent)
-        self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._cancel)
 
         self._build(label)
@@ -980,7 +1100,7 @@ class LoraPicker(tk.Toplevel):
             fg=MUTED,
             anchor="w",
             justify="left",
-            wraplength=930,
+            wraplength=560,
             font=("Segoe UI", 8),
         ).pack(fill="x", pady=(2, 8))
 
@@ -1013,6 +1133,18 @@ class LoraPicker(tk.Toplevel):
         self.details_btn.pack(side="left")
         self.grid_btn = self._view_button(search_row, tr("Grille"), "grid")
         self.grid_btn.pack(side="left", padx=(4, 0))
+        self.blur_check = tk.Checkbutton(
+            search_row,
+            text=tr("Flouter NSFW"),
+            variable=self._blur_var,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL_2,
+            activebackground=BG,
+            activeforeground=FG,
+            font=("Segoe UI", 8),
+        )
+        self.blur_check.pack(side="left", padx=(12, 0))
         self._update_view_buttons()
 
         path_row = tk.Frame(header, bg=BG)
@@ -1027,7 +1159,7 @@ class LoraPicker(tk.Toplevel):
             fg=MUTED,
             anchor="w",
             justify="left",
-            wraplength=680,
+            wraplength=420,
             font=("Segoe UI", 8),
         )
         self.folder_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
@@ -1091,7 +1223,7 @@ class LoraPicker(tk.Toplevel):
             fg=MUTED,
             anchor="w",
             justify="left",
-            wraplength=930,
+            wraplength=560,
             font=("Segoe UI", 8),
         )
         self.status.pack(fill="x", pady=(0, 6))
@@ -1148,6 +1280,20 @@ class LoraPicker(tk.Toplevel):
             return
         self.view = view
         self._update_view_buttons()
+        self._render_view()
+        if self.view == "grid":
+            self._start_thumbnails()
+
+    def _on_blur_change(self, *_args: Any) -> None:
+        if self._closed:
+            return
+        try:
+            save_lora_blur(bool(self._blur_var.get()))
+        except Exception as exc:  # noqa: BLE001
+            self.status.config(text=tr("LoRA : {error}", error=str(exc)), fg=YELLOW)
+        self._thumb_images.clear()
+        self._thumb_paths.clear()
+        self._thumb_failed.clear()
         self._render_view()
         if self.view == "grid":
             self._start_thumbnails()
@@ -1381,6 +1527,7 @@ class LoraPicker(tk.Toplevel):
                                 "preview_url": "",
                                 "preview_file": "",
                                 "modified": 0,
+                                "preview_nsfw_level": 0,
                             }
                         )
                     total = len(all_items)
@@ -1592,19 +1739,18 @@ class LoraPicker(tk.Toplevel):
         canvas.pack(side="left", fill="both", expand=True)
         self.grid_canvas = canvas
         inner = tk.Frame(canvas, bg=BG)
+        self._grid_inner = inner
+        self._grid_tiles = []
+        self._grid_columns = 0
         window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        self._grid_window_id = window_id
         inner.bind(
             "<Configure>",
             lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
         )
-        canvas.bind(
-            "<Configure>",
-            lambda event: canvas.itemconfigure(window_id, width=event.width),
-        )
+        canvas.bind("<Configure>", self._on_grid_configure)
         canvas.bind("<MouseWheel>", self._on_grid_wheel)
         inner.bind("<MouseWheel>", self._on_grid_wheel)
-        for column in range(4):
-            inner.columnconfigure(column, weight=1)
 
         for index, value in enumerate(self.items):
             tile = tk.Frame(
@@ -1615,7 +1761,7 @@ class LoraPicker(tk.Toplevel):
                 highlightthickness=2,
                 highlightbackground=BORDER,
             )
-            tile.grid(row=index // 4, column=index % 4, padx=6, pady=6, sticky="nsew")
+            self._grid_tiles.append(tile)
             thumb_frame = tk.Frame(tile, bg="#111114", width=164, height=164)
             thumb_frame.pack()
             thumb_frame.pack_propagate(False)
@@ -1660,11 +1806,47 @@ class LoraPicker(tk.Toplevel):
             key = preview_cache_key(value)
             if key:
                 self._thumb_keys[key] = str(index)
-                path = preview_cache_path(key)
+                self._thumb_items[key] = value
+                blurred = lora_blur_enabled(self.app) and item_is_nsfw(value)
+                path = preview_cache_path(thumb_cache_key(value, blurred))
                 if path.exists():
                     self._load_thumb(key, str(path))
         if self.selected_name:
             self._update_tile_styles()
+        self._layout_grid()
+
+    def _on_grid_configure(self, event: tk.Event) -> None:
+        window_id = getattr(self, "_grid_window_id", None)
+        if window_id is not None:
+            self.grid_canvas.itemconfigure(window_id, width=max(1, event.width))
+        self._layout_grid()
+
+    def _layout_grid(self) -> None:
+        canvas = getattr(self, "grid_canvas", None)
+        inner = self._grid_inner
+        if canvas is None or inner is None or not self._grid_tiles:
+            return
+        width = canvas.winfo_width()
+        if width <= 1:
+            width = 900
+        columns = max(1, (width - 12) // 176)
+        if columns == self._grid_columns and all(
+            tile.winfo_manager() for tile in self._grid_tiles
+        ):
+            inner.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            return
+        self._grid_columns = columns
+        for index, tile in enumerate(self._grid_tiles):
+            tile.grid(
+                row=index // columns,
+                column=index % columns,
+                padx=6,
+                pady=6,
+                sticky="n",
+            )
+        inner.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
 
     def _on_grid_wheel(self, event: tk.Event) -> str:
         canvas = getattr(self, "grid_canvas", None)
@@ -1767,23 +1949,30 @@ class LoraPicker(tk.Toplevel):
     def _start_thumbnails(self) -> None:
         if self._thumbs_running or self._closed:
             return
-        jobs: list[dict[str, str]] = []
+        jobs: list[dict[str, Any]] = []
         for index, item in enumerate(self.items):
             key = preview_cache_key(item)
             if not key:
                 continue
             self._thumb_keys[key] = str(index)
-            path = preview_cache_path(key)
+            self._thumb_items[key] = item
+            blurred = lora_blur_enabled(self.app) and item_is_nsfw(item)
+            cache_key = thumb_cache_key(item, blurred)
+            path = preview_cache_path(cache_key)
             if path.exists():
                 self._load_thumb(key, str(path))
                 continue
-            if key in self._pending_thumbs or key in self._thumb_failed:
+            if cache_key in self._pending_thumbs or cache_key in self._thumb_failed:
                 continue
             source = preview_source(item, self.api.endpoint)
             if not source:
                 continue
-            jobs.append({"key": key, **source})
-            self._pending_thumbs.add(key)
+            job: dict[str, Any] = {"key": cache_key, **source}
+            if blurred:
+                job["blur"] = NSFW_BLUR_RADIUS
+                self._blur_bases[cache_key] = key
+            jobs.append(job)
+            self._pending_thumbs.add(cache_key)
         if not jobs:
             return
         self._thumbs_running = True
@@ -1805,21 +1994,28 @@ class LoraPicker(tk.Toplevel):
     def _handle_thumb(self, key: str, ok: bool, value: str) -> None:
         self._pending_thumbs.discard(key)
         self._thumb_done += 1
+        base = self._blur_bases.get(key, key)
+        item = self._thumb_items.get(base)
         if ok:
-            self._load_thumb(key, value)
+            if item is None:
+                self._load_thumb(base, value)
+            else:
+                desired_blur = lora_blur_enabled(self.app) and item_is_nsfw(item)
+                if key == thumb_cache_key(item, desired_blur):
+                    self._load_thumb(base, value)
         else:
             self._thumb_failed.add(key)
         self._update_thumb_status()
 
     def _load_thumb(self, key: str, path: str) -> None:
-        if key in self._thumb_images:
-            image = self._thumb_images[key]
-        else:
+        image = self._thumb_images.get(key)
+        if image is None or self._thumb_paths.get(key) != path:
             try:
                 image = tk.PhotoImage(file=path)
             except Exception:  # noqa: BLE001
                 return
             self._thumb_images[key] = image
+            self._thumb_paths[key] = path
         tile_key = self._thumb_keys.get(key, "")
         tile = self._tiles.get(tile_key)
         if tile is None:
@@ -1864,6 +2060,10 @@ class LoraPicker(tk.Toplevel):
         if self._closed:
             return
         self._closed = True
+        try:
+            self._blur_var.trace_remove("write", self._blur_trace)
+        except tk.TclError:
+            pass
         proc = self._thumb_holder.get("proc")
         if proc is not None and proc.poll() is None:
             try:
