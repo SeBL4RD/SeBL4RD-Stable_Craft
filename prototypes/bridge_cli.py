@@ -31,6 +31,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -82,6 +83,15 @@ REFERENCE_INSTRUCTION = (
     "Use image 2 only for the requested detail, and keep image 1's scene, "
     "pose, lighting and identity unchanged.\n\n"
 )
+FLUX3_REFERENCE_INSTRUCTION = (
+    "<ref_image_0> is the scene to edit. <ref_image_1> is the reference image. "
+    "Use <ref_image_1> only for the requested detail, and keep <ref_image_0>'s "
+    "scene, pose, lighting and identity unchanged.\n\n"
+)
+FLUX3_T2I_REFERENCE_INSTRUCTION = (
+    "<ref_image_0> is a reference image. Use its subject, style and details only "
+    "where the prompt asks, and generate a new image for the requested scene.\n\n"
+)
 T2I_REFERENCE_INSTRUCTION = (
     "Image 1 is a reference image. Use its subject, style and details only where "
     "the prompt asks, and generate a new image for the requested scene.\n\n"
@@ -102,6 +112,25 @@ REFERENCE_SYSTEM_PROMPT = (
     "Use image 2 only for the requested detail, and keep image 1's scene, "
     "pose, lighting and identity unchanged."
 )
+FLUX3_IMAGE_REF_RE = re.compile(
+    r"\bimage[\s_\-]*(?:n[°ºo]\.?[\s_\-]*|#[\s_\-]*)?([12])\b",
+    re.IGNORECASE,
+)
+
+
+def flux3_reference_prompt(prompt: str, single: bool = False) -> str:
+    """Map the UI's 'Image 1/2' wording to FLUX.3's <ref_image_N> tags.
+
+    In T2I there is only one reference, so every image ordinal maps to it.
+    """
+    return FLUX3_IMAGE_REF_RE.sub(
+        lambda match: (
+            "<ref_image_0>"
+            if single or match.group(1) == "1"
+            else "<ref_image_1>"
+        ),
+        prompt,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +422,10 @@ def build_workflow(
     # ------------------------------------------------------------------
     if mode == "t2i":
         if profile == "flux3_klein" and reference_image:
-            text = f"{T2I_REFERENCE_INSTRUCTION}{prompt}"
+            text = (
+                f"{FLUX3_T2I_REFERENCE_INSTRUCTION}"
+                f"{flux3_reference_prompt(prompt, single=True)}"
+            )
             workflow, model = start()
             workflow.update(
                 {
@@ -425,6 +457,10 @@ def build_workflow(
                             "resolution.megapixels": 1.0,
                         },
                     },
+                    "12": {
+                        "class_type": "EmptyFlux2LatentImage",
+                        "inputs": {"width": width, "height": height, "batch_size": 1},
+                    },
                     "8": {
                         "class_type": "KSampler",
                         "inputs": {
@@ -436,7 +472,7 @@ def build_workflow(
                             "scheduler": scheduler,
                             "positive": ["7", 0],
                             "negative": ["7", 1],
-                            "latent_image": ["7", 2],
+                            "latent_image": ["12", 0],
                             "denoise": denoise,
                         },
                     },
@@ -755,7 +791,11 @@ def build_workflow(
     # Instruction editing: the scene crop is the source image.
     # ------------------------------------------------------------------
     if profile == "flux3_klein":
-        text = f"{REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
+        text = (
+            f"{FLUX3_REFERENCE_INSTRUCTION}{flux3_reference_prompt(prompt)}"
+            if reference_image
+            else prompt
+        )
         workflow, model = start()
         workflow.update(
             {
