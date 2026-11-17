@@ -277,11 +277,13 @@ class MiniWebSocket:
         client_id: str,
         on_message: Callable[[dict[str, Any]], None],
         on_error: Callable[[str], None] | None = None,
+        on_binary: Callable[[bytes, str], None] | None = None,
     ) -> None:
         self.endpoint = str(endpoint).rstrip("/")
         self.client_id = str(client_id)
         self.on_message = on_message
         self.on_error = on_error
+        self.on_binary = on_binary
         self.sock: socket.socket | ssl.SSLSocket | None = None
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -399,8 +401,6 @@ class MiniWebSocket:
                     continue
                 if opcode == 0xA:  # pong
                     continue
-                if opcode == 0x2:  # binary (latent previews) - ignore
-                    continue
 
                 if opcode == 0x0:
                     if frag_opcode is None:
@@ -410,7 +410,7 @@ class MiniWebSocket:
                         self._dispatch(frag_opcode, bytes(frag_payload))
                         frag_opcode = None
                         frag_payload.clear()
-                elif opcode == 0x1:
+                elif opcode in (0x1, 0x2):
                     if fin:
                         self._dispatch(opcode, payload)
                     else:
@@ -422,6 +422,9 @@ class MiniWebSocket:
                 return
 
     def _dispatch(self, opcode: int, payload: bytes) -> None:
+        if opcode == 0x2:
+            self._dispatch_preview(payload)
+            return
         if opcode != 0x1:
             return
         try:
@@ -433,6 +436,30 @@ class MiniWebSocket:
                 self.on_message(message)
             except Exception:  # noqa: BLE001 - never break the reader
                 pass
+
+    def _dispatch_preview(self, payload: bytes) -> None:
+        """Decode ComfyUI's binary preview frame and forward the image bytes."""
+        if self.on_binary is None or len(payload) < 8:
+            return
+        try:
+            event = struct.unpack(">I", payload[:4])[0]
+            body = payload[4:]
+            if event == 1:  # PREVIEW_IMAGE: 4-byte image type + bytes
+                image_type = struct.unpack(">I", body[:4])[0]
+                mime = "image/png" if image_type == 2 else "image/jpeg"
+                image = body[4:]
+            elif event == 4:  # PREVIEW_IMAGE_WITH_METADATA
+                metadata_length = struct.unpack(">I", body[:4])[0]
+                end = 4 + metadata_length
+                metadata = json.loads(body[4:end].decode("utf-8"))
+                mime = str(metadata.get("image_type") or "image/jpeg")
+                image = body[end:]
+            else:
+                return
+            if image:
+                self.on_binary(image, mime)
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, struct.error):
+            return
 
     def _recv_exact(self, count: int) -> bytes:
         sock = self.sock
@@ -477,14 +504,18 @@ class ComfyProgress:
         endpoint: str,
         client_id: str,
         emit: Callable[[dict[str, Any]], None],
+        on_preview: Callable[[bytes, str], None] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.client_id = client_id
         self.emit = emit
+        self.on_preview = on_preview
         self.tracker: ProgressTracker | None = None
         self._lock = threading.Lock()
         self.available = True
-        self.ws = MiniWebSocket(endpoint, client_id, self._message, self._error)
+        self.ws = MiniWebSocket(
+            endpoint, client_id, self._message, self._error, self._preview
+        )
         self.ws.start()
 
     def track(
@@ -523,6 +554,14 @@ class ComfyProgress:
 
     def stop(self) -> None:
         self.ws.stop()
+
+    def _preview(self, image: bytes, mime: str) -> None:
+        if self.on_preview is None:
+            return
+        try:
+            self.on_preview(image, mime)
+        except Exception:  # noqa: BLE001 - previews must never break generation
+            pass
 
     def _error(self, message: str) -> None:
         self.available = False

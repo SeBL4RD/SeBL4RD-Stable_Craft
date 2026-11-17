@@ -183,9 +183,6 @@ EN: dict[str, str] = {
     "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1.": (
         "Available for Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1."
     ),
-    "Krea 2 utilise la référence en EDIT ; en T2I, passe en EDIT pour une génération guidée par l'image.": (
-        "Krea 2 uses references in EDIT; switch to EDIT for image-guided generation."
-    ),
     "La référence guide la génération T2I.": (
         "The reference guides the T2I generation."
     ),
@@ -338,9 +335,9 @@ EN: dict[str, str] = {
     "Qwen Image 2.1 les appelle <image1> et <image2> dans son prompt.": (
         "Qwen Image 2.1 calls them <image1> and <image2> in its prompt."
     ),
-    "En T2I, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1 utilisent la référence comme image 1 pour guider une nouvelle image. Krea 2 utilise la référence en EDIT.": (
-        "In T2I, FLUX.2 Klein 9B, FLUX.3 Klein and Qwen Image 2.1 use the "
-        "reference as image 1 to guide a new image. Krea 2 uses references in EDIT."
+    "En T2I, FLUX.2 Klein 9B, FLUX.3 Klein, Krea 2 et Qwen Image 2.1 utilisent la référence pour guider une nouvelle image.": (
+        "In T2I, FLUX.2 Klein 9B, FLUX.3 Klein, Krea 2 and Qwen Image 2.1 use the "
+        "reference to guide a new image."
     ),
     "La référence n'est active que si la case est cochée et qu'une image est chargée. Elle n'est jamais collée : elle sert d'inspiration au modèle.": (
         "The reference is active only when the box is checked and an image is "

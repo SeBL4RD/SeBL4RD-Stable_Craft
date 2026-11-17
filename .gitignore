@@ -6,6 +6,7 @@ demo/*
 !demo/DEMO_StableCraft_EDIT.jpg
 !demo/DEMO_full.jpg
 !demo/logo_full.ico
+!demo/logo_full.png
 *.pyc
 
 # Local configuration (contains absolute paths)

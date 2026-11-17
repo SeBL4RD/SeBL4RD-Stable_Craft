@@ -73,7 +73,13 @@ REFERENCE_PROFILES = {
     QWEN_PROFILE,
     MOSS_PROFILE,
 }
-T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
+T2I_REFERENCE_PROFILES = {
+    "krea2_edit",
+    "krea2_general_edit",
+    "flux3_klein",
+    "flux2_klein_9b",
+    QWEN_PROFILE,
+}
 # Only FLUX.2 Klein EDIT feeds the source crop as the sampling latent. The other
 # profiles sample from an empty latent (shape only), so denoise < 1 would start
 # from partially noised zeros instead of the source and produce artifacts.
@@ -91,6 +97,10 @@ FLUX3_REFERENCE_INSTRUCTION = (
 FLUX3_T2I_REFERENCE_INSTRUCTION = (
     "<ref_image_0> is a reference image. Use its subject, style and details only "
     "where the prompt asks, and generate a new image for the requested scene.\n\n"
+)
+KREA2_T2I_REFERENCE_INSTRUCTION = (
+    "Create a new image from the reference image. Use the reference for the "
+    "subject and its details, not for its background or composition. "
 )
 T2I_REFERENCE_INSTRUCTION = (
     "Image 1 is a reference image. Use its subject, style and details only where "
@@ -254,7 +264,11 @@ class ComfyClient:
     def queue(self, workflow: dict[str, Any]) -> str:
         response = self._post(
             "/prompt",
-            json={"prompt": workflow, "client_id": self.client_id},
+            json={
+                "prompt": workflow,
+                "client_id": self.client_id,
+                "extra_data": {"preview_method": "auto"},
+            },
         )
         body = response.json()
         if "prompt_id" not in body:
@@ -315,6 +329,58 @@ def comfy_error_message(status: dict[str, Any]) -> str:
             text = data.get("exception_message", "unknown error").splitlines()[0]
             return f"ComfyUI error in {node}: {text}"
     return "ComfyUI reported an error"
+
+
+def parse_preview_max(value: str | None) -> tuple[int, int]:
+    """Parse the UI canvas size (WxH) used to pre-scale previews."""
+    if value:
+        match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", str(value))
+        if match:
+            return max(1, int(match.group(1))), max(1, int(match.group(2)))
+    return 446, 286
+
+
+class LivePreviewWriter:
+    """Save ComfyUI sampler previews as a PNG the UI can display."""
+
+    def __init__(
+        self,
+        path: Path,
+        interval: float = 0.12,
+        max_size: tuple[int, int] | None = None,
+    ) -> None:
+        self.path = path
+        self.temp_path = path.with_name(path.stem + ".tmp" + path.suffix)
+        self.interval = max(0.0, float(interval))
+        self.max_size = max_size
+        self.last = 0.0
+
+    def reset(self) -> None:
+        self.last = 0.0
+        for candidate in (self.path, self.temp_path):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+
+    def __call__(self, data: bytes, _mime: str) -> None:
+        now = time.monotonic()
+        if self.interval and now - self.last < self.interval:
+            return
+        self.last = now
+        try:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:  # noqa: BLE001 - previews are optional
+            return
+        if self.max_size:
+            image.thumbnail(self.max_size, Image.LANCZOS)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            image.save(self.temp_path, format="PNG", compress_level=1)
+            os.replace(self.temp_path, self.path)
+        except OSError:
+            return
+        print(f"LIVE_PREVIEW: {self.path}", flush=True)
 
 
 def clip_loader_for(text_encoder: str) -> str:
@@ -578,9 +644,96 @@ def build_workflow(
 
         if profile in KREA_PROFILES:
             if reference_image:
-                raise ComfyError(
-                    "Krea 2 T2I does not take a reference image; use EDIT instead."
+                # A reference-guided T2I is the Krea edit path with the
+                # reference as the source and a fresh empty target canvas.
+                workflow, model = start(
+                    apply_lora=profile == "krea2_general_edit"
                 )
+                workflow.update(
+                    {
+                        "2": {
+                            "class_type": "CLIPLoader",
+                            "inputs": {"clip_name": text_encoder, "type": "krea2"},
+                        },
+                        "3": {
+                            "class_type": "VAELoader",
+                            "inputs": {"vae_name": vae},
+                        },
+                        "4": {
+                            "class_type": "LoadImage",
+                            "inputs": {"image": reference_image},
+                        },
+                        "5": {
+                            "class_type": "VAEEncode",
+                            "inputs": {"pixels": ["4", 0], "vae": ["3", 0]},
+                        },
+                        "6": {
+                            "class_type": "EmptySD3LatentImage",
+                            "inputs": {
+                                "width": width,
+                                "height": height,
+                                "batch_size": 1,
+                            },
+                        },
+                        "7": {
+                            "class_type": "Krea2EditModelPatch",
+                            "inputs": {
+                                "model": model,
+                                "source_latent": ["5", 0],
+                                "source_image": ["4", 0],
+                                "vae": ["3", 0],
+                                "target_latent": ["6", 0],
+                                "ref_boost": ref_boost,
+                                "fit_mode": "fit",
+                                "ref_position": "aligned (trained)",
+                                "ref_position_a": "aligned (trained)",
+                            },
+                        },
+                        "8": {
+                            "class_type": "Krea2EditGroundedEncode",
+                            "inputs": {
+                                "clip": ["2", 0],
+                                "prompt": f"{KREA2_T2I_REFERENCE_INSTRUCTION}{prompt}",
+                                "image": ["4", 0],
+                                "grounding_px": grounding_px,
+                            },
+                        },
+                        "9": {
+                            "class_type": "Krea2EditGroundedEncode",
+                            "inputs": {
+                                "clip": ["2", 0],
+                                "prompt": "",
+                                "image": ["4", 0],
+                                "grounding_px": grounding_px,
+                            },
+                        },
+                        "10": {
+                            "class_type": "KSampler",
+                            "inputs": {
+                                "model": ["7", 0],
+                                "seed": seed,
+                                "steps": steps,
+                                "cfg": cfg,
+                                "sampler_name": sampler,
+                                "scheduler": scheduler,
+                                "positive": ["8", 0],
+                                "negative": ["9", 0],
+                                "latent_image": ["6", 0],
+                                "denoise": denoise,
+                            },
+                        },
+                        "11": {
+                            "class_type": "VAEDecode",
+                            "inputs": {"samples": ["10", 0], "vae": ["3", 0]},
+                        },
+                        "12": {
+                            "class_type": "PreviewImage",
+                            "inputs": {"images": ["11", 0]},
+                        },
+                    }
+                )
+                return workflow
+
             workflow, model = start()
             # The identity profile is a qwen_image-architecture merge and uses
             # the 16-channel SD3 latent. The official Krea 2 base follows the
@@ -1046,7 +1199,9 @@ def build_workflow(
             workflow["7"]["inputs"].update(
                 {
                     "source_image_b": ["13", 0],
-                    "ref_position": "beside (right of target)",
+                    # Trained placement: far cheaper than "beside" here and
+                    # better suited to a detail/clothing reference.
+                    "ref_position": "aligned (trained)",
                     "ref_position_a": "aligned (trained)",
                     "ref_boost_a": 1.0,
                 }
@@ -1929,10 +2084,13 @@ def comfy_generate(
     comfy.require(unet_loader_for(ctx["unet"]), "unet_name", ctx["unet"])
     comfy.require(clip_loader_for(ctx["text_encoder"]), "clip_name", ctx["text_encoder"])
     comfy.require("VAELoader", "vae_name", ctx["vae"])
-    if mode == "edit" and profile in KREA_PROFILES:
+    if profile in KREA_PROFILES and (
+        mode == "edit" or reference_path is not None
+    ):
         comfy.require_node("Krea2EditModelPatch")
         comfy.require_node("Krea2EditGroundedEncode")
-    if profile == "krea2_edit":
+        comfy.require_node("EmptySD3LatentImage")
+    elif profile == "krea2_edit":
         comfy.require_node("EmptySD3LatentImage")
     if profile == QWEN_PROFILE:
         comfy.require_node("TextEncodeQwenImage21")
@@ -2025,12 +2183,18 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
     comfy = ComfyClient(
         ctx["comfy_endpoint"], timeout=args.timeout, temp_dir=comfy_temp_dir(ctx["cfg"])
     )
+    live_preview = LivePreviewWriter(
+        ROOT / "user" / "live_preview.png",
+        max_size=ctx.get("preview_max"),
+    )
+    live_preview.reset()
     progress = ComfyProgress(
         ctx["comfy_endpoint"],
         comfy.client_id,
         lambda data: print(
             "PROGRESS: " + json.dumps(data, separators=(",", ":")), flush=True
         ),
+        on_preview=live_preview,
     )
     try:
         if args.session:
@@ -2176,6 +2340,14 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
             result_path = gdir / "result.png"
             result.save(result_path)
             crop_image.save(gdir / "crop.png")
+            preview = result.copy()
+            preview.thumbnail(
+                ctx.get("preview_max") or (446, 286), Image.LANCZOS
+            )
+            try:
+                preview.save(gdir / "preview.png")
+            except OSError:
+                pass
             thumb = result.copy()
             # The gallery cell is 4:3 (128x96).  Keep the thumbnail inside
             # that box; the UI centres it without cropping the result.
@@ -2202,6 +2374,7 @@ def run_session_generate(ctx: dict[str, Any]) -> None:
                 "crop_offset": [x0, y0],
                 "crop_size": [cw, ch],
                 "result": f"generations/{index}/result.png",
+                "preview": f"generations/{index}/preview.png",
                 "thumb": f"generations/{index}/thumb.png",
                 "reference": (
                     (sdata.get("reference") or {}).get("name")
@@ -2891,6 +3064,11 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="only save the composite and crop")
     ap.add_argument("--no-apply", action="store_true", help="generate but do not insert into PhotoCraft")
     ap.add_argument("--save-preview", action="store_true", help="also save a flattened after.png")
+    ap.add_argument(
+        "--preview-max",
+        default=None,
+        help="UI preview size in pixels, WxH (default 446x286)",
+    )
     ap.add_argument("--timeout", type=float, default=600.0)
     ap.add_argument("--session-mode", action="store_true", help="create a persistent session for this selection")
     ap.add_argument("--session", default=None, help="regenerate an existing session id")
@@ -2986,6 +3164,7 @@ def main() -> None:
 
     padding = args.padding if args.padding is not None else int(pcfg.get("context_padding", 96))
     feather = args.feather if args.feather is not None else int(pcfg.get("feather", 10))
+    preview_max = parse_preview_max(args.preview_max)
     mode = args.mode or "edit"
     settings = manifest.get("settings", {})
     edit_settings = manifest.get("edit_settings", {}) if mode == "edit" else {}
@@ -3100,6 +3279,7 @@ def main() -> None:
         "automation_root": automation_root,
         "padding": padding,
         "feather": feather,
+        "preview_max": preview_max,
         "steps": steps,
         "cfg_scale": cfg_scale,
         "sampler": sampler,

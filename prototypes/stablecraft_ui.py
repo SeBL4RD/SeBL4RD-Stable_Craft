@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
 import json
 import math
 import os
@@ -114,7 +115,13 @@ REFERENCE_PROFILES = {
     QWEN_PROFILE,
     MOSS_PROFILE,
 }
-T2I_REFERENCE_PROFILES = {"flux3_klein", "flux2_klein_9b", QWEN_PROFILE}
+T2I_REFERENCE_PROFILES = {
+    "krea2_edit",
+    "krea2_general_edit",
+    "flux3_klein",
+    "flux2_klein_9b",
+    QWEN_PROFILE,
+}
 # Only FLUX.2 Klein EDIT starts from the source crop latent. Other profiles
 # sample from an empty latent, where denoise < 1 produces artifacts.
 DENOISE_PROFILES = {"flux2_klein_9b"}
@@ -362,17 +369,124 @@ def version_tuple(value: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def fit_photo_image(
+    image: tk.PhotoImage, max_width: int, max_height: int
+) -> tk.PhotoImage:
+    """Scale a Tk image to the largest size that fits, without Pillow.
+
+    Tk only scales by integer factors, so try subsample/zoom pairs and keep the
+    pair with the best source detail among the near-largest results.
+    """
+    width, height = image.width(), image.height()
+    if width <= 0 or height <= 0 or max_width <= 0 or max_height <= 0:
+        return image
+    if width <= max_width and height <= max_height:
+        return image
+
+    candidates: list[tuple[int, int, int, int, int]] = []
+    best_area = 0
+    for subsample in range(1, 33):
+        scaled_w = (width + subsample - 1) // subsample
+        scaled_h = (height + subsample - 1) // subsample
+        if scaled_w < 1 or scaled_h < 1:
+            continue
+        zoom = min(max_width // scaled_w, max_height // scaled_h)
+        if zoom < 1:
+            continue
+        area = scaled_w * zoom * scaled_h * zoom
+        candidates.append((area, subsample, zoom, scaled_w * zoom, scaled_h * zoom))
+        best_area = max(best_area, area)
+    if not candidates or best_area <= 0:
+        return image
+
+    # Prefer the least destructive subsample whose result is nearly as large
+    # as the best one (90% of the area, i.e. about 95% of each dimension).
+    cutoff = best_area * 0.9
+    _area, subsample, zoom, _scaled_w, _scaled_h = max(
+        (candidate for candidate in candidates if candidate[0] >= cutoff),
+        key=lambda candidate: (-candidate[1], candidate[0]),
+    )
+    result = image
+    if subsample > 1:
+        result = result.subsample(subsample, subsample)
+    if zoom > 1:
+        result = result.zoom(zoom, zoom)
+    return result
+
+
+APP_USER_MODEL_ID = "SeBL4RD.StableCraft"
+
+
+def set_windows_app_user_model_id() -> None:
+    """Give the pythonw process its own Windows taskbar identity."""
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            APP_USER_MODEL_ID
+        )
+    except Exception:  # noqa: BLE001 - icon polish must never block startup
+        pass
+
+
+def apply_windows_taskbar_icon(widget: tk.Misc, icon_path: Path) -> None:
+    """Set both WM_SETICON variants so Explorer uses the StableCraft icon."""
+    if os.name != "nt":
+        return
+    try:
+        user32 = ctypes.windll.user32
+        image_icon = 1
+        load_from_file = 0x10
+        wm_seticon = 0x80
+        icon_small = 0
+        icon_big = 1
+
+        windows: list[int] = []
+        try:
+            windows.append(int(str(widget.wm_frame()), 16))
+        except (ValueError, tk.TclError):
+            pass
+        window_id = widget.winfo_id()
+        if window_id and window_id not in windows:
+            windows.append(window_id)
+
+        for size, kind in ((16, icon_small), (32, icon_big)):
+            handle = user32.LoadImageW(
+                0, str(icon_path), image_icon, size, size, load_from_file
+            )
+            if not handle:
+                continue
+            for window in windows:
+                user32.SendMessageW(window, wm_seticon, kind, handle)
+    except Exception:  # noqa: BLE001 - icon polish must never block startup
+        pass
+
+
 class StableCraftApp(tk.Tk):
     def __init__(self, config_path: Path, initial_profile: str | None = None) -> None:
+        set_windows_app_user_model_id()
         super().__init__()
+        self._app_icon: tk.PhotoImage | None = None
         try:
-            for icon in (
-                ROOT / "installer" / "logo_full.ico",
-                ROOT / "demo" / "logo_full.ico",
-            ):
+            if os.name == "nt":
+                for icon in (
+                    ROOT / "installer" / "logo_full.ico",
+                    ROOT / "demo" / "logo_full.ico",
+                ):
+                    if icon.exists():
+                        self.iconbitmap(str(icon))
+                        self.iconbitmap(default=str(icon))
+                        self.after(
+                            120,
+                            lambda path=icon: apply_windows_taskbar_icon(self, path),
+                        )
+                        break
+            else:
+                icon = ROOT / "demo" / "logo_full.png"
                 if icon.exists():
-                    self.iconbitmap(default=str(icon))
-                    break
+                    self._app_icon = tk.PhotoImage(file=str(icon))
+                    self.iconphoto(False, self._app_icon)
+                    self.iconphoto(True, self._app_icon)
         except tk.TclError:
             pass
         self.config_path = config_path
@@ -385,7 +499,11 @@ class StableCraftApp(tk.Tk):
         self.running = False
         self.proc_reader: threading.Thread | None = None
         self.last_error: str | None = None
-        self.preview_paths: dict[str, str | None] = {"result": None, "document": None}
+        self.preview_paths: dict[str, str | None] = {
+            "result": None,
+            "document": None,
+            "live": None,
+        }
         self.preview_image: tk.PhotoImage | None = None
         self.session_store = SessionStore(self._sessions_root())
         self.session_id: str | None = None
@@ -1321,16 +1439,7 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 9),
         )
         self.ref_check.pack(anchor="w", pady=(4, 0))
-        self.ref_profile_hint = tk.Label(
-            ref_frame,
-            text="",
-            bg=BG,
-            fg=YELLOW,
-            anchor="w",
-            font=("Segoe UI", 8),
-            wraplength=420,
-        )
-        self.ref_profile_hint.pack(fill="x")
+        self.ref_tooltip = Tooltip(self.ref_check)
         self.ref_panel = tk.Frame(ref_frame, bg=BG)
         self.ref_canvas = tk.Canvas(
             self.ref_panel,
@@ -2695,6 +2804,10 @@ class StableCraftApp(tk.Tk):
                     self.preview_paths["result"] = str(item[1])
                     if self.preview_mode.get() == "result":
                         self._load_preview(str(item[1]))
+                elif kind == "live_preview":
+                    self.preview_paths["live"] = str(item[1])
+                    if self.running and self.preview_mode.get() == "result":
+                        self._load_preview(str(item[1]))
                 elif kind == "session_line":
                     self.pending_session_id = str(item[1])
                 elif kind == "generation_line":
@@ -2981,11 +3094,6 @@ class StableCraftApp(tk.Tk):
                     "MOSS-Image utilise la référence en EDIT ; en T2I, le modèle "
                     "ne prend pas d'image."
                 )
-            if self.profile_key in KREA_PROFILES:
-                return tr(
-                    "Krea 2 utilise la référence en EDIT ; en T2I, passe en EDIT "
-                    "pour une génération guidée par l'image."
-                )
             return tr("La référence guide la génération T2I.")
         return tr(
             "Disponible sur Krea 2, FLUX.2 Klein 9B, FLUX.3 Klein et Qwen Image 2.1."
@@ -2997,13 +3105,13 @@ class StableCraftApp(tk.Tk):
             state="normal" if supported and not self.running else "disabled"
         )
         if supported:
-            self.ref_profile_hint.config(text="")
+            self.ref_tooltip.set_text("")
             if self.ref_var.get():
                 self._show_reference_panel()
             else:
                 self._hide_reference_panel()
         else:
-            self.ref_profile_hint.config(text=self._reference_help())
+            self.ref_tooltip.set_text(self._reference_help())
             self._hide_reference_panel()
         self._update_reference_hint()
 
@@ -3020,7 +3128,7 @@ class StableCraftApp(tk.Tk):
             return
         if not self._reference_supported():
             self.ref_var.set(False)
-            self.ref_profile_hint.config(text=self._reference_help())
+            self.ref_tooltip.set_text(self._reference_help())
             return
         enabled = bool(self.ref_var.get())
         if enabled:
@@ -4247,17 +4355,23 @@ class StableCraftApp(tk.Tk):
         if self.session_data and self.session_id and index is not None:
             generations = self.session_data.get("generations", [])
             if 0 <= index < len(generations):
-                relative = generations[index].get("result")
-                if relative:
+                for key in ("preview", "result"):
+                    relative = generations[index].get(key)
+                    if not relative:
+                        continue
                     candidate = (
                         self.session_store.directory(str(self.session_id))
                         / str(relative)
                     )
                     if candidate.exists():
                         path = candidate
+                        break
         self.preview_paths["result"] = str(path) if path else None
         if self.preview_mode.get() == "result":
-            self._load_preview(self.preview_paths["result"])
+            if self.running and self.preview_paths.get("live"):
+                self._load_preview(self.preview_paths["live"])
+            else:
+                self._load_preview(self.preview_paths["result"])
 
     def _set_document_preview(self) -> None:
         path: Path | None = None
@@ -4574,12 +4688,20 @@ class StableCraftApp(tk.Tk):
         ]
         if self._mode() == "edit":
             command += ["--denoise", self.denoise_var.get()]
+        preview_width = self.preview_canvas.winfo_width()
+        preview_height = self.preview_canvas.winfo_height()
+        if preview_width <= 1:
+            preview_width = 450
+        if preview_height <= 1:
+            preview_height = 290
         command += [
             "--seed",
             self.seed_var.get(),
             "--batch",
             str(batch),
             "--save-preview",
+            "--preview-max",
+            f"{max(1, preview_width - 4)}x{max(1, preview_height - 4)}",
         ]
         if reuse:
             command += ["--session", self.session_id]
@@ -4686,6 +4808,7 @@ class StableCraftApp(tk.Tk):
             self._progress_animation = None
 
     def _progress_start(self, label: str) -> None:
+        self.preview_paths["live"] = None
         self._set_progress(0, label, indeterminate=True)
         self.progress_label.config(text=label, fg=YELLOW)
 
@@ -4785,6 +4908,9 @@ class StableCraftApp(tk.Tk):
                 kind, _, payload = line.partition(":")
                 self.queue.put((kind.strip().lower(), payload.strip()))
                 continue
+            if line.startswith("LIVE_PREVIEW:"):
+                self.queue.put(("live_preview", line.split(":", 1)[1].strip()))
+                continue
             self.queue.put(("log", line))
             if line.startswith("Preview:"):
                 self.queue.put(("preview", line.split(":", 1)[1].strip()))
@@ -4808,6 +4934,7 @@ class StableCraftApp(tk.Tk):
             self._finish_xyz(code)
             return
         self.running = False
+        self.preview_paths["live"] = None
         loras_before_reload = copy.deepcopy(self.lora_items)
         self._stop_progress_animation()
         self.cancel_btn.config(state="disabled")
@@ -5072,7 +5199,10 @@ class StableCraftApp(tk.Tk):
 
     def _load_preview_mode(self) -> None:
         mode = self.preview_mode.get()
-        path = self.preview_paths.get(mode)
+        if mode == "result" and self.running and self.preview_paths.get("live"):
+            path = self.preview_paths["live"]
+        else:
+            path = self.preview_paths.get(mode)
         self._load_preview(path)
 
     def _load_preview(self, path: str | None) -> None:
@@ -5103,12 +5233,19 @@ class StableCraftApp(tk.Tk):
             )
             self.preview_image = None
             return
-        width, height = image.width(), image.height()
-        factor = max(1, math.ceil(max(width / 440, height / 280)))
-        if factor > 1:
-            image = image.subsample(factor, factor)
+        canvas_width = self.preview_canvas.winfo_width()
+        canvas_height = self.preview_canvas.winfo_height()
+        if canvas_width <= 1:
+            canvas_width = 450
+        if canvas_height <= 1:
+            canvas_height = 290
+        image = fit_photo_image(
+            image, max(1, canvas_width - 4), max(1, canvas_height - 4)
+        )
         self.preview_image = image
-        self.preview_canvas.create_image(225, 145, image=image)
+        self.preview_canvas.create_image(
+            canvas_width // 2, canvas_height // 2, image=image
+        )
 
     def _log(self, text: str) -> None:
         self.log_text.configure(state="normal")

@@ -82,6 +82,29 @@ def show_error(title: str, message: str) -> None:
         print(f"{title}\n{message}")
 
 
+def set_windows_console_icon() -> None:
+    """Use the StableCraft logo for the visible launcher console."""
+    if os.name != "nt":
+        return
+    try:
+        icon = ROOT / "installer" / "logo_full.ico"
+        if not icon.exists():
+            icon = ROOT / "demo" / "logo_full.ico"
+        if not icon.exists():
+            return
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        console = kernel32.GetConsoleWindow()
+        if not console:
+            return
+        for size, kind in ((16, 0), (32, 1)):
+            handle = user32.LoadImageW(0, str(icon), 1, size, size, 0x10)
+            if handle:
+                user32.SendMessageW(console, 0x80, kind, handle)
+    except Exception:  # noqa: BLE001 - icon polish must never block startup
+        pass
+
+
 def port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -596,6 +619,7 @@ def migrate_control_port(cfg: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    set_windows_console_icon()
     USER_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log("=== StableCraft launcher ===")

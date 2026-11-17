@@ -114,7 +114,7 @@ class SessionStore:
             generation = generations[new_index]
             generation["index"] = new_index
             old_prefix = f"generations/{old_index}/"
-            for key in ("result", "thumb"):
+            for key in ("result", "preview", "thumb"):
                 value = str(generation.get(key) or "").replace("\\", "/")
                 if value.startswith(old_prefix):
                     generation[key] = (

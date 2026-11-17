@@ -182,7 +182,10 @@ say "Création du raccourci applicatif"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="$DATA_HOME/applications"
 mkdir -p "$APP_DIR"
-ICON="$ROOT/installer/logo_full.ico"
+ICON="$ROOT/demo/logo_full.png"
+if [ ! -f "$ICON" ]; then
+    ICON="$ROOT/installer/logo_full.ico"
+fi
 if [ ! -f "$ICON" ]; then
     ICON="$ROOT/demo/logo_full.ico"
 fi
