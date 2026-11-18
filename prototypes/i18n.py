@@ -370,9 +370,9 @@ EN: dict[str, str] = {
         "without one."
     ),
     # Gallery / actions
-    "Galerie — StableCraft [{session}] · {count} génération(s)": (
-        "Gallery — StableCraft [{session}] · {count} generation(s)"
-    ),
+    "Galerie — StableCraft [{session}]": "Gallery — StableCraft [{session}]",
+    "Copier le seed": "Copy the seed",
+    "Remet le seed en random": "Reset the seed to random",
     "Aucune génération dans cette session.": "No generation in this session.",
     "Clique sur une vignette pour appliquer cette génération.": (
         "Click a thumbnail to apply that generation."
@@ -585,7 +585,6 @@ EN: dict[str, str] = {
     "Suppression : {error}": "Deletion: {error}",
     "Suppression impossible": "Deletion failed",
     "Génération #{index} supprimée.": "Generation #{index} deleted.",
-    " · {count} favori(s)": " · {count} favorite(s)",
     "Clique sur une vignette pour appliquer.": "Click a thumbnail to apply.",
     "Image {index}/{count}": "Image {index}/{count}",
     "Cellule {index}/{count}": "Cell {index}/{count}",

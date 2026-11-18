@@ -516,6 +516,7 @@ class StableCraftApp(tk.Tk):
         self._gallery_item_indices: list[int] = []
         self._gallery_star_centers: dict[int, tuple[int, int]] = {}
         self._gallery_delete_centers: dict[int, tuple[int, int]] = {}
+        self._gallery_seed_value = ""
         self._gallery_cell_w = GALLERY_CELL_W
         self._gallery_cell_h = GALLERY_CELL_H
         self._gallery_columns = 0
@@ -1022,8 +1023,8 @@ class StableCraftApp(tk.Tk):
             del_x,
             del_y,
             text="✕",
-            fill=MUTED,
-            font=("Segoe UI", 9, "bold"),
+            fill=RED,
+            font=("Segoe UI", 10, "bold"),
             tags=("del", "del_fg"),
         )
         canvas.itemconfigure("del", state="hidden")
@@ -1178,20 +1179,140 @@ class StableCraftApp(tk.Tk):
         self._pending_favorites_session = None
 
     def _update_gallery_title(self) -> None:
-        if not self.session_data:
+        if not hasattr(self, "gallery_selection"):
             return
+        if not self.session_data:
+            self.gallery_title.config(text=tr("Aucune galerie"))
+            self.gallery_selection.config(text="")
+            self.gallery_seed_label.config(text="")
+            self._gallery_seed_value = ""
+            self._set_gallery_copy_enabled(False)
+            return
+
+        title = str(self.session_data.get("layer_name") or "")
+        if not title:
+            title = tr(
+                "Galerie — StableCraft [{session}]", session=self.session_id
+            )
+        self.gallery_title.config(text=title)
+
         generations = self.session_data.get("generations", [])
-        favorites = sum(
-            1 for generation in generations if generation.get("favorite")
+        current = int(self.session_data.get("current", -1))
+        if not 0 <= current < len(generations):
+            self.gallery_selection.config(text="")
+            self.gallery_seed_label.config(text="")
+            self._gallery_seed_value = ""
+            self._set_gallery_copy_enabled(False)
+            return
+
+        generation = generations[current]
+        self.gallery_selection.config(text=f"#{current + 1}")
+        seed = generation.get("seed")
+        if seed is None:
+            self.gallery_seed_label.config(text="")
+            self._gallery_seed_value = ""
+            self._set_gallery_copy_enabled(False)
+        else:
+            self.gallery_seed_label.config(text=tr("Seed {seed}", seed=seed))
+            self._gallery_seed_value = str(seed)
+            self._set_gallery_copy_enabled(True)
+
+    def _set_copy_icon_color(self, color: str) -> None:
+        for item in getattr(self, "_gallery_copy_items", ()):
+            try:
+                self.gallery_seed_copy.itemconfigure(item, outline=color)
+            except tk.TclError:
+                pass
+
+    def _set_gallery_copy_enabled(self, enabled: bool) -> None:
+        self._gallery_seed_copy_enabled = enabled
+        if not hasattr(self, "gallery_seed_copy"):
+            return
+        if self._gallery_copy_flash_job is not None:
+            try:
+                self.after_cancel(self._gallery_copy_flash_job)
+            except tk.TclError:
+                pass
+            self._gallery_copy_flash_job = None
+        self._set_copy_icon_color(MUTED if enabled else BORDER)
+        try:
+            self.gallery_seed_copy.config(cursor="hand2" if enabled else "")
+        except tk.TclError:
+            pass
+        self.gallery_seed_tooltip.set_text(
+            tr("Copier le seed") if enabled else ""
         )
-        text = tr(
-            "Galerie — StableCraft [{session}] · {count} génération(s)",
-            session=self.session_id,
-            count=len(generations),
+
+    def _gallery_copy_hover(self, enter: bool) -> None:
+        if not self._gallery_seed_copy_enabled:
+            return
+        self._set_copy_icon_color(FG if enter else MUTED)
+
+    def _copy_gallery_seed(self) -> None:
+        seed = self._gallery_seed_value
+        if not seed or not self._gallery_seed_copy_enabled:
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(seed)
+            self.update()
+        except tk.TclError:
+            return
+        self._set_copy_icon_color(GREEN)
+        if self._gallery_copy_flash_job is not None:
+            try:
+                self.after_cancel(self._gallery_copy_flash_job)
+            except tk.TclError:
+                pass
+
+        def restore() -> None:
+            self._gallery_copy_flash_job = None
+            self._set_copy_icon_color(
+                MUTED if self._gallery_seed_copy_enabled else BORDER
+            )
+
+        self._gallery_copy_flash_job = self.after(1000, restore)
+
+    def _build_seed_dice(self, parent: tk.Misc) -> None:
+        self.seed_dice = tk.Canvas(
+            parent,
+            width=18,
+            height=18,
+            bg=BG,
+            highlightthickness=0,
+            cursor="hand2",
         )
-        if favorites:
-            text += tr(" · {count} favori(s)", count=favorites)
-        self.gallery_title.config(text=text)
+        self.seed_dice.pack(side="left", padx=(4, 0))
+        self._seed_dice_rect = self.seed_dice.create_rectangle(
+            2, 2, 16, 16, outline=MUTED, width=1
+        )
+        self._seed_dice_pips = [
+            self.seed_dice.create_oval(
+                x - 1, y - 1, x + 1, y + 1, fill=MUTED, outline=MUTED
+            )
+            for x, y in ((6, 6), (12, 6), (9, 9), (6, 12), (12, 12))
+        ]
+        self.seed_dice.bind("<Button-1>", lambda _event: self._randomize_seed())
+        self.seed_dice.bind(
+            "<Enter>", lambda _event: self._set_seed_dice_color(FG)
+        )
+        self.seed_dice.bind(
+            "<Leave>", lambda _event: self._set_seed_dice_color(MUTED)
+        )
+        self.seed_dice_tooltip = Tooltip(
+            self.seed_dice, tr("Remet le seed en random")
+        )
+
+    def _set_seed_dice_color(self, color: str) -> None:
+        try:
+            self.seed_dice.itemconfigure(self._seed_dice_rect, outline=color)
+            for pip in self._seed_dice_pips:
+                self.seed_dice.itemconfigure(pip, fill=color, outline=color)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _randomize_seed(self) -> None:
+        self.seed_var.set("-1")
 
     def _section(
         self,
@@ -1683,8 +1804,16 @@ class StableCraftApp(tk.Tk):
                 row=row, column=col, sticky="w", padx=(0, 6), pady=2
             )
             if label.startswith("Seed"):
-                widget = tk.Entry(
-                    grid,
+                seed_row = tk.Frame(grid, bg=BG)
+                seed_row.grid(
+                    row=row,
+                    column=col + 1,
+                    columnspan=3,
+                    sticky="ew",
+                    pady=2,
+                )
+                self.seed_entry = tk.Entry(
+                    seed_row,
                     textvariable=var,
                     bg=PANEL_2,
                     fg=FG,
@@ -1694,8 +1823,11 @@ class StableCraftApp(tk.Tk):
                     highlightbackground=BORDER,
                     highlightcolor=ACCENT,
                 )
-            else:
-                widget = ttk.Spinbox(grid, from_=lo, to=hi, increment=step, textvariable=var)
+                self.seed_entry.pack(side="left", fill="x", expand=True)
+                self._lock_scroll_wheel(self.seed_entry)
+                self._build_seed_dice(seed_row)
+                continue
+            widget = ttk.Spinbox(grid, from_=lo, to=hi, increment=step, textvariable=var)
             widget.grid(row=row, column=col + 1, sticky="ew", pady=2)
             self._lock_scroll_wheel(widget)
 
@@ -1836,15 +1968,70 @@ class StableCraftApp(tk.Tk):
         self.progress_label.pack(fill="x", pady=(2, 0))
 
         gallery_frame = self._section(main, "GALERIE")
+        gallery_header = tk.Frame(gallery_frame, bg=BG)
+        gallery_header.pack(fill="x")
+
         self.gallery_title = tk.Label(
-            gallery_frame,
+            gallery_header,
             text="Aucune galerie",
             bg=BG,
             fg=MUTED,
             anchor="w",
-            font=("Segoe UI", 9),
+            justify="left",
+            wraplength=430,
+            font=("Segoe UI", 8),
         )
-        self.gallery_title.pack(fill="x")
+        self.gallery_title.pack(anchor="w", fill="x")
+
+        seed_row = tk.Frame(gallery_header, bg=BG)
+        seed_row.pack(anchor="w", fill="x", pady=(0, 1))
+        self.gallery_selection = tk.Label(
+            seed_row,
+            text="",
+            bg=BG,
+            fg=ACCENT,
+            anchor="w",
+            font=("Segoe UI", 8, "bold"),
+        )
+        self.gallery_selection.pack(side="left")
+        self.gallery_seed_label = tk.Label(
+            seed_row,
+            text="",
+            bg=BG,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 7),
+        )
+        self.gallery_seed_label.pack(side="left", padx=(6, 0))
+        self.gallery_seed_copy = tk.Canvas(
+            seed_row,
+            width=16,
+            height=16,
+            bg=BG,
+            highlightthickness=0,
+            cursor="",
+        )
+        self.gallery_seed_copy.pack(side="left", padx=(4, 0))
+        self._gallery_copy_items = (
+            self.gallery_seed_copy.create_rectangle(
+                2, 2, 10, 10, outline=BORDER, width=1
+            ),
+            self.gallery_seed_copy.create_rectangle(
+                6, 6, 14, 14, outline=BORDER, width=1, fill=BG
+            ),
+        )
+        self._gallery_seed_copy_enabled = False
+        self._gallery_copy_flash_job: str | None = None
+        self.gallery_seed_copy.bind(
+            "<Button-1>", lambda _event: self._copy_gallery_seed()
+        )
+        self.gallery_seed_copy.bind(
+            "<Enter>", lambda _event: self._gallery_copy_hover(True)
+        )
+        self.gallery_seed_copy.bind(
+            "<Leave>", lambda _event: self._gallery_copy_hover(False)
+        )
+        self.gallery_seed_tooltip = Tooltip(self.gallery_seed_copy, "")
         gallery_body = tk.Frame(gallery_frame, bg="#111114")
         gallery_body.pack(fill="x", pady=(4, 0))
         self.gallery_canvas = tk.Canvas(
@@ -4545,7 +4732,16 @@ class StableCraftApp(tk.Tk):
             return
         # The Crop view follows the clicked gallery item, not the last one
         # produced during a generation.
+        self.session_data["current"] = index
         self._set_result_preview(index)
+        self._update_gallery_title()
+        for cell_index, cell in self.gallery_canvases.items():
+            try:
+                cell.config(
+                    highlightbackground=ACCENT if cell_index == index else BORDER
+                )
+            except tk.TclError:
+                pass
         python, error = self._comfy_python()
         if error:
             messagebox.showerror("Python ComfyUI introuvable", error)
