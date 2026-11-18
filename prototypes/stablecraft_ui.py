@@ -73,6 +73,7 @@ from session_store import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 
 BG = "#1b1b1f"
+PANEL_BG = "#141418"
 PANEL = "#25252b"
 PANEL_2 = "#2d2d34"
 FG = "#e8e8ea"
@@ -1278,7 +1279,7 @@ class StableCraftApp(tk.Tk):
             parent,
             width=18,
             height=18,
-            bg=BG,
+            bg=PANEL_BG,
             highlightthickness=0,
             cursor="hand2",
         )
@@ -1320,22 +1321,23 @@ class StableCraftApp(tk.Tk):
         title: str,
         action_text: str | None = None,
         action: Any = None,
+        panel: str = BG,
     ) -> tk.Frame:
-        frame = tk.Frame(parent, bg=BG)
+        frame = tk.Frame(parent, bg=panel)
         frame.pack(fill="x", pady=(8, 0))
-        header = tk.Frame(frame, bg=BG)
+        header = tk.Frame(frame, bg=panel)
         header.pack(fill="x")
         tk.Label(
-            header, text=tr(title), bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")
+            header, text=tr(title), bg=panel, fg=MUTED, font=("Segoe UI", 9, "bold")
         ).pack(side="left")
         if action_text and action:
             tk.Button(
                 header,
                 text=action_text,
                 command=action,
-                bg=BG,
+                bg=panel,
                 fg=MUTED,
-                activebackground=BG,
+                activebackground=panel,
                 activeforeground=FG,
                 relief="flat",
                 bd=0,
@@ -1343,6 +1345,36 @@ class StableCraftApp(tk.Tk):
                 cursor="hand2",
             ).pack(side="right")
         return frame
+
+    def _paint_panel(self, widget: tk.Misc, color: str) -> None:
+        """Repaint only the neutral BG surfaces, leaving inputs and canvases."""
+        for child in widget.winfo_children():
+            for option in ("bg", "activebackground"):
+                try:
+                    if str(child.cget(option)) == BG:
+                        child.configure(**{option: color})
+                except tk.TclError:
+                    pass
+            self._paint_panel(child, color)
+
+    def _extend_panel(self, group: tk.Misc, color: str, overhang: int = 14) -> None:
+        """Let the panel background bleed a few pixels past the content."""
+        background = tk.Frame(group, bg=color)
+        background.place(
+            x=-overhang,
+            y=0,
+            relwidth=1,
+            width=overhang * 2,
+            relheight=1,
+        )
+        background.lower()
+
+    def _panel_content(
+        self, group: tk.Misc, color: str, padx: int = 8
+    ) -> tk.Frame:
+        content = tk.Frame(group, bg=color, padx=padx)
+        content.pack(fill="x")
+        return content
 
     # ------------------------------------------------------------------
     # Layout
@@ -1430,13 +1462,28 @@ class StableCraftApp(tk.Tk):
             fg=MUTED,
             font=("Segoe UI", 9),
         ).pack(anchor="w")
+        link_row = tk.Frame(header, bg=BG)
+        link_row.pack(anchor="w", pady=(1, 4))
         tk.Label(
-            header,
-            text=tr("par {author} · {repo}", author=AUTHOR, repo=REPO_URL),
+            link_row,
+            text=tr("par {author}", author=AUTHOR) + " · ",
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 7),
-        ).pack(anchor="w", pady=(1, 4))
+        ).pack(side="left")
+        self._repo_link_font = tkfont.Font(
+            family="Segoe UI", size=7, underline=True
+        )
+        self.repo_link = tk.Label(
+            link_row,
+            text=REPO_URL,
+            bg=BG,
+            fg=ACCENT,
+            font=self._repo_link_font,
+            cursor="hand2",
+        )
+        self.repo_link.pack(side="left")
+        self.repo_link.bind("<Button-1>", self._open_repo_page)
         self.update_label = tk.Label(
             header,
             text="",
@@ -1446,7 +1493,6 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 8),
             cursor="hand2",
         )
-        self.update_label.pack(fill="x")
         self.update_label.bind("<Button-1>", self._open_release_page)
         self.node_update_label = tk.Label(
             header,
@@ -1459,7 +1505,6 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 8),
             cursor="hand2",
         )
-        self.node_update_label.pack(fill="x")
         self.node_update_label.bind("<Button-1>", lambda _event: self._open_model_manager())
 
         status = tk.Frame(main, bg=PANEL, padx=10, pady=8, highlightthickness=1, highlightbackground=BORDER)
@@ -1519,9 +1564,17 @@ class StableCraftApp(tk.Tk):
         )
         self.mode_hint.pack(fill="x", pady=(2, 0))
 
+        prompt_group = tk.Frame(main, bg=PANEL_BG)
+        prompt_group.pack(fill="x", pady=(8, 0))
+        prompt_content = self._panel_content(prompt_group, PANEL_BG)
         prompt_frame = self._section(
-            main, "PROMPT", "Guide", self._show_prompt_guide
+            prompt_content,
+            "PROMPT",
+            "Guide",
+            self._show_prompt_guide,
+            panel=PANEL_BG,
         )
+        prompt_frame.pack_configure(pady=(0, 0))
         self.prompt_text = self._text(prompt_frame, 4)
         self.prompt_text.pack(fill="x", pady=(4, 0))
         self.prompt_text.insert("1.0", "Change the dress to royal blue, keep the pose and background unchanged.")
@@ -1545,7 +1598,9 @@ class StableCraftApp(tk.Tk):
         # hidden until the checkbox is on
         self._neg_visible = False
 
-        ref_frame = self._section(main, "IMAGE DE RÉFÉRENCE")
+        ref_frame = self._section(
+            prompt_content, "IMAGE DE RÉFÉRENCE", panel=PANEL_BG
+        )
         self.ref_var = tk.BooleanVar(value=False)
         self.ref_check = tk.Checkbutton(
             ref_frame,
@@ -1649,8 +1704,14 @@ class StableCraftApp(tk.Tk):
         )
         self.ref_remove.pack(side="left", padx=(4, 0))
         self._draw_reference_tile()
+        self._paint_panel(prompt_group, PANEL_BG)
+        self._extend_panel(prompt_group, PANEL_BG)
 
-        prof_frame = self._section(main, "PROFIL")
+        profile_group = tk.Frame(main, bg=PANEL_BG)
+        profile_group.pack(fill="x", pady=(8, 0))
+        profile_content = self._panel_content(profile_group, PANEL_BG)
+        prof_frame = self._section(profile_content, "PROFIL", panel=PANEL_BG)
+        prof_frame.pack_configure(pady=(0, 0))
         self.profile_var = tk.StringVar()
         self.profile_labels: list[str] = []
         self.label_to_key: dict[str, str] = {}
@@ -1720,7 +1781,7 @@ class StableCraftApp(tk.Tk):
         self._lock_scroll_wheel(self.quant_combo)
         self.quant_map: dict[str, str] = {}
 
-        lora_frame = self._section(main, "LORA")
+        lora_frame = self._section(profile_content, "LORA", panel=PANEL_BG)
         lora_top = tk.Frame(lora_frame, bg=BG)
         lora_top.pack(fill="x", pady=(4, 0))
         self.lora_check = tk.Checkbutton(
@@ -1778,8 +1839,14 @@ class StableCraftApp(tk.Tk):
         self.lora_hint.bind(
             "<Button-1>", lambda _event: self._open_lora_manager()
         )
+        self._paint_panel(profile_group, PANEL_BG)
+        self._extend_panel(profile_group, PANEL_BG)
 
-        settings = self._section(main, "RÉGLAGES")
+        settings_group = tk.Frame(main, bg=PANEL_BG)
+        settings_group.pack(fill="x", pady=(8, 0))
+        settings_content = self._panel_content(settings_group, PANEL_BG)
+        settings = self._section(settings_content, "RÉGLAGES", panel=PANEL_BG)
+        settings.pack_configure(pady=(0, 0))
         grid = tk.Frame(settings, bg=BG)
         grid.pack(fill="x", pady=(4, 0))
         for col in (1, 3):
@@ -1871,6 +1938,8 @@ class StableCraftApp(tk.Tk):
         self._lock_scroll_wheel(self.denoise_spin)
         self.denoise_tooltip = Tooltip(self.denoise_spin)
         self.denoise_label_tooltip = Tooltip(self.denoise_label)
+        self._paint_panel(settings_group, PANEL_BG)
+        self._extend_panel(settings_group, PANEL_BG)
 
         actions = tk.Frame(main, bg=BG)
         actions.pack(fill="x", pady=(12, 0))
@@ -1967,7 +2036,13 @@ class StableCraftApp(tk.Tk):
         )
         self.progress_label.pack(fill="x", pady=(2, 0))
 
-        gallery_frame = self._section(main, "GALERIE")
+        gallery_group = tk.Frame(main, bg=PANEL_BG)
+        gallery_group.pack(fill="x", pady=(8, 0))
+        gallery_content = self._panel_content(gallery_group, PANEL_BG)
+        gallery_frame = self._section(
+            gallery_content, "GALERIE", panel=PANEL_BG
+        )
+        gallery_frame.pack_configure(pady=(0, 0))
         gallery_header = tk.Frame(gallery_frame, bg=BG)
         gallery_header.pack(fill="x")
 
@@ -2007,7 +2082,7 @@ class StableCraftApp(tk.Tk):
             seed_row,
             width=16,
             height=16,
-            bg=BG,
+            bg=PANEL_BG,
             highlightthickness=0,
             cursor="",
         )
@@ -2017,7 +2092,7 @@ class StableCraftApp(tk.Tk):
                 2, 2, 10, 10, outline=BORDER, width=1
             ),
             self.gallery_seed_copy.create_rectangle(
-                6, 6, 14, 14, outline=BORDER, width=1, fill=BG
+                6, 6, 14, 14, outline=BORDER, width=1, fill=PANEL_BG
             ),
         )
         self._gallery_seed_copy_enabled = False
@@ -2071,8 +2146,16 @@ class StableCraftApp(tk.Tk):
             font=("Segoe UI", 8),
         )
         self.gallery_hint.pack(fill="x", pady=(2, 0))
+        self._paint_panel(gallery_group, PANEL_BG)
+        self._extend_panel(gallery_group, PANEL_BG)
 
-        preview_frame = self._section(main, "APERÇU")
+        preview_group = tk.Frame(main, bg=PANEL_BG)
+        preview_group.pack(fill="x", pady=(8, 0))
+        preview_content = self._panel_content(preview_group, PANEL_BG)
+        preview_frame = self._section(
+            preview_content, "APERÇU", panel=PANEL_BG
+        )
+        preview_frame.pack_configure(pady=(0, 0))
         preview_tools = tk.Frame(preview_frame, bg=BG)
         preview_tools.pack(fill="x")
         self.preview_mode = tk.StringVar(value="result")
@@ -2111,6 +2194,8 @@ class StableCraftApp(tk.Tk):
             highlightbackground=BORDER,
         )
         self.preview_canvas.pack(fill="x", pady=(4, 0))
+        self._paint_panel(preview_group, PANEL_BG)
+        self._extend_panel(preview_group, PANEL_BG)
 
         log_frame = self._section(main, "JOURNAL")
         self.log_text = tk.Text(
@@ -3015,6 +3100,8 @@ class StableCraftApp(tk.Tk):
                             version=version,
                         )
                     )
+                    if not self.update_label.winfo_manager():
+                        self.update_label.pack(fill="x")
                 elif kind == "krea_node":
                     self.krea_status = item[1]
                     self.krea_latest = item[2]
@@ -5247,6 +5334,9 @@ class StableCraftApp(tk.Tk):
                     data.get("html_url") or RELEASES_URL,
                 )
             )
+
+    def _open_repo_page(self, _event: object = None) -> None:
+        webbrowser.open(REPO_URL)
 
     def _open_release_page(self, _event: object = None) -> None:
         if self.update_url:

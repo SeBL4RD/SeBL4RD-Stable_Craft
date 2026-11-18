@@ -14,7 +14,7 @@ EN: dict[str, str] = {
     "Le lasso de Stable.art, dans PhotoCraft, avec ComfyUI.": (
         "Stable.art's lasso, inside PhotoCraft, powered by ComfyUI."
     ),
-    "par {author} · {repo}": "by {author} · {repo}",
+    "par {author}": "by {author}",
     "PhotoCraft : connexion…": "PhotoCraft: connecting…",
     "ComfyUI : connexion…": "ComfyUI: connecting…",
     "Document : —": "Document: —",
