@@ -1845,6 +1845,7 @@ class StableCraftApp(tk.Tk):
         settings_group = tk.Frame(main, bg=PANEL_BG)
         settings_group.pack(fill="x", pady=(8, 0))
         settings_content = self._panel_content(settings_group, PANEL_BG)
+        settings_content.pack_configure(pady=(0, 6))
         settings = self._section(settings_content, "RÉGLAGES", panel=PANEL_BG)
         settings.pack_configure(pady=(0, 0))
         grid = tk.Frame(settings, bg=BG)
@@ -2152,6 +2153,7 @@ class StableCraftApp(tk.Tk):
         preview_group = tk.Frame(main, bg=PANEL_BG)
         preview_group.pack(fill="x", pady=(8, 0))
         preview_content = self._panel_content(preview_group, PANEL_BG)
+        preview_content.pack_configure(pady=(0, 6))
         preview_frame = self._section(
             preview_content, "APERÇU", panel=PANEL_BG
         )
