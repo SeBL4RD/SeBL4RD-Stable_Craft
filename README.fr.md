@@ -36,6 +36,12 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
   <img src="./demo/DEMO_full.jpg" alt="image info" width="600">
 </a>
 
+**▶ [Vidéo de démonstration — 5 min](https://youtu.be/NSQNIQ6Ij0g)** : T2I, suppression d'objet, personnage en LoRA, texte sur le vêtement, nouvel arrière-plan.
+
+<a href="https://youtu.be/NSQNIQ6Ij0g" target="_blank">
+  <img src="https://i.ytimg.com/vi/NSQNIQ6Ij0g/maxresdefault.jpg" alt="Voir la démonstration StableCraft" width="640">
+</a>
+
 ## Fondement
 
 StableCraft ne modifie pas PhotoCraft et n'est pas un fork.

@@ -36,6 +36,12 @@ on your own GPU, with ComfyUI as the generation engine.
   <img src="./demo/DEMO_full.jpg" alt="image info" width="600">
 </a>
 
+**▶ [Demo video — 5 min](https://youtu.be/NSQNIQ6Ij0g)**: T2I, object removal, LoRA character, text on a garment, new background.
+
+<a href="https://youtu.be/NSQNIQ6Ij0g" target="_blank">
+  <img src="https://i.ytimg.com/vi/NSQNIQ6Ij0g/maxresdefault.jpg" alt="Watch the StableCraft demo" width="640">
+</a>
+
 ## How it works
 
 StableCraft does not modify or fork PhotoCraft.
