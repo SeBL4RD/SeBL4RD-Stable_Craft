@@ -68,7 +68,7 @@ numéro de version figé.
 
 - **PhotoCraft 0.16.0** ou supérieur.
 - **ComfyUI** assez récent : `0.42.1+` pour Qwen Image 2.1 et Krea 2,
-  `0.43+` pour MOSS-Image EDIT.
+  `0.43+` pour MOSS-Image EDIT, `0.45+` pour MiniMax H3 Image.
 - **Python 3.11+** avec **Tkinter**.
 
 ### Modèles
@@ -85,6 +85,7 @@ confirmation explicite.
 | **Krea 2 Identity Edit** | `krea2_turbo_edit-Q4_K_M.gguf` (Q6_K / Q8_0 disponibles) | `qwen3vl_4b_fp8_scaled.safetensors` | `qwen_image_vae.safetensors` | 8 / 1.0 |
 | **Qwen Image 2.1** | `qwen_image_2.1_Q4_K_M.gguf` (ou Q8_0) | `qwen3vl_8b_w4a8.safetensors` (ou INT8) | `qwen_image_2.1_vae_bf16.safetensors` | 25 / 1.0 |
 | **MOSS-Image SFT** | `moss_image_sft_int8_convrot.safetensors` | `qwen3.5_9b_w4a8_gptq.safetensors` (ou W4A8 5,4 Go / INT8) | `flux2-vae_small.safetensors` | 50 / 3.0 (T2I) · 30 / 4.0 (EDIT) |
+| **MiniMax H3 Image** | `minimax_h3_image_pruned_w4a8.safetensors` (ou INT8) | `qwen3vl_32b_minimax_h3_int4_convrot.safetensors` (ou NVFP4 / INT8) | `minimax_h3_image_vae_fp16.safetensors` | 6 / 1.0 |
 
 Notes :
 
@@ -101,6 +102,16 @@ Notes :
   (GPL-3.0) et nécessite ComfyUI 0.43+. Une description complète de la scène donne
   les meilleurs résultats ; l'enhancer de prompt optionnel n'est pas inclus. Le
   LoRA 8-step communautaire n'est pas fourni.
+- **MiniMax H3 Image** est natif ~16 MP et distillé sans CFG : 6 steps, CFG 1.0.
+  StableCraft met le crop à l'échelle 4× sa surface, bornée entre 4 et 16 MP, **sans
+  plafond à 2048 px** : un canvas plein rend quasiment en natif. Il **exige
+  l'encodeur Qwen3-VL 32B** (dimension 5120, lu à la couche 50) : le 9B Qwen3.5
+  n'est que l'expandeur de prompt optionnel et échoue dans le sampler avec
+  `mat1 and mat2 shapes cannot be multiplied`. Aucun encodeur plus petit n'existe.
+  La version la plus légère est l'INT4 ConvRot communautaire (13,3 Go), soit
+  ~27 Go de poids au total ; il faut un ComfyUI récent avec les kernels
+  `comfy_kitchen` convrot. Les images de référence sont réservées au mode EDIT
+  pour l'instant.
 
 ---
 
@@ -253,6 +264,9 @@ mémorisés.
 
 - **Sampler / Scheduler** : valeurs ComfyUI ; `euler` + `simple` par défaut.
 - **Denoise** : uniquement **EDIT + FLUX.2 Klein 9B** ; forcé à `1.0` ailleurs.
+- **Steps / CFG** : forcés à `6` / `1.0` pour MiniMax H3 Image, dont le planning
+  distillé et les têtes de sortie fusionnées sont fixes. Plus de steps ajoute du
+  bruit, pas du détail.
 - Réglages enregistrés par génération ; les modifier invalide la détection de doublon.
 
 ### Galerie et lot

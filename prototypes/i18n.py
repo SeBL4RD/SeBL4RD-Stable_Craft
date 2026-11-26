@@ -517,6 +517,13 @@ EN: dict[str, str] = {
     "{filename} existe déjà. Le remplacer ?": "{filename} already exists. Replace it?",
     "Téléchargé : {filename}": "Downloaded: {filename}",
     "Téléchargement de {filename}…": "Downloading {filename}…",
+    "{speed}/s": "{speed}/s",
+    "reste {time}": "{time} left",
+    "Annulation…": "Cancelling…",
+    "Téléchargement annulé.": "Download cancelled.",
+    "Nœud natif de ComfyUI 0.45+ ; mets ComfyUI à jour.": (
+        "Built into ComfyUI 0.45+; update ComfyUI."
+    ),
     "Nœud Krea 2": "Krea 2 node",
     "Impossible de contacter GitHub pour trouver la dernière version.": (
         "Could not contact GitHub to find the latest version."

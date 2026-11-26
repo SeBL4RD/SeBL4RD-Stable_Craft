@@ -100,6 +100,7 @@ GALLERY_CELL_H = GALLERY_IMAGE_H + 4
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
 MOSS_PROFILE = "moss_image_sft"
+MINIMAX_PROFILE = "minimax_h3_image"
 SUPPORTED_PROFILES = {
     "flux3_klein",
     "flux2_klein_9b",
@@ -107,6 +108,7 @@ SUPPORTED_PROFILES = {
     "krea2_edit",
     QWEN_PROFILE,
     MOSS_PROFILE,
+    MINIMAX_PROFILE,
 }
 REFERENCE_PROFILES = {
     "krea2_edit",
@@ -115,6 +117,7 @@ REFERENCE_PROFILES = {
     "flux2_klein_9b",
     QWEN_PROFILE,
     MOSS_PROFILE,
+    MINIMAX_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {
     "krea2_edit",
@@ -3000,10 +3003,18 @@ class StableCraftApp(tk.Tk):
                             "ComfyUI 0.43+ ; mets ComfyUI à jour.",
                         )
                 needs_edit_nodes = mode == "edit" and key in KREA_PROFILES
-                if needs_edit_nodes or key == QWEN_PROFILE:
+                if needs_edit_nodes or key in {QWEN_PROFILE, MINIMAX_PROFILE}:
                     for node in profile.get("requires_nodes", []):
                         if not comfy_node_exists(endpoint, node):
-                            add_missing("node", node, "Nœud ComfyUI manquant.")
+                            hint = (
+                                tr(
+                                    "Nœud natif de ComfyUI 0.45+ ; "
+                                    "mets ComfyUI à jour."
+                                )
+                                if node == "MiniMaxH3ImageConditioning"
+                                else tr("Nœud ComfyUI manquant.")
+                            )
+                            add_missing("node", node, hint)
                 if needs_edit_nodes or (key == "krea2_edit" and mode == "t2i"):
                     if not comfy_node_exists(endpoint, "EmptySD3LatentImage"):
                         add_missing("node", "EmptySD3LatentImage", "Nœud ComfyUI manquant.")

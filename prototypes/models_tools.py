@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 import urllib.parse
@@ -34,6 +35,76 @@ ROOT = Path(__file__).resolve().parents[1]
 USER_DIR = ROOT / "user"
 CACHE_DIR = USER_DIR / "cache"
 SELECTION_PATH = USER_DIR / "model_selection.json"
+
+
+class DownloadCancelled(Exception):
+    """Raised when the user cancels a download or a local copy."""
+
+
+# A stalled transfer wakes up this often to check for a cancel, and is
+# abandoned after this long without a single byte.
+CANCEL_POLL_SECONDS = 1.5
+STALL_LIMIT_SECONDS = 120.0
+
+
+class DownloadToken:
+    """Cancel flag that can also abort a blocking socket read.
+
+    Checking ``is_set()`` between chunks is enough for a healthy transfer,
+    but a stalled connection blocks inside ``read()`` for up to the socket
+    timeout. Closing the response from another thread wakes it immediately.
+    """
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._response: Any = None
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def set(self) -> None:
+        self._event.set()
+        with self._lock:
+            response = self._response
+        if response is not None:
+            _abort_response(response)
+
+    def attach(self, response: Any) -> None:
+        with self._lock:
+            self._response = response
+            already = self._event.is_set()
+        if already:
+            _abort_response(response)
+
+    def detach(self) -> None:
+        with self._lock:
+            self._response = None
+
+
+def _abort_response(response: Any) -> None:
+    """Wake a blocked ``read()`` on an HTTP response.
+
+    ``response.close()`` alone waits for the buffered reader lock held by the
+    reading thread. Shutting the socket down first interrupts the recv call,
+    which is what actually unblocks a stalled download.
+    """
+    sock = _response_socket(response)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except Exception:  # noqa: BLE001 - already closed or never connected
+            pass
+    try:
+        response.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _response_socket(response: Any) -> Any:
+    return getattr(
+        getattr(getattr(response, "fp", None), "raw", None), "_sock", None
+    )
 
 KREA_NODE_REPO = "lbouaraba/comfyui-krea2edit"
 KREA_NODE_DIR = "comfyui-krea2edit"
@@ -156,7 +227,36 @@ def resolve_filename(
     spec = (profile_manifest.get("files") or {}).get(kind, {})
     configured = pcfg.get(kind)
     fallback = Path(str(configured)).name if configured else str(spec.get("filename", ""))
-    return selected_file(profile, kind) or fallback
+    chosen = selected_file(profile, kind)
+    allowed = _allowed_filenames(kind, profile_manifest)
+    if chosen and (
+        not allowed
+        or chosen in allowed
+        or chosen.casefold() in {name.casefold() for name in allowed}
+    ):
+        return chosen
+    return fallback
+
+
+def _allowed_filenames(kind: str, profile_manifest: dict[str, Any]) -> set[str]:
+    """Filenames a profile accepts for this kind, default and variants.
+
+    A saved selection can outlive a manifest update (a profile switching its
+    text encoder, for instance). Without this check the old file keeps being
+    used forever, even when the profile no longer lists it.
+    """
+    if kind not in {"unet", "text_encoder", "vae"}:
+        return set()
+    spec = (profile_manifest.get("files") or {}).get(kind, {})
+    if not spec:
+        return set()
+    names = {str(spec.get("filename", ""))}
+    for option in spec.get("quantizations") or []:
+        names.add(str(option.get("filename", "")))
+    if kind == "unet":
+        for option in profile_manifest.get("quantizations") or []:
+            names.add(str(option.get("filename", "")))
+    return {name for name in names if name}
 
 
 def download_options(
@@ -266,6 +366,7 @@ def download_file(
     *,
     expected_sha256: str | None = None,
     progress: Callable[[int, int], None] | None = None,
+    cancel: DownloadToken | threading.Event | None = None,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     part = destination.with_suffix(destination.suffix + ".part")
@@ -274,18 +375,57 @@ def download_file(
     )
     digest = hashlib.sha256()
     done = 0
+    last_data = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=60) as response, part.open("wb") as f:
             total = int(response.headers.get("Content-Length", "0") or 0)
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                digest.update(chunk)
-                done += len(chunk)
-                if progress is not None:
-                    progress(done, total)
+            attach = getattr(cancel, "attach", None)
+            if attach is not None:
+                attach(response)
+            # A short socket timeout turns a stalled server into a poll loop,
+            # so cancel reacts in ~1 s instead of waiting for the 60 s timeout.
+            sock = _response_socket(response)
+            if sock is not None:
+                try:
+                    sock.settimeout(CANCEL_POLL_SECONDS)
+                except OSError:
+                    sock = None
+            read1 = getattr(response, "read1", None) if sock is not None else None
+            try:
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise DownloadCancelled(destination.name)
+                    try:
+                        if read1 is not None:
+                            chunk = read1(1024 * 1024)
+                        else:
+                            chunk = response.read(1024 * 1024)
+                    except TimeoutError:
+                        stalled = time.monotonic() - last_data
+                        if stalled >= STALL_LIMIT_SECONDS:
+                            raise TimeoutError(
+                                f"{destination.name} : aucune donnée depuis "
+                                f"{int(stalled)} s, téléchargement interrompu."
+                            ) from None
+                        continue
+                    if not chunk:
+                        break
+                    last_data = time.monotonic()
+                    f.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+                    if progress is not None:
+                        progress(done, total)
+            except Exception:
+                # A cancelled read usually surfaces as a closed-file error
+                # from urllib instead of our own exception.
+                if cancel is not None and cancel.is_set():
+                    raise DownloadCancelled(destination.name) from None
+                raise
+            finally:
+                detach = getattr(cancel, "detach", None)
+                if detach is not None:
+                    detach()
         actual = digest.hexdigest()
         if expected_sha256 and actual.lower() != expected_sha256.lower():
             raise ValueError(
@@ -307,6 +447,7 @@ def copy_file(
     destination: Path,
     *,
     progress: Callable[[int, int], None] | None = None,
+    cancel: DownloadToken | threading.Event | None = None,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     total = source.stat().st_size
@@ -315,6 +456,8 @@ def copy_file(
     try:
         with source.open("rb") as src, part.open("wb") as dst:
             while True:
+                if cancel is not None and cancel.is_set():
+                    raise DownloadCancelled(destination.name)
                 chunk = src.read(1024 * 1024)
                 if not chunk:
                     break
@@ -647,6 +790,7 @@ def install_krea_node(
     cfg: dict[str, Any],
     latest: dict[str, Any],
     progress: Callable[[int, int], None] | None = None,
+    cancel: DownloadToken | threading.Event | None = None,
 ) -> str:
     destination = krea_node_path(cfg)
     if destination is None:
@@ -657,7 +801,7 @@ def install_krea_node(
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     archive = CACHE_DIR / f"krea2edit-{latest.get('tag', 'latest')}.zip"
-    download_file(zip_url, archive, progress=progress)
+    download_file(zip_url, archive, progress=progress, cancel=cancel)
 
     temp_dir = Path(tempfile.mkdtemp(prefix="stablecraft-node-", dir=str(CACHE_DIR)))
     try:
@@ -698,6 +842,7 @@ def install_custom_node(
     cfg: dict[str, Any],
     name: str,
     progress: Callable[[int, int], None] | None = None,
+    cancel: DownloadToken | threading.Event | None = None,
 ) -> str:
     """Install a small custom node from its GitHub main branch."""
     spec = NODE_SOURCES.get(name)
@@ -714,7 +859,7 @@ def install_custom_node(
         zip_url = f"https://github.com/{repo}/archive/refs/heads/main.zip"
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         archive = CACHE_DIR / f"{name}-main.zip"
-        download_file(zip_url, archive, progress=progress)
+        download_file(zip_url, archive, progress=progress, cancel=cancel)
         temp_dir = Path(
             tempfile.mkdtemp(prefix=f"stablecraft-{name}-", dir=str(CACHE_DIR))
         )

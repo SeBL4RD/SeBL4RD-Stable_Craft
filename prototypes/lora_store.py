@@ -30,6 +30,7 @@ PROFILE_FAMILIES: dict[str, set[str]] = {
     "krea2_general_edit": {"krea2"},
     "krea2_edit": {"krea2"},
     "qwen_image_21": {"qwen_image"},
+    "minimax_h3_image": {"minimax_h3_image", "minimax_h3", "minimax"},
 }
 
 KNOWN_FAMILIES = {
@@ -39,6 +40,9 @@ KNOWN_FAMILIES = {
     "flux1",
     "krea2",
     "qwen_image",
+    "minimax_h3_image",
+    "minimax_h3",
+    "minimax",
     "zimage",
     "sdxl",
     "sd15",
@@ -51,6 +55,9 @@ FAMILY_LABELS = {
     "flux1": "FLUX.1",
     "krea2": "Krea 2",
     "qwen_image": "Qwen Image",
+    "minimax_h3_image": "MiniMax H3 Image",
+    "minimax_h3": "MiniMax H3",
+    "minimax": "MiniMax",
     "zimage": "Z-Image",
     "sdxl": "SDXL",
     "sd15": "SD 1.5",

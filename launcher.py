@@ -392,8 +392,10 @@ def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
     `--disable-auto-launch` cancels it. The user's launcher batch does not
     forward arguments, so make a temporary copy with the flags added.
 
-    The port is derived from [comfyui] endpoint when it is not already set in
-    the batch, so changing the endpoint is enough for a local ComfyUI.
+    The port always comes from [comfyui] endpoint: an existing `--port` in the
+    batch is rewritten in the copy, never trusted as-is. ComfyUI has no
+    environment variable for it, and a batch hardcoding another port would
+    silently bind somewhere the app is not watching.
     """
     if os.name != "nt":
         return start_command
@@ -429,14 +431,26 @@ def comfyui_launch_command(start_command: Path, cfg: dict[str, Any]) -> Path:
         additions: list[str] = []
         if disable_browser and "disable-auto-launch" not in lowered:
             additions.append("--disable-auto-launch")
-        port_match = re.search(r"--port(?:=|\s+)(\d+)", lowered)
-        if is_local and port_match is None:
-            additions.append(f"--port {port}")
-        elif port_match is not None and int(port_match.group(1)) != port:
-            log(
-                f"Attention: ComfyUI démarre sur le port {port_match.group(1)} "
-                f"mais [comfyui] endpoint utilise le port {port}."
+        if is_local:
+            port_match = re.search(
+                r"--port(?:=|\s+)(\d+)", content, re.IGNORECASE
             )
+            if port_match is None:
+                additions.append(f"--port {port}")
+            elif int(port_match.group(1)) != port:
+                current = int(port_match.group(1))
+                # config.toml wins: the batch is copied anyway, so the port is
+                # rewritten instead of only reported in the log.
+                content = (
+                    content[: port_match.start()]
+                    + f"--port {port}"
+                    + content[port_match.end() :]
+                )
+                changed = True
+                log(
+                    f"ComfyUI : port {current} du lanceur remplacé par {port} "
+                    f"([comfyui] endpoint)."
+                )
         if additions:
             lines[index] = f"{content} {' '.join(additions)}{newline}"
             changed = True

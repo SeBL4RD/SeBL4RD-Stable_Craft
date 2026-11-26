@@ -15,6 +15,8 @@ from typing import Any, Callable
 from i18n import profile_text, tr
 from platform_support import comfyui_app_dir, comfyui_manageable, open_path
 from models_tools import (
+    DownloadCancelled,
+    DownloadToken,
     FOLDER_FOR_KIND,
     KIND_LABELS,
     NODE_SOURCES,
@@ -64,6 +66,18 @@ MODEL_SUBDIRS = {
 }
 
 
+def _human_duration(seconds: float) -> str:
+    """Short remaining-time label for the download footer."""
+    total = int(max(0.0, seconds))
+    if total < 60:
+        return f"{total} s"
+    minutes, sec = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes} min {sec:02d} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min"
+
+
 class ModelManager(tk.Toplevel):
     def __init__(self, app: Any) -> None:
         super().__init__(app)
@@ -74,6 +88,8 @@ class ModelManager(tk.Toplevel):
         self.profile = self.manifest["profiles"].get(self.profile_key, {})
         self.queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.busy = False
+        self._cancel: DownloadToken | None = None
+        self._speed_marks: list[tuple[float, int]] = []
         self._closing = False
         self.node_status: dict[str, Any] | None = None
         self._needs_restart = False
@@ -223,8 +239,15 @@ class ModelManager(tk.Toplevel):
 
         footer = tk.Frame(self, bg=BG, padx=14, pady=10)
         footer.pack(fill="x", side="bottom")
-        self.progress = ttk.Progressbar(footer, mode="determinate")
-        self.progress.pack(fill="x")
+        bar_row = tk.Frame(footer, bg=BG)
+        bar_row.pack(fill="x")
+        self.progress = ttk.Progressbar(bar_row, mode="determinate")
+        self.progress.pack(side="left", fill="x", expand=True)
+        self.cancel_button = self._button(
+            bar_row, tr("Annuler"), self._cancel_task
+        )
+        self.cancel_button.pack(side="left", padx=(8, 0))
+        self.cancel_button.config(state="disabled")
         self.status = tk.Label(
             footer,
             text=tr("Prêt."),
@@ -1046,7 +1069,7 @@ class ModelManager(tk.Toplevel):
     ) -> str:
         from models_tools import copy_file  # noqa: PLC0415
 
-        copy_file(source, destination, progress=progress)
+        copy_file(source, destination, progress=progress, cancel=self._cancel)
         changed, error = ensure_extra_model_paths(self.cfg)
         if error:
             raise RuntimeError(error)
@@ -1138,6 +1161,7 @@ class ModelManager(tk.Toplevel):
                     str(option.get("sha256")) if option.get("sha256") else None
                 ),
                 progress=progress,
+                cancel=self._cancel,
             )
             changed, error = ensure_extra_model_paths(self.cfg)
             if error:
@@ -1177,7 +1201,9 @@ class ModelManager(tk.Toplevel):
             return
 
         def work(progress: Callable[[int, int], None]) -> str:
-            install_custom_node(self.cfg, name, progress=progress)
+            install_custom_node(
+                self.cfg, name, progress=progress, cancel=self._cancel
+            )
             self._needs_restart = True
             return tr(
                 "Nœud {name} installé. Redémarre ComfyUI.", name=name
@@ -1215,7 +1241,9 @@ class ModelManager(tk.Toplevel):
             return
 
         def work(progress: Callable[[int, int], None]) -> str:
-            version = install_krea_node(self.cfg, latest, progress=progress)
+            version = install_krea_node(
+                self.cfg, latest, progress=progress, cancel=self._cancel
+            )
             self._needs_restart = True
             return tr("Nœud Krea 2 v{version} installé.", version=version)
 
@@ -1381,6 +1409,9 @@ class ModelManager(tk.Toplevel):
         if self.busy:
             return
         self.busy = True
+        self._cancel = DownloadToken()
+        self._speed_marks = []
+        self.cancel_button.config(state="normal")
         self.progress.config(mode="determinate", value=0, maximum=100)
         self.status.config(text=label, fg=YELLOW)
         for row in self._rows:
@@ -1398,12 +1429,21 @@ class ModelManager(tk.Toplevel):
         def worker() -> None:
             try:
                 message = function(progress)
+            except DownloadCancelled:
+                self.queue.put(("cancelled",))
             except Exception as exc:  # noqa: BLE001
                 self.queue.put(("error", str(exc)))
             else:
                 self.queue.put(("done", message, refresh_node))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _cancel_task(self) -> None:
+        if not self.busy or self._cancel is None:
+            return
+        self._cancel.set()
+        self.cancel_button.config(state="disabled")
+        self.status.config(text=tr("Annulation…"), fg=YELLOW)
 
     def _poll(self) -> None:
         if self._closing:
@@ -1415,22 +1455,54 @@ class ModelManager(tk.Toplevel):
                 if kind == "progress":
                     done, total = int(item[1]), int(item[2])
                     if total > 0:
+                        now = time.monotonic()
+                        self._speed_marks.append((now, done))
+                        while (
+                            len(self._speed_marks) > 2
+                            and now - self._speed_marks[0][0] > 3.0
+                        ):
+                            self._speed_marks.pop(0)
+                        speed = 0.0
+                        if len(self._speed_marks) >= 2:
+                            first_t, first_done = self._speed_marks[0]
+                            elapsed = now - first_t
+                            if elapsed >= 0.5:
+                                speed = max(0.0, (done - first_done) / elapsed)
                         self.progress.config(
                             maximum=total, value=min(done, total)
                         )
-                        self.status.config(
-                            text=tr(
-                                "{done} / {total}",
-                                done=human_size(done),
-                                total=human_size(total),
-                            ),
-                            fg=YELLOW,
+                        text = tr(
+                            "{done} / {total}",
+                            done=human_size(done),
+                            total=human_size(total),
                         )
+                        if speed > 0:
+                            text += " · " + tr(
+                                "{speed}/s", speed=human_size(int(speed))
+                            )
+                            text += " · " + tr(
+                                "reste {time}",
+                                time=_human_duration((total - done) / speed),
+                            )
+                        self.status.config(text=text, fg=YELLOW)
                     else:
                         self.progress.config(mode="indeterminate")
                         self.progress.start(15)
+                elif kind == "cancelled":
+                    self.busy = False
+                    self._cancel = None
+                    self.cancel_button.config(state="disabled")
+                    self.progress.stop()
+                    self.progress.config(mode="determinate", value=0)
+                    self.status.config(
+                        text=tr("Téléchargement annulé."), fg=MUTED
+                    )
+                    self.app._log(tr("Téléchargement annulé."))
+                    self.refresh()
                 elif kind == "done":
                     self.busy = False
+                    self._cancel = None
+                    self.cancel_button.config(state="disabled")
                     self.progress.stop()
                     self.progress.config(mode="determinate", value=0)
                     self.status.config(text=str(item[1]), fg=GREEN)
@@ -1443,6 +1515,8 @@ class ModelManager(tk.Toplevel):
                         self.after(200, self._maybe_restart_after_change)
                 elif kind == "error":
                     self.busy = False
+                    self._cancel = None
+                    self.cancel_button.config(state="disabled")
                     self.progress.stop()
                     self.progress.config(mode="determinate", value=0)
                     self.status.config(text=str(item[1]), fg=RED)
@@ -1466,6 +1540,10 @@ class ModelManager(tk.Toplevel):
 
     def _on_close(self) -> None:
         self._closing = True
+        if self._cancel is not None:
+            # Closing the window stops a running transfer instead of leaving a
+            # 12 GB download running in the background.
+            self._cancel.set()
         try:
             self.destroy()
         except Exception:  # noqa: BLE001

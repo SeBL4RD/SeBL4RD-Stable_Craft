@@ -65,6 +65,13 @@ ROOT = Path(__file__).resolve().parents[1]
 KREA_PROFILES = {"krea2_edit", "krea2_general_edit"}
 QWEN_PROFILE = "qwen_image_21"
 MOSS_PROFILE = "moss_image_sft"
+MINIMAX_PROFILE = "minimax_h3_image"
+# MiniMax H3 Image is trained around 16 MP and documents 4-20 MP as usable.
+# Size the generation from the crop: 4x its area, clamped to the model's own
+# working range. No 2048 px guard -- an OOM is the user's call to make.
+MINIMAX_MIN_MEGAPIXELS = 4.0
+MINIMAX_MAX_MEGAPIXELS = 16.0
+MINIMAX_SIZE_STEP = 32
 REFERENCE_PROFILES = {
     "krea2_edit",
     "krea2_general_edit",
@@ -72,6 +79,7 @@ REFERENCE_PROFILES = {
     "flux2_klein_9b",
     QWEN_PROFILE,
     MOSS_PROFILE,
+    MINIMAX_PROFILE,
 }
 T2I_REFERENCE_PROFILES = {
     "krea2_edit",
@@ -97,6 +105,11 @@ FLUX3_REFERENCE_INSTRUCTION = (
 FLUX3_T2I_REFERENCE_INSTRUCTION = (
     "<ref_image_0> is a reference image. Use its subject, style and details only "
     "where the prompt asks, and generate a new image for the requested scene.\n\n"
+)
+MINIMAX_REFERENCE_INSTRUCTION = (
+    "<Picture 1> is the scene to edit. <Picture 2> is the reference image. "
+    "Use <Picture 2> only for the requested detail, and keep <Picture 1>'s "
+    "scene, pose, lighting and identity unchanged.\n\n"
 )
 KREA2_T2I_REFERENCE_INSTRUCTION = (
     "Create a new image from the reference image. Use the reference for the "
@@ -240,17 +253,18 @@ class ComfyClient:
                 "Add the file to ComfyUI's model folders or configure extra_model_paths.yaml."
             )
 
-    def require_node(self, node: str) -> None:
+    def require_node(self, node: str, hint: str = "") -> None:
+        detail = (
+            f" {hint}"
+            if hint
+            else " Install the custom node required by this profile."
+        )
         try:
             info = self._get(f"/object_info/{node}").json()
         except requests.RequestException as exc:
-            raise ComfyError(
-                f"ComfyUI node {node} is missing. Install the custom node required by this profile."
-            ) from exc
+            raise ComfyError(f"ComfyUI node {node} is missing.{detail}") from exc
         if node not in info:
-            raise ComfyError(
-                f"ComfyUI node {node} is missing. Install the custom node required by this profile."
-            )
+            raise ComfyError(f"ComfyUI node {node} is missing.{detail}")
 
     def upload(self, path: Path, name: str) -> str:
         with path.open("rb") as f:
@@ -392,26 +406,45 @@ def unet_loader_for(unet: str) -> str:
 
 
 def fit_generation_size(
-    width: int, height: int, megapixels: float = 1.0, step: int = 16
+    width: int,
+    height: int,
+    megapixels: float = 1.0,
+    step: int = 16,
+    max_side: int = 2048,
 ) -> tuple[int, int]:
-    """Return a ~1 MP generation size with the same aspect ratio as the crop.
+    """Return a generation size with the same aspect ratio as the crop.
 
     Qwen Image 2.1's text encoder returns an empty latent at ``resolution``
     squared whenever no reference image is connected. Sampling that square
-    latent and then compositing it into a 16:9 selection stretches the image.
+    latent and then compositing it into a 16:9 selection stretches the image,
+    hence the default 2048 px guard. Pass ``max_side=0`` for models that are
+    trained well above that (MiniMax H3 Image is native at 16 MP).
     """
     if width <= 0 or height <= 0:
         return 1024, 1024
     scale = math.sqrt(max(0.01, megapixels) * 1024 * 1024 / (width * height))
     gen_w = max(step, round(width * scale / step) * step)
     gen_h = max(step, round(height * scale / step) * step)
-    # Extreme panoramas would exceed Qwen's comfortable sampling size.
     longest = max(gen_w, gen_h)
-    if longest > 2048:
-        factor = 2048 / longest
+    if max_side and longest > max_side:
+        factor = max_side / longest
         gen_w = max(step, round(gen_w * factor / step) * step)
         gen_h = max(step, round(gen_h * factor / step) * step)
     return gen_w, gen_h
+
+
+def minimax_generation_size(width: int, height: int) -> tuple[int, int]:
+    """Size for MiniMax H3 Image: 4x the crop area, clamped to 4-16 MP.
+
+    The model is native at ~16 MP and documents 4-20 MP as usable. Scaling a
+    lasso crop to 4x its area keeps real detail for small selections, a full
+    canvas lands near native, and nothing is capped at 2048 px any more.
+    """
+    area_mp = (width * height) / 1_000_000
+    target = min(MINIMAX_MAX_MEGAPIXELS, max(MINIMAX_MIN_MEGAPIXELS, area_mp * 4.0))
+    return fit_generation_size(
+        width, height, target, MINIMAX_SIZE_STEP, max_side=0
+    )
 
 
 def build_workflow(
@@ -447,6 +480,12 @@ def build_workflow(
     denoise = max(0.0, min(1.0, float(denoise)))
     if mode != "edit" or profile not in DENOISE_PROFILES:
         denoise = 1.0
+    if profile == MINIMAX_PROFILE:
+        # The checkpoint ships six fused PDD output heads with a fixed sigma
+        # grid; the official API rejects any other step count and guidance.
+        # More steps only add noise, so the UI values are clamped here.
+        steps = 6
+        cfg = 1.0
 
     def start(apply_lora: bool = False) -> tuple[dict[str, Any], list[Any]]:
         unet_inputs: dict[str, Any] = {"unet_name": unet}
@@ -871,6 +910,59 @@ def build_workflow(
                 )
             return workflow
 
+        if profile == MINIMAX_PROFILE:
+            gen_w, gen_h = minimax_generation_size(width, height)
+            workflow, model = start()
+            workflow.update(
+                {
+                    "2": {
+                        "class_type": "CLIPLoader",
+                        "inputs": {"clip_name": text_encoder, "type": "minimax"},
+                    },
+                    "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                    "4": {
+                        "class_type": "MiniMaxH3ImageConditioning",
+                        "inputs": {
+                            "clip": ["2", 0],
+                            "vae": ["3", 0],
+                            "prompt": prompt,
+                            "width": gen_w,
+                            "height": gen_h,
+                        },
+                    },
+                    # CFG-distilled checkpoint: the negative branch is never
+                    # read, so it is a zeroed copy of the positive.
+                    "5": {
+                        "class_type": "ConditioningZeroOut",
+                        "inputs": {"conditioning": ["4", 0]},
+                    },
+                    "6": {
+                        "class_type": "KSampler",
+                        "inputs": {
+                            "model": model,
+                            "seed": seed,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "sampler_name": sampler,
+                            "scheduler": scheduler,
+                            "positive": ["4", 0],
+                            "negative": ["5", 0],
+                            "latent_image": ["4", 1],
+                            "denoise": 1.0,
+                        },
+                    },
+                    "7": {
+                        "class_type": "VAEDecode",
+                        "inputs": {"samples": ["6", 0], "vae": ["3", 0]},
+                    },
+                    "8": {
+                        "class_type": "PreviewImage",
+                        "inputs": {"images": ["7", 0]},
+                    },
+                }
+            )
+            return workflow
+
         if profile == MOSS_PROFILE:
             workflow, model = start()
             workflow.update(
@@ -1272,6 +1364,70 @@ def build_workflow(
                 "inputs": {"image": reference_image},
             }
             workflow["5"]["inputs"]["images.image_2"] = ["10", 0]
+        return workflow
+
+    if profile == MINIMAX_PROFILE:
+        minimax_prompt = (
+            f"{MINIMAX_REFERENCE_INSTRUCTION}{prompt}" if reference_image else prompt
+        )
+        gen_w, gen_h = minimax_generation_size(width, height)
+        workflow, model = start()
+        workflow.update(
+            {
+                "2": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {"clip_name": text_encoder, "type": "minimax"},
+                },
+                "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+                "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+                "5": {
+                    "class_type": "MiniMaxH3ImageConditioning",
+                    "inputs": {
+                        "clip": ["2", 0],
+                        "vae": ["3", 0],
+                        "images.image_0": ["4", 0],
+                        "prompt": minimax_prompt,
+                        "width": gen_w,
+                        "height": gen_h,
+                    },
+                },
+                # CFG-distilled checkpoint: the negative branch is never read,
+                # so it is a zeroed copy of the positive.
+                "6": {
+                    "class_type": "ConditioningZeroOut",
+                    "inputs": {"conditioning": ["5", 0]},
+                },
+                "7": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "model": model,
+                        "seed": seed,
+                        "steps": steps,
+                        "cfg": cfg,
+                        "sampler_name": sampler,
+                        "scheduler": scheduler,
+                        "positive": ["5", 0],
+                        "negative": ["6", 0],
+                        "latent_image": ["5", 1],
+                        "denoise": 1.0,
+                    },
+                },
+                "8": {
+                    "class_type": "VAEDecode",
+                    "inputs": {"samples": ["7", 0], "vae": ["3", 0]},
+                },
+                "9": {
+                    "class_type": "PreviewImage",
+                    "inputs": {"images": ["8", 0]},
+                },
+            }
+        )
+        if reference_image:
+            workflow["10"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": reference_image},
+            }
+            workflow["5"]["inputs"]["images.image_1"] = ["10", 0]
         return workflow
 
     if profile == MOSS_PROFILE:
@@ -2095,6 +2251,14 @@ def comfy_generate(
     if profile == QWEN_PROFILE:
         comfy.require_node("TextEncodeQwenImage21")
         comfy.require_node("QwenImage21Cache")
+    if profile == MINIMAX_PROFILE:
+        comfy.require_node(
+            "MiniMaxH3ImageConditioning",
+            hint=(
+                "It ships with ComfyUI 0.45+, so this ComfyUI build is too old: "
+                "run update\\update_comfyui_stable.bat and restart."
+            ),
+        )
     if mode == "edit" and ctx.get("lora"):
         comfy.require("LoraLoaderModelOnly", "lora_name", ctx["lora"])
     if reference_path is not None and profile not in REFERENCE_PROFILES:
