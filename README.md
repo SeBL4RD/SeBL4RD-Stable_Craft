@@ -19,6 +19,8 @@ on your own GPU, with ComfyUI as the generation engine.
   favorites;
 - batch up to 16 images, applied as they finish;
 - **XYZ plot** tool (sampler, scheduler, steps, denoise, LoRA, CFG, prompt S/R);
+- **Tools** window with local **captioning** (image → prompt) and a one-click
+  **Purge memory** button;
 - reference image;
 - regeneration works even after the selection is lost;
 - **two modes**: EDIT (source image) or T2I (text only), EDIT by default;
@@ -106,6 +108,15 @@ Notes:
   lightest build is the community INT4 ConvRot (13.3 GB) for ~27 GB of weights in
   total; that needs a recent ComfyUI with the `comfy_kitchen` convrot kernels.
   Reference images are EDIT-only for now.
+- **Captioning** is optional and runs entirely inside ComfyUI. **Florence-2**
+  (`comfyui-florence2` + a model in `ComfyUI/models/LLM`) is the zero-install
+  fallback. Three larger engines are offered by the in-app caption manager and
+  installed on demand: **CapRL-Qwen3VL-4B** (default captioner, ~3.2 GB),
+  **JoyCaption Beta One 8B** (LoRA tags / NSFW, ~5.4 GB) and
+  **Qwen3.5-9B** (generalist + OCR, ~6.6 GB). The two Qwen models use the
+  `ComfyUI-QwenVL` GGUF node, JoyCaption uses `ComfyUI-JoyCaption`; both run
+  through the vision `llama-cpp-python` wheel embedded in ComfyUI, with no
+  separate server. No generation profile needs captioning.
 
 ---
 
@@ -259,6 +270,9 @@ Persistent memory per layer: previous generations and settings are remembered.
 - **Denoise**: only **EDIT + FLUX.2 Klein 9B**; forced to `1.0` everywhere else.
 - **Steps / CFG**: forced to `6` / `1.0` for MiniMax H3 Image, whose distilled
   schedule and fused output heads are fixed. More steps add noise, not detail.
+- **Purge memory** (next to the negative prompt) unloads ComfyUI's models and
+  frees the cached VRAM blocks without restarting it. It is disabled while a
+  generation is running.
 - Settings are stored per generation; changing them invalidates duplicate detection.
 
 ### Gallery and batch
@@ -280,6 +294,40 @@ Persistent memory per layer: previous generations and settings are remembered.
 - Output: `user/xyz/<run>/` (`plot.png`, `plot_z*.png`, `cells/`, `job.json`,
   `cells.json`).
 
+### Tools and captioning
+
+The **Tools** button opens a small catalogue. **XYZ Plot** is there, plus
+**Captioning**, which turns any image into a prompt without touching the current
+layer or the generation workflow, and the **Caption engines** manager.
+
+- **Florence-2** (`comfyui-florence2` + a model in `ComfyUI/models/LLM`;
+  `Florence-2-base-PromptGen-v2.0` is preferred) is always available and needs no
+  extra download.
+- **Caption engines** installs the optional models on demand: node, vision
+  backend and GGUF files, with progress, cancel and a ComfyUI restart when the
+  node has to load. Nothing is installed by `install.ps1` / `install.sh`.
+  The Windows build embeds a ready-made vision `llama-cpp-python` wheel; on
+  Linux, install the vision backend with the node's own guide, then let the
+  manager download the models.
+  - **CapRL-Qwen3VL-4B** — default engine: rich generation prompts, plus
+    detailed factual descriptions with fewer hallucinations (~3.2 GB).
+  - **JoyCaption Beta One 8B** — diffusion captions, booru tags, LoRA datasets
+    and NSFW (~5.4 GB).
+  - **Qwen3.5-9B** — generalist scene analysis and OCR (~6.6 GB).
+- Each engine exposes several formats. Qwen engines start with **Generation
+  prompt** (a rich, structured, GPT-like prompt with composition, light,
+  atmosphere and style keywords), then **Cinematic prompt** (the same scene
+  reimagined as an epic concept-art still, with explicit monumental scale),
+  detailed and concise descriptions, tags and scene analysis. JoyCaption offers
+  descriptive, casual, factual, SD prompt, booru tags and art-critic styles.
+  Florence keeps Description / Mixed prompt / Tags. If a tag run returns prose,
+  the text is kept as a description and flagged.
+- The result is editable and can replace or append to the main prompt.
+- Each engine is unloaded after the run; if ComfyUI had to free VRAM, the
+  generation model reloads on the next run.
+- Jobs are stored in `user/caption_jobs/`; the normalized input is
+  `user/caption/input.png`.
+
 ### Reference image
 
 You can add a reference image; click **Guide** if needed.
@@ -296,8 +344,8 @@ You can add a reference image; click **Guide** if needed.
 
 ## Storage
 
-`user/` holds sessions, XYZ runs, pending references, LoRA previews and logs;
-`models/` holds model files.
+`user/` holds sessions, XYZ runs, captioning jobs and inputs, pending references,
+LoRA previews and logs; `models/` holds model files.
 
 ## Language
 

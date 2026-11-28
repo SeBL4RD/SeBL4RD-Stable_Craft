@@ -732,6 +732,308 @@ EN: dict[str, str] = {
     "VAE Encode": "VAE Encode",
     "Génération": "Generation",
     "Préparation": "Preparation",
+    # Tools launcher
+    "StableCraft — Outils": "StableCraft — Tools",
+    "Outils": "Tools",
+    "Outils…": "Tools…",
+    "Des outils pour préparer et comparer tes générations, sans quitter StableCraft.": (
+        "Tools to prepare and compare your generations without leaving StableCraft."
+    ),
+    "Planche X/Y/Z": "X/Y/Z sheet",
+    "Compare un prompt sur plusieurs axes (sampler, steps, LoRA, CFG…) et génère une planche X/Y/Z avec les réglages de la fenêtre principale.": (
+        "Compare a prompt across several axes (sampler, steps, LoRA, CFG…) and "
+        "generate an X/Y/Z sheet with the main window settings."
+    ),
+    "Image → prompt": "Image → prompt",
+    "Transforme n'importe quelle image en prompt adapté au modèle actif. Florence-2 PromptGen tourne en local, sans toucher au workflow de génération.": (
+        "Turn any image into a prompt suited to the active model. Florence-2 "
+        "PromptGen runs locally without touching the generation workflow."
+    ),
+    "D'autres outils pourront s'ajouter ici.": "More tools can be added here.",
+    # Captioning tool
+    "StableCraft — Captioning": "StableCraft — Captioning",
+    "Captioning": "Captioning",
+    "Transforme une image en prompt. Florence-2 tourne en local dans ComfyUI, sans modifier ton workflow de génération.": (
+        "Turn an image into a prompt. Florence-2 runs locally in ComfyUI "
+        "without changing your generation workflow."
+    ),
+    "IMAGE": "IMAGE",
+    "Aucune image.\nChoisis un fichier ou colle une image.": (
+        "No image.\nChoose a file or paste an image."
+    ),
+    "Aucune image.": "No image.",
+    "Choisir une image…": "Choose an image…",
+    "PNG, JPG, WebP, BMP, TIFF. L'image est réduite à 2048 px.": (
+        "PNG, JPG, WebP, BMP, TIFF. The image is capped at 2048 px."
+    ),
+    "RÉSULTAT": "RESULT",
+    "Modèle": "Model",
+    "Recherche…": "Searching…",
+    "Recharger": "Reload",
+    "Type de prompt": "Prompt type",
+    "Description — phrase complète": "Description — full sentence",
+    "Prompt mixte — phrase + tags": "Mixed prompt — sentence + tags",
+    "Tags — style booru": "Tags — booru style",
+    "Une phrase naturelle et concise. Recommandé pour MiniMax, Qwen, FLUX et Krea : ces modèles préfèrent une description complète.": (
+        "A concise natural sentence. Recommended for MiniMax, Qwen, FLUX and "
+        "Krea: these models prefer a complete description."
+    ),
+    "Une phrase suivie de tags, comme un prompt Stable Diffusion. Plus long, utile quand le modèle aime les mots-clés.": (
+        "A sentence followed by tags, like a Stable Diffusion prompt. Longer, "
+        "useful when the model likes keywords."
+    ),
+    "Une liste de tags courte. Plusieurs essais sont faits pour écarter les sorties qui partent en prose.": (
+        "A short tag list. Several attempts are made to discard outputs that "
+        "drift into prose."
+    ),
+    "Florence-2 n'a pas produit de tags ; le texte reste une description.": (
+        "Florence-2 produced no tags; the text remains a description."
+    ),
+    "Profil actif : {profile}. Le résultat est en anglais, comme les prompts des modèles.": (
+        "Active profile: {profile}. The result is in English, like the model prompts."
+    ),
+    "Analyser l'image": "Analyse image",
+    "Remplacer le prompt": "Replace prompt",
+    "Ajouter au prompt": "Append to prompt",
+    "Copier": "Copy",
+    "Effacer": "Clear",
+    "Le texte est modifiable avant de l'envoyer. Florence-2 est déchargé après l'analyse ; ton modèle de génération sera rechargé à la prochaine génération si ComfyUI a dû libérer de la VRAM.": (
+        "The text can be edited before sending. Florence-2 is unloaded after "
+        "the analysis; your generation model will be reloaded on the next run "
+        "if ComfyUI had to free VRAM."
+    ),
+    "Recherche des modèles Florence-2…": "Looking for Florence-2 models…",
+    "Le nœud comfyui-florence2 n'est pas installé. Installe-le puis redémarre ComfyUI.": (
+        "The comfyui-florence2 node is not installed. Install it and restart ComfyUI."
+    ),
+    "Florence-2 indisponible : {error}": "Florence-2 unavailable: {error}",
+    "Aucun modèle Florence-2 dans models/LLM. Place Florence-2-base-PromptGen-v2.0 dans le dossier LLM.": (
+        "No Florence-2 model in models/LLM. Put "
+        "Florence-2-base-PromptGen-v2.0 in the LLM folder."
+    ),
+    "Choisir une image à décrire": "Choose an image to describe",
+    "Préparation de l'image…": "Preparing the image…",
+    "Image invalide.": "Invalid image.",
+    "{width} × {height} px": "{width} × {height} px",
+    "Choisis d'abord une image.": "Choose an image first.",
+    "Aucun modèle Florence-2 disponible dans ComfyUI.": (
+        "No Florence-2 model available in ComfyUI."
+    ),
+    "Choisis un modèle Florence-2.": "Choose a Florence-2 model.",
+    "Ce modèle Florence-2 ne gère que la description. Choisis un PromptGen pour les tags et le prompt mixte.": (
+        "This Florence-2 model only supports descriptions. Choose a PromptGen "
+        "build for tags and mixed prompts."
+    ),
+    "ComfyUI doit être connecté.": "ComfyUI must be connected.",
+    "Analyse…": "Analysing…",
+    "Analyse de l'image…": "Analysing the image…",
+    "Captioning en cours…": "Captioning running…",
+    "Analyse terminée en {seconds} s.": "Analysis finished in {seconds} s.",
+    "Analyse terminée.": "Analysis finished.",
+    "Florence-2 n'a renvoyé aucun texte.": "Florence-2 returned no text.",
+    "{count} caractères": "{count} characters",
+    "Prompt remplacé par le captioning.": "Prompt replaced by the caption.",
+    "Captioning ajouté au prompt.": "Caption appended to the prompt.",
+    "Résultat copié.": "Result copied.",
+    "Une analyse est en cours. L'annuler et fermer ?": (
+        "An analysis is running. Cancel it and close?"
+    ),
+    # Purge button
+    "Libère la VRAM des modèles et rend la RAM de ComfyUI au système.": (
+        "Frees model VRAM and returns ComfyUI's RAM to the system."
+    ),
+    "Purge…": "Purge…",
+    "Purge de la mémoire ComfyUI…": "Purging ComfyUI memory…",
+    "Mémoire ComfyUI libérée.": "ComfyUI memory freed.",
+    "Purge impossible : {error}": "Purge failed: {error}",
+    "Purge échouée": "Purge failed",
+    # Caption engines
+    "Florence-2 PromptGen (rapide, ancien)": "Florence-2 PromptGen (fast, legacy)",
+    "CapRL-Qwen3VL-4B (captioning, recommandé)": (
+        "CapRL-Qwen3VL-4B (captioning, recommended)"
+    ),
+    "Molmo2-4B (descriptions détaillées)": "Molmo2-4B (detailed descriptions)",
+    "JoyCaption Beta One 8B (LoRA / tags / NSFW)": (
+        "JoyCaption Beta One 8B (LoRA / tags / NSFW)"
+    ),
+    "Qwen3.5-9B (généraliste / OCR)": "Qwen3.5-9B (generalist / OCR)",
+    "Le moteur historique : très rapide, 1 Go, mais des descriptions courtes. Utile comme secours.": (
+        "The legacy engine: very fast, 1 GB, but short descriptions. Useful as a fallback."
+    ),
+    "Spécialisé captioning, 4B, ~3,2 Go. Détail, structure et fidélité, avec moins d'hallucinations.": (
+        "Captioning-specialised, 4B, ~3.2 GB. Detail, structure and fidelity "
+        "with fewer hallucinations."
+    ),
+    "4B open-data, très bon en descriptions détaillées, comptage et scènes chargées. Passe par Transformers (pas de GGUF officiel).": (
+        "4B open-data model, strong on detailed descriptions, counting and busy "
+        "scenes. Runs through Transformers (no official GGUF)."
+    ),
+    "8B spécialement entraîné pour les captions de diffusion : descriptif, tags, technique, artistique, NSFW. ~5,4 Go.": (
+        "8B trained specifically for diffusion captions: descriptive, tags, "
+        "technical, artistic, NSFW. ~5.4 GB."
+    ),
+    "9B généraliste : excellente compréhension de scène, OCR, analyse. Plus lourd (~6,6 Go) et plus lent qu'un captioner.": (
+        "9B generalist: excellent scene understanding, OCR and analysis. "
+        "Heavier (~6.6 GB) and slower than a dedicated captioner."
+    ),
+    "Description": "Description",
+    "Prompt mixte": "Mixed prompt",
+    "Tags": "Tags",
+    "Description détaillée": "Detailed description",
+    "Description concise": "Concise description",
+    "Description + tags": "Description + tags",
+    "Descriptif (formel)": "Descriptive (formal)",
+    "Descriptif (décontracté)": "Descriptive (casual)",
+    "Factuel": "Straightforward",
+    "Tags (booru)": "Tags (booru)",
+    "Technique (photo)": "Technical (photo)",
+    "Artistique": "Artistic",
+    "Analyse de scène": "Scene analysis",
+    "Texte / OCR": "Text / OCR",
+    "Florence-2 · ComfyUI · ~1 Go": "Florence-2 · ComfyUI · ~1 GB",
+    "Florence-2 : vérification…": "Florence-2: checking…",
+    "Florence-2 indisponible : voir le journal.": (
+        "Florence-2 unavailable: see the log."
+    ),
+    "Installé · {size} Go": "Installed · {size} GB",
+    "Manquant · {size} Go": "Missing · {size} GB",
+    "Style : {style}.": "Style: {style}.",
+    "GPU (auto)": "GPU (auto)",
+    "CPU": "CPU",
+    "CPU = plus lent, zéro VRAM.": "CPU = slower, zero VRAM.",
+    "Modèle Florence": "Florence model",
+    "Calcul": "Compute",
+    "Moteur": "Engine",
+    "Style": "Style",
+    "Modèle manquant : {label}. Télécharge-le dans {path}.": (
+        "Missing model: {label}. Download it into {path}."
+    ),
+    "Le moteur tourne dans un processus séparé. GPU = rapide, mais peut déplacer le modèle de ComfyUI ; CPU = plus lent, zéro VRAM. Le premier chargement peut prendre une minute.": (
+        "The engine runs in a separate process. GPU = fast but may evict the "
+        "ComfyUI model; CPU = slower, zero VRAM. The first load can take a minute."
+    ),
+    "Florence-2 est chargé dans ComfyUI puis déchargé après l'analyse. Résultat rapide, descriptions plus courtes.": (
+        "Florence-2 is loaded in ComfyUI and unloaded after the analysis. Fast "
+        "result, shorter descriptions."
+    ),
+    "Erreur : {error}": "Error: {error}",
+    "Captioning : {error}": "Captioning: {error}",
+    "Le moteur de captioning s'est arrêté.": "The captioning engine stopped.",
+    "Chargement du moteur… (peut prendre une minute)": (
+        "Loading the engine… (may take a minute)"
+    ),
+    "Transforme une image en prompt. Choisis le moteur selon le résultat voulu : captioning pur, tags/LoRA, ou analyse généraliste. Le pipeline ComfyUI n'est pas modifié.": (
+        "Turn an image into a prompt. Choose the engine for the result you "
+        "want: pure captioning, tags/LoRA, or general analysis. The ComfyUI "
+        "pipeline is untouched."
+    ),
+    # Caption manager
+    "StableCraft — Moteurs de captioning": "StableCraft — Caption engines",
+    "Moteurs de captioning": "Caption engines",
+    "Les moteurs sont optionnels et installés à la demande. Rien n'est ajouté par le setup : le node, le backend vision et les modèles sont téléchargés seulement quand tu cliques.": (
+        "Caption engines are optional and installed on demand. The setup adds "
+        "nothing: the node, vision backend and models are downloaded only "
+        "when you click."
+    ),
+    "Gérer les moteurs…": "Manage engines…",
+    "Inclus": "Included",
+    "inclus": "included",
+    "{size} Go": "{size} GB",
+    "Inclus avec ComfyUI · aucun téléchargement": (
+        "Included with ComfyUI · no download"
+    ),
+    "Node : OK": "Node: OK",
+    "Node : installé, redémarrage requis": "Node: installed, restart required",
+    "Node : manquant": "Node: missing",
+    "Backend vision : OK": "Vision backend: OK",
+    "Backend vision : manquant": "Vision backend: missing",
+    "Modèle : OK": "Model: OK",
+    "Modèle : manquant": "Model: missing",
+    "Installation de {label}…": "Installing {label}…",
+    "{label} va installer :": "{label} will install:",
+    "• le node {node}": "• the node {node}",
+    "• le backend vision llama.cpp (223 Mo, une fois)": (
+        "• the llama.cpp vision backend (223 MB, once)"
+    ),
+    "• le modèle {size} Go": "• the model ({size} GB)",
+    "ComfyUI sera redémarré. Continuer ?": "ComfyUI will be restarted. Continue?",
+    "{label} est déjà prêt. Réinstaller le node, le backend et le modèle ?": (
+        "{label} is already ready. Reinstall the node, backend and model?"
+    ),
+    "Réinstaller": "Reinstall",
+    "Une génération est en cours. Attends la fin avant d'installer.": (
+        "A generation is running. Wait for it to finish before installing."
+    ),
+    "Une génération est en cours. Attends la fin avant de redémarrer.": (
+        "A generation is running. Wait for it to finish before restarting."
+    ),
+    "Une installation est en cours. L'annuler et fermer ?": (
+        "An installation is running. Cancel it and close?"
+    ),
+    "Annulation.": "Cancelling.",
+    "Installation annulée.": "Installation cancelled.",
+    "Moteur installé et prêt.": "Engine installed and ready.",
+    "Installation terminée. Redémarre ComfyUI.": (
+        "Installation complete. Restart ComfyUI."
+    ),
+    "Node et modèle installés. Redémarre ComfyUI pour le charger.": (
+        "Node and model installed. Restart ComfyUI to load them."
+    ),
+    "Prêt · node, backend vision et modèle installés": (
+        "Ready · node, vision backend and model installed"
+    ),
+    "ComfyUI déconnecté · ": "ComfyUI disconnected · ",
+    "node manquant": "node missing",
+    "redémarrage de ComfyUI requis": "ComfyUI restart required",
+    "backend vision manquant": "vision backend missing",
+    "modèle manquant ({size} Go)": "model missing ({size} GB)",
+    "Le node et le modèle sont installés à la demande depuis « Gérer les moteurs… ». Ils tournent dans ComfyUI ; aucun serveur séparé. Le premier chargement peut être long.": (
+        "The node and model are installed on demand from “Manage engines…”. "
+        "They run inside ComfyUI; no separate server. The first load can be long."
+    ),
+    "Florence-2 est chargé dans ComfyUI puis déchargé après l'analyse. Aucun téléchargement supplémentaire.": (
+        "Florence-2 is loaded in ComfyUI and unloaded after the analysis. No "
+        "extra download."
+    ),
+    "Florence-2 · ComfyUI · prêt": "Florence-2 · ComfyUI · ready",
+    "Moteur non installé": "Engine not installed",
+    "{label} nécessite encore : {details}.\n\nOuvrir le gestionnaire pour l'installer ?": (
+        "{label} still needs: {details}.\n\nOpen the manager to install it?"
+    ),
+    "Le modèle n'a pas produit de tags ; le texte reste une description.": (
+        "The model produced no tags; the text remains a description."
+    ),
+    "Le moteur n'a renvoyé aucun texte.": "The engine returned no text.",
+    "Transforme une image en prompt. Choisis le moteur selon le résultat voulu : captioning pur, tags/LoRA, ou analyse généraliste. Tout passe par ComfyUI.": (
+        "Turn an image into a prompt. Choose the engine for the result you "
+        "want: pure captioning, tags/LoRA, or general analysis. Everything "
+        "runs through ComfyUI."
+    ),
+    # Caption engine labels and styles
+    "CapRL-Qwen3VL-4B (captioning)": "CapRL-Qwen3VL-4B (captioning)",
+    "Le moteur historique : très rapide, déjà installé avec comfyui-florence2, mais des descriptions plus courtes.": (
+        "The legacy engine: very fast, already installed with "
+        "comfyui-florence2, but shorter descriptions."
+    ),
+    "Captioning spécialisé, 4B, ~3,2 Go. Détail, structure et fidélité, avec moins d'hallucinations. Passe par le node ComfyUI-QwenVL.": (
+        "Captioning-specialised, 4B, ~3.2 GB. Detail, structure and fidelity "
+        "with fewer hallucinations. Runs through the ComfyUI-QwenVL node."
+    ),
+    "9B généraliste : excellente compréhension de scène, OCR et analyse. Plus lourd (~6,6 Go) et plus lent qu'un captioner. Passe par le node ComfyUI-QwenVL.": (
+        "9B generalist: excellent scene understanding, OCR and analysis. "
+        "Heavier (~6.6 GB) and slower than a captioner. Runs through the "
+        "ComfyUI-QwenVL node."
+    ),
+    "8B spécialement entraîné pour les captions de diffusion : descriptif, tags, prompt SD, critique d'art, NSFW. ~5,4 Go. Passe par le node ComfyUI-JoyCaption.": (
+        "8B trained specifically for diffusion captions: descriptive, tags, "
+        "SD prompt, art critic, NSFW. ~5.4 GB. Runs through the "
+        "ComfyUI-JoyCaption node."
+    ),
+    "Prompt génératif": "Generation prompt",
+    "Prompt cinématique": "Cinematic prompt",
+    "Descriptif": "Descriptive",
+    "Prompt Stable Diffusion": "Stable Diffusion prompt",
+    "Critique d'art": "Art critic",
 }
 
 

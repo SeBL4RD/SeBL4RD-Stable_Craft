@@ -43,6 +43,7 @@ import requests
 from PIL import Image, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from caption_engines import ENGINE_BY_ID, style_by_id  # noqa: E402
 from comfy_progress import ComfyProgress  # noqa: E402
 from control_client import ControlClient, ControlError, read_token  # noqa: E402
 from models_tools import resolve_filename  # noqa: E402
@@ -72,6 +73,48 @@ MINIMAX_PROFILE = "minimax_h3_image"
 MINIMAX_MIN_MEGAPIXELS = 4.0
 MINIMAX_MAX_MEGAPIXELS = 16.0
 MINIMAX_SIZE_STEP = 32
+
+# Captioning tool: Florence-2 PromptGen v2.0 is specialised for image prompts.
+# Each mode maps to the node task that produced the most usable output in
+# testing: a short natural description, a mixed prompt, or booru tags.
+CAPTION_MODEL_FALLBACK = "Florence-2-base-PromptGen-v2.0"
+CAPTION_TASKS: dict[str, dict[str, Any]] = {
+    "description": {
+        "task": "more_detailed_caption",
+        "max_tokens": 384,
+        "do_sample": True,
+    },
+    "mixed": {
+        "task": "prompt_gen_mixed_caption",
+        "max_tokens": 512,
+        "do_sample": True,
+    },
+    # PromptGen's tag prompt is stochastic: some seeds return a clean tag
+    # list, others fall back to prose. Try a few and keep the best one.
+    "tags": {
+        "task": "prompt_gen_tags",
+        "max_tokens": 128,
+        "do_sample": True,
+        "attempts": 8,
+    },
+}
+CAPTION_META_PREFIXES = (
+    "the image shows ",
+    "this image shows ",
+    "the image features ",
+    "this image features ",
+    "the image depicts ",
+    "this image depicts ",
+    "the picture shows ",
+    "this picture shows ",
+    "the photo shows ",
+    "this photo shows ",
+    "in this image, ",
+    "in the image, ",
+    "this is a photo of ",
+    "this is an image of ",
+)
+
 REFERENCE_PROFILES = {
     "krea2_edit",
     "krea2_general_edit",
@@ -2755,6 +2798,598 @@ def _xyz_cell_settings(
     }
 
 
+def default_caption_model(options: list[str]) -> str:
+    """Prefer a PromptGen build, then any large Florence-2, then the first."""
+    if not options:
+        return ""
+    if CAPTION_MODEL_FALLBACK in options:
+        return CAPTION_MODEL_FALLBACK
+    for marker in ("promptgen", "large"):
+        for name in options:
+            if marker in str(name).lower():
+                return str(name)
+    return str(options[0])
+
+
+def florence_caption_workflow(
+    image_name: str,
+    *,
+    model: str,
+    task: str = "description",
+    seed: int = 42,
+    max_new_tokens: int | None = None,
+    keep_model_loaded: bool = False,
+) -> dict[str, Any]:
+    """Build the independent Florence-2 workflow used by the caption tool."""
+    key = task if task in CAPTION_TASKS else "description"
+    spec = CAPTION_TASKS[key]
+    return {
+        "1": {
+            "class_type": "Florence2ModelLoader",
+            "inputs": {"model": model, "precision": "fp16"},
+        },
+        "2": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "3": {
+            "class_type": "Florence2Run",
+            "inputs": {
+                "image": ["2", 0],
+                "florence2_model": ["1", 0],
+                "text_input": "",
+                "task": spec["task"],
+                "fill_mask": False,
+                # The last attempt unloads Florence-2; the user's generation
+                # model is evicted only if ComfyUI needs the room.
+                "keep_model_loaded": bool(keep_model_loaded),
+                "max_new_tokens": int(max_new_tokens or spec["max_tokens"]),
+                "num_beams": 3,
+                "do_sample": bool(spec["do_sample"]),
+                "seed": int(seed),
+            },
+        },
+        "4": {"class_type": "PreviewAny", "inputs": {"source": ["3", 2]}},
+    }
+
+
+def qwen_caption_workflow(
+    image_name: str,
+    *,
+    model: str,
+    prompt: str,
+    preset_prompt: str = "🖼️ Detailed Description",
+    seed: int = 42,
+    max_tokens: int = 512,
+    device: str = "auto",
+    temperature: float = 0.2,
+) -> dict[str, Any]:
+    """Build a QwenVL GGUF workflow from the 1038lab node."""
+    cpu = device == "cpu"
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "2": {
+            "class_type": "AILab_QwenVL_GGUF_Advanced",
+            "inputs": {
+                "model_name": model,
+                "device": "cpu" if cpu else "auto",
+                "preset_prompt": preset_prompt,
+                "custom_prompt": prompt,
+                "max_tokens": int(max_tokens),
+                "temperature": float(temperature),
+                "top_p": 0.9,
+                "repetition_penalty": 1.1,
+                "frame_count": 16,
+                "video_frame_size": "auto",
+                "ctx": 8192,
+                "n_batch": 512,
+                "gpu_layers": 0 if cpu else -1,
+                "image_max_tokens": 4096,
+                "top_k": 0,
+                "pool_size": 4194304,
+                "keep_model_loaded": False,
+                "seed": int(seed),
+                "image": ["1", 0],
+            },
+        },
+        "3": {"class_type": "PreviewAny", "inputs": {"source": ["2", 0]}},
+    }
+
+
+def joy_caption_workflow(
+    image_name: str,
+    *,
+    model: str,
+    prompt_style: str,
+    caption_length: str = "any",
+    device: str = "auto",
+) -> dict[str, Any]:
+    """Build a JoyCaption GGUF workflow from the 1038lab node."""
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "2": {
+            "class_type": "JC_GGUF",
+            "inputs": {
+                "image": ["1", 0],
+                "model": model,
+                "processing_mode": "CPU" if device == "cpu" else "Auto",
+                "prompt_style": prompt_style,
+                "caption_length": caption_length,
+                "memory_management": "Clear After Run",
+            },
+        },
+        "3": {"class_type": "PreviewAny", "inputs": {"source": ["2", 0]}},
+    }
+
+
+def looks_like_tags(text: str) -> bool:
+    """True for a compact comma-separated tag list (no prose sentences)."""
+    value = str(text or "").strip()
+    if not value or len(value) > 1000:
+        return False
+    if value.count(",") < 2:
+        return False
+    if value.count(".") > 1 or value.count("\n") > 1:
+        return False
+    return True
+
+
+def best_caption_candidate(candidates: list[str], *, task: str) -> str:
+    """Pick the most tag-like attempt, or the shortest non-empty text."""
+    usable = [value for value in candidates if str(value or "").strip()]
+    if not usable:
+        return ""
+    if task == "tags":
+        for value in sorted(usable, key=len):
+            if looks_like_tags(value):
+                return value
+    return min(usable, key=len)
+
+
+def _dedupe_caption_sentences(text: str) -> str:
+    """Drop repeated sentences; PromptGen tends to ramble on longer modes."""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        key = re.sub(r"[^a-z0-9]+", " ", sentence.lower()).strip()
+        if len(key) >= 6 and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        kept.append(sentence)
+    return " ".join(kept)
+
+
+def clean_caption_text(text: str, *, task: str = "description") -> str:
+    """Turn raw Florence-2 text into something usable as a prompt."""
+    value = str(text or "").replace("\r\n", "\n")
+    for token in ("<s>", "</s>", "<pad>", "</pad>"):
+        value = value.replace(token, "")
+    value = value.strip()
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    if task == "description":
+        lowered = value.lower()
+        for prefix in CAPTION_META_PREFIXES:
+            if lowered.startswith(prefix):
+                value = value[len(prefix) :].lstrip()
+                break
+    if task == "mixed":
+        value = _dedupe_caption_sentences(value)
+    if value and task != "tags":
+        value = value[0].upper() + value[1:]
+    return value.strip()
+
+
+_CAPTION_META_LABEL = re.compile(
+    r"(?:^|\s)(?:ASSET|STYLE|COLORS?|TEXTURES?|LOCATION|OBJECTS?|TAGS?|"
+    r"DESCRIPTION|TECHNIQUE|LIGHTING|COMPOSITION|MOOD|CAMERA|MEDIUM|SUBJECT|"
+    r"SETTING|BACKGROUND|FOREGROUND)\s*:",
+    re.IGNORECASE,
+)
+
+
+def _trim_caption_meta(text: str) -> str:
+    """Drop JoyCaption-style ASSET/STYLE/TAGS sections from a caption."""
+    match = _CAPTION_META_LABEL.search(text)
+    if match is not None and match.start() >= 60:
+        return text[: match.start()].rstrip(" ;,\n")
+    return text
+
+
+_ASSISTANT_MARKER = re.compile(r"\bASSISTANT\s*:", re.IGNORECASE)
+_ABSENCE_NOUNS = (
+    r"(?:text|people|humans?|persons?|figures?|logos?|watermarks?|"
+    r"signatures?)"
+)
+_ABSENCE_SENTENCE = re.compile(
+    r"^(?:there\s+(?:is|are)\s+)?(?:no|without|absence\s+of)\b[^.!?]{0,140}"
+    rf"\b{_ABSENCE_NOUNS}\b",
+    re.IGNORECASE,
+)
+_ABSENCE_CLAUSE = re.compile(
+    r"(?:[;,]\s*|\s+and\s+)(?:with\s+)?(?:no|without)\s+(?:any\s+)?"
+    r"(?:visible\s+)?"
+    rf"{_ABSENCE_NOUNS}"
+    rf"(?:\s+(?:or\s+|and\s+|nor\s+)?(?:any\s+)?(?:visible\s+)?{_ABSENCE_NOUNS})*"
+    r"(?:\s+(?:present|visible))?",
+    re.IGNORECASE,
+)
+
+
+def _scene_for_image(match: re.Match[str]) -> str:
+    word = match.group(0)
+    return "The scene" if word[:1].isupper() else "the scene"
+
+
+def _strip_caption_absences(text: str) -> str:
+    """Remove 'no visible text / no people' clauses: useless in a prompt."""
+    value = _ABSENCE_CLAUSE.sub("", text)
+    sentences = re.split(r"(?<=[.!?])\s+", value)
+    kept = [
+        sentence
+        for sentence in sentences
+        if not _ABSENCE_SENTENCE.match(sentence.strip())
+    ]
+    return " ".join(kept)
+
+
+def _dedupe_paragraphs(text: str) -> str:
+    """Drop sentences repeated across paragraphs (JoyCaption tends to)."""
+    seen: set[str] = set()
+    paragraphs: list[str] = []
+    for paragraph in re.split(r"\n{2,}", text):
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=[.!?])\s+", paragraph.strip()):
+            key = re.sub(r"[^a-z0-9]+", " ", sentence.lower()).strip()
+            if len(key) >= 8 and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            kept.append(sentence)
+        if kept:
+            paragraphs.append(" ".join(kept))
+    return "\n\n".join(paragraphs)
+
+
+def clean_prompt_text(
+    text: str,
+    *,
+    join_paragraphs: bool = False,
+    tags: bool = False,
+    trim_meta: bool = False,
+) -> str:
+    """Clean QwenVL/JoyCaption output for use as a prompt."""
+    value = str(text or "").replace("\r\n", "\n")
+    value = re.sub(r"<\|[^|]{1,40}\|>", "", value)
+    for token in ("<s>", "</s>", "<pad>", "</pad>"):
+        value = value.replace(token, "")
+    value = re.sub(
+        r"(?:Thinking Process:|<think>).*?(?:</think>|$)",
+        "",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Qwen sometimes answers in Markdown: drop emphasis and headings.
+    value = re.sub(r"\*{1,3}([^*\n]+)\*{1,3}", r"\1", value)
+    value = value.replace("**", "").replace("__", "").replace("`", "")
+    value = re.sub(r"(?m)^\s*#{1,6}\s*", "", value)
+    value = re.sub(
+        r"^(?:based on|here is|sure|certainly|of course)[^\n]{0,220}:\s*\n?",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"^(?:the|this)\s+(?:image|picture|photo|photograph|scene|"
+        r"illustration|artwork)\s+(?:features|shows|depicts|displays|"
+        r"contains|presents|portrays)\s+",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"^(?:the|this)\s+(?:image|picture|photo|photograph)\s+is\s+(?:an?\s+)?",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"(?:please|let me know|i hope this helps|would you like)[^.\n]{0,200}"
+        r"\.?\s*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    marker = _ASSISTANT_MARKER.search(value)
+    if marker is not None and marker.start() >= 40:
+        value = value[: marker.start()].rstrip(" ;,\n")
+    if not tags:
+        if trim_meta:
+            value = _trim_caption_meta(value)
+        value = _strip_caption_absences(value)
+        value = re.sub(
+            r"\b(?:this|the)\s+(?:image|picture|photograph)\b",
+            _scene_for_image,
+            value,
+            flags=re.IGNORECASE,
+        )
+    value = re.sub(r"(?m)^\s*\*\*[^*\n]{2,90}\*\*\s*:?\s*$", "", value)
+    value = re.sub(r"(?im)^\s*style\s+keywords?\s*:\s*", "", value)
+    value = re.sub(
+        r"(?i)([.!?])\s+style\s+keywords?\s*:\s*(\w)",
+        lambda m: f"{m.group(1)} {m.group(2).upper()}",
+        value,
+    )
+    value = re.sub(r"(?m)^\s*[-*•]\s+", "", value)
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value).strip()
+    if join_paragraphs:
+        paragraphs = [
+            " ".join(paragraph.split())
+            for paragraph in re.split(r"\n{2,}", value)
+            if paragraph.strip()
+        ]
+        value = " ".join(paragraphs)
+    if not tags:
+        value = _dedupe_paragraphs(value)
+    if tags:
+        value = _normalise_tags(value)
+    elif value:
+        value = value[0].upper() + value[1:]
+    return value.strip()
+
+
+_TAG_STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "of",
+    "with",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "by",
+    "is",
+    "are",
+}
+
+
+def _normalise_tags(text: str) -> str:
+    """Lowercase, trim and dedupe a comma-separated tag list."""
+    value = re.split(
+        r"\bassistant\s*:", str(text or ""), maxsplit=1, flags=re.IGNORECASE
+    )[0]
+    parts: list[str] = []
+    seen: set[str] = set()
+    for chunk in re.split(r"[,\n;]+", value.lower()):
+        item = chunk.strip(" \t.*-•:;\"'")
+        item = re.sub(r"[ ]+", " ", item)
+        if len(item) < 2 or len(item) > 48:
+            continue
+        if item in _TAG_STOPWORDS or item in seen:
+            continue
+        if "here is the list" in item or "tags for the image" in item:
+            continue
+        seen.add(item)
+        parts.append(item)
+    return ", ".join(parts)
+
+
+def resolve_caption_model(
+    comfy: ComfyClient, engine: Any, requested: str = ""
+) -> str:
+    """Match the catalogue entry with the node's real dropdown value."""
+    field = "model_name" if engine.family == "qwen_vl" else "model"
+    try:
+        options = comfy.options(engine.node_class, field)
+    except Exception:  # noqa: BLE001 - reported by require_node afterwards
+        return requested or engine.model_value or engine.catalog_name
+    wanted = (requested or engine.model_value or engine.catalog_name).strip()
+    if wanted in options:
+        return wanted
+    filenames = [item.filename for item in engine.model_files]
+    for option in options:
+        if option in filenames or any(
+            option.endswith(name) or name in option for name in filenames
+        ):
+            return option
+    return wanted
+
+
+def caption_from_entry(entry: dict[str, Any]) -> str:
+    """Read the text PreviewAny stored in a ComfyUI history entry."""
+    for node in (entry.get("outputs") or {}).values():
+        if not isinstance(node, dict):
+            continue
+        value = node.get("text")
+        if isinstance(value, list) and value:
+            value = value[0]
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def run_caption(cfg: dict[str, Any], job: dict[str, Any]) -> None:
+    """Caption an arbitrary image without touching PhotoCraft or sessions."""
+    image_value = str(job.get("image") or "").strip()
+    if not image_value:
+        raise SystemExit("Captioning : aucune image.")
+    image_path = as_path(image_value)
+    if not image_path.exists():
+        raise SystemExit(f"Captioning : image introuvable {image_path}")
+
+    engine_id = str(job.get("engine") or "florence2").strip().lower()
+    engine = ENGINE_BY_ID.get(engine_id)
+    if engine is None:
+        raise SystemExit(f"Captioning : moteur inconnu {engine_id!r}.")
+    style_id = str(job.get("style") or job.get("task") or engine.default_style)
+    style = style_by_id(engine, style_id)
+    seed = int(job.get("seed") or random.randrange(1, 2**31 - 1))
+    device = str(job.get("device") or "auto").strip().lower()
+    model = str(job.get("model") or engine.model_value or engine.catalog_name).strip()
+    endpoint = str(
+        cfg.get("comfyui", {}).get("endpoint") or "http://127.0.0.1:8188"
+    )
+    comfy = ComfyClient(endpoint, timeout=600.0, temp_dir=comfy_temp_dir(cfg))
+    upload_path: Path | None = None
+    uploaded = ""
+    started = time.time()
+    tag_style = style_id == "tags" or any(
+        word in style.value.lower()
+        for word in ("tag", "booru", "danbooru", "e621", "rule34")
+    )
+    try:
+        comfy.require_node("PreviewAny", "Mets ComfyUI à jour (0.45 ou plus).")
+        if engine.family == "florence":
+            comfy.require_node(
+                "Florence2ModelLoader",
+                "Installe comfyui-florence2 et place un modèle dans models/LLM.",
+            )
+            comfy.require_node("Florence2Run", "Mets comfyui-florence2 à jour.")
+            if not model:
+                model = default_caption_model(
+                    comfy.options("Florence2ModelLoader", "model")
+                )
+            if not model:
+                raise ComfyError(
+                    "Aucun modèle Florence-2 visible dans models/LLM. "
+                    "Place Florence-2-base-PromptGen-v2.0 dans le dossier LLM."
+                )
+            comfy.require("Florence2ModelLoader", "model", model)
+        elif engine.family == "qwen_vl":
+            comfy.require_node(
+                engine.node_class,
+                "Installe ComfyUI-QwenVL depuis le gestionnaire de moteurs.",
+            )
+            model = resolve_caption_model(comfy, engine, model)
+            comfy.require(engine.node_class, "model_name", model)
+        elif engine.family == "joycaption":
+            comfy.require_node(
+                engine.node_class,
+                "Installe ComfyUI-JoyCaption depuis le gestionnaire de moteurs.",
+            )
+            model = resolve_caption_model(comfy, engine, model)
+            comfy.require(engine.node_class, "model", model)
+        else:
+            raise SystemExit(f"Captioning : famille inconnue {engine.family!r}.")
+
+        # Normalise and cap the input once; the caption nodes resize internally
+        # and this keeps the upload small.
+        with Image.open(image_path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+            image.thumbnail((2048, 2048), Image.LANCZOS)
+            upload_dir = default_user_dir() / "caption"
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            upload_path = upload_dir / f"upload_{time.time_ns()}.png"
+            image.save(upload_path, "PNG")
+
+        uploaded = comfy.upload(
+            upload_path, f"stablecraft_caption_{int(time.time())}.png"
+        )
+
+        candidates: list[str] = []
+        attempts = 5 if engine.family == "florence" and style_id == "tags" else 1
+        for attempt in range(attempts):
+            if engine.family == "florence":
+                workflow = florence_caption_workflow(
+                    uploaded,
+                    model=model,
+                    task=style_id,
+                    seed=seed + attempt * 7919,
+                    keep_model_loaded=attempt < attempts - 1,
+                )
+            elif engine.family == "qwen_vl":
+                preset = "🖼️ Detailed Description"
+                try:
+                    options = comfy.options(engine.node_class, "preset_prompt")
+                    if options:
+                        preset = options[0]
+                except Exception:  # noqa: BLE001
+                    pass
+                workflow = qwen_caption_workflow(
+                    uploaded,
+                    model=model,
+                    prompt=style.value,
+                    preset_prompt=preset,
+                    seed=seed,
+                    max_tokens=style.max_tokens,
+                    device=device,
+                    temperature=0.0 if tag_style else style.temperature,
+                )
+            else:
+                workflow = joy_caption_workflow(
+                    uploaded,
+                    model=model,
+                    prompt_style=style.value,
+                    caption_length=style.caption_length or engine.caption_length,
+                    device=device,
+                )
+            prompt_id = comfy.queue(workflow)
+            print(
+                f"ComfyUI:   queued {prompt_id} (caption {engine.id}/{style_id}, "
+                f"model {model})",
+                flush=True,
+            )
+            entry = comfy.wait(prompt_id)
+            value = caption_from_entry(entry)
+            if not value.strip():
+                continue
+            if engine.family == "florence":
+                cleaned = clean_caption_text(value, task=style_id)
+            else:
+                join = style_id in {
+                    "description",
+                    "concise",
+                    "descriptive",
+                    "casual",
+                    "straightforward",
+                }
+                cleaned = clean_prompt_text(
+                    value,
+                    join_paragraphs=join,
+                    tags=tag_style,
+                    trim_meta=engine.family == "joycaption",
+                )
+            if cleaned.strip():
+                candidates.append(cleaned)
+        text = best_caption_candidate(
+            candidates, task="tags" if tag_style else "description"
+        )
+        if not text:
+            raise ComfyError(f"{engine.label} n'a renvoyé aucun texte.")
+        print(
+            "CAPTION: "
+            + json.dumps(
+                {
+                    "text": text,
+                    "task": style_id,
+                    "engine": engine.id,
+                    "model": model,
+                    "tags_ok": looks_like_tags(text) if tag_style else None,
+                    "elapsed": round(time.time() - started, 1),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+    except (ComfyError, requests.RequestException, OSError) as exc:
+        print("ERROR:", exc, file=sys.stderr)
+        raise SystemExit(1) from exc
+    finally:
+        if upload_path is not None:
+            try:
+                upload_path.unlink()
+            except OSError:
+                pass
+        if uploaded and comfy.temp_dir is not None:
+            try:
+                (comfy.temp_dir.parent / "input" / uploaded).unlink()
+            except OSError:
+                pass
+
+
 def run_xyz(ctx: dict[str, Any], job: dict[str, Any]) -> None:
     """Generate an X/Y/Z matrix and compose a labelled contact sheet.
 
@@ -3225,6 +3860,12 @@ def main() -> None:
         default=None,
         help="JSON job for an X/Y/Z plot run",
     )
+    ap.add_argument(
+        "--caption-job",
+        type=Path,
+        default=None,
+        help="JSON job for an image captioning run",
+    )
     ap.add_argument("--dry-run", action="store_true", help="only save the composite and crop")
     ap.add_argument("--no-apply", action="store_true", help="generate but do not insert into PhotoCraft")
     ap.add_argument("--save-preview", action="store_true", help="also save a flattened after.png")
@@ -3258,10 +3899,20 @@ def main() -> None:
         help="user LoRA to apply (repeatable, max 10, strength 0..1)",
     )
     args = ap.parse_args()
+    caption_job: dict[str, Any] | None = None
+    if args.caption_job:
+        try:
+            caption_job = json.loads(
+                args.caption_job.read_text(encoding="utf-8-sig")
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"Caption job illisible : {exc}") from exc
+        if not isinstance(caption_job, dict):
+            raise SystemExit("Caption job invalide : objet JSON attendu.")
     xyz_job: dict[str, Any] | None = None
     if args.xyz_job:
         try:
-            xyz_job = json.loads(args.xyz_job.read_text(encoding="utf-8"))
+            xyz_job = json.loads(args.xyz_job.read_text(encoding="utf-8-sig"))
         except Exception as exc:  # noqa: BLE001
             raise SystemExit(f"XYZ job illisible : {exc}") from exc
         if not isinstance(xyz_job, dict):
@@ -3309,6 +3960,10 @@ def main() -> None:
     loras = parse_lora_args(args.lora)
 
     cfg = load_config(args.config)
+    if caption_job is not None:
+        run_caption(cfg, caption_job)
+        return
+
     profile_name = args.profile or cfg.get("app", {}).get("default_profile", "flux3_klein")
     pcfg = cfg.get("profiles", {}).get(profile_name, {})
     manifest = manifest_profile(profile_name)

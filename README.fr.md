@@ -19,6 +19,8 @@ Tout tourne en local, sur son propre GPU, avec ComfyUI comme moteur de générat
   favoris ;
 - génération par lot jusqu'à 16 images, appliquées dès qu'elles sont prêtes ;
 - outil **XYZ Plot** (sampler, scheduler, steps, denoise, LoRA, CFG, prompt S/R) ;
+- fenêtre **Outils** avec **captioning** local (image → prompt) et bouton
+  **Purge memory** ;
 - image de référence ;
 - régénération possible même si la sélection a été perdue ;
 - **deux modes** : EDIT (image source) ou T2I (texte seul), EDIT par défaut ;
@@ -112,6 +114,16 @@ Notes :
   ~27 Go de poids au total ; il faut un ComfyUI récent avec les kernels
   `comfy_kitchen` convrot. Les images de référence sont réservées au mode EDIT
   pour l'instant.
+- Le **captioning** est optionnel et tourne entièrement dans ComfyUI.
+  **Florence-2** (`comfyui-florence2` + un modèle dans `ComfyUI/models/LLM`)
+  reste la solution sans installation. Le gestionnaire de moteurs intégré
+  propose trois moteurs plus gros, installés à la demande :
+  **CapRL-Qwen3VL-4B** (captioner par défaut, ~3,2 Go),
+  **JoyCaption Beta One 8B** (tags LoRA / NSFW, ~5,4 Go) et
+  **Qwen3.5-9B** (généraliste + OCR, ~6,6 Go). Les deux Qwen passent par le nœud
+  GGUF `ComfyUI-QwenVL`, JoyCaption par `ComfyUI-JoyCaption` ; le backend vision
+  `llama-cpp-python` est embarqué dans ComfyUI, sans serveur séparé. Aucun profil
+  de génération n'en dépend.
 
 ---
 
@@ -267,6 +279,9 @@ mémorisés.
 - **Steps / CFG** : forcés à `6` / `1.0` pour MiniMax H3 Image, dont le planning
   distillé et les têtes de sortie fusionnées sont fixes. Plus de steps ajoute du
   bruit, pas du détail.
+- **Purge memory** (à côté du negative prompt) décharge les modèles de ComfyUI et
+  libère les blocs de VRAM en cache, sans redémarrer ComfyUI. Le bouton est
+  désactivé pendant une génération.
 - Réglages enregistrés par génération ; les modifier invalide la détection de doublon.
 
 ### Galerie et lot
@@ -288,6 +303,43 @@ mémorisés.
 - Sortie : `user/xyz/<run>/` (`plot.png`, `plot_z*.png`, `cells/`, `job.json`,
   `cells.json`).
 
+### Outils et captioning
+
+Le bouton **Outils** ouvre un petit catalogue. On y trouve **XYZ Plot**, puis
+**Captioning**, qui transforme n'importe quelle image en prompt sans toucher au
+calque courant ni au workflow de génération, et le gestionnaire
+**Moteurs de captioning**.
+
+- **Florence-2** (`comfyui-florence2` + un modèle dans `ComfyUI/models/LLM` ;
+  `Florence-2-base-PromptGen-v2.0` est préféré) reste disponible sans
+  téléchargement supplémentaire.
+- **Moteurs de captioning** installe les moteurs optionnels à la demande :
+  nœud, backend vision et fichiers GGUF, avec progression, annulation et
+  redémarrage de ComfyUI quand le nœud doit se charger. Rien n'est installé par
+  `install.ps1` / `install.sh`. Sous Windows, le wheel vision
+  `llama-cpp-python` est fourni ; sous Linux, installe le backend vision avec
+  le guide du nœud, puis laisse le gestionnaire télécharger les modèles.
+  - **CapRL-Qwen3VL-4B** — moteur par défaut : prompts génératifs riches, plus
+    des descriptions détaillées et factuelles avec moins d'hallucinations
+    (~3,2 Go).
+  - **JoyCaption Beta One 8B** — captions de diffusion, tags booru, datasets
+    LoRA et NSFW (~5,4 Go).
+  - **Qwen3.5-9B** — analyse de scène généraliste et OCR (~6,6 Go).
+- Chaque moteur propose plusieurs formats. Les moteurs Qwen commencent par
+  **Prompt génératif** (un prompt riche et structuré, façon GPT, avec
+  composition, lumière, ambiance et mots-clés de style), puis **Prompt
+  cinématique** (la même scène réimaginée en concept-art épique, avec une
+  échelle monumentale explicite), description détaillée, concise, tags et
+  analyse de scène. JoyCaption propose descriptif, décontracté, factuel,
+  prompt SD, tags booru et critique d'art. Florence garde Description / Prompt
+  mixte / Tags. Si une passe « tags » renvoie de la prose, le texte est conservé
+  comme description et signalé.
+- Le résultat est modifiable et peut remplacer ou compléter le prompt principal.
+- Chaque moteur est déchargé après l'analyse. Si ComfyUI a dû libérer de la
+  VRAM, le modèle de génération se recharge à la génération suivante.
+- Les jobs sont dans `user/caption_jobs/` ; l'image normalisée est
+  `user/caption/input.png`.
+
 ### Image de référence
 
 Vous pouvez ajouter une image de référence ; cliquez sur **Guide** en cas de besoin.
@@ -304,8 +356,9 @@ Vous pouvez ajouter une image de référence ; cliquez sur **Guide** en cas de b
 
 ## Stockage
 
-`user/` contient les sessions, les plots XYZ, les références en attente, les aperçus
-LoRA et les journaux ; `models/` contient les modèles.
+`user/` contient les sessions, les plots XYZ, les jobs et entrées de captioning,
+les références en attente, les aperçus LoRA et les journaux ; `models/` contient
+les modèles.
 
 ## Langue
 

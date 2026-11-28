@@ -116,6 +116,16 @@ NODE_SOURCES = {
         "folder": "ComfyUI-GGUF",
         "url": "https://github.com/city96/ComfyUI-GGUF",
     },
+    "ComfyUI-QwenVL": {
+        "repo": "1038lab/ComfyUI-QwenVL",
+        "folder": "ComfyUI-QwenVL",
+        "url": "https://github.com/1038lab/ComfyUI-QwenVL",
+    },
+    "ComfyUI-JoyCaption": {
+        "repo": "1038lab/ComfyUI-JoyCaption",
+        "folder": "ComfyUI-JoyCaption",
+        "url": "https://github.com/1038lab/ComfyUI-JoyCaption",
+    },
 }
 
 FOLDER_FOR_KIND = {
@@ -620,6 +630,111 @@ def stop_comfyui(cfg: dict[str, Any]) -> None:
         text=True,
         timeout=30,
     )
+
+
+def comfyui_process_id(cfg: dict[str, Any]) -> int | None:
+    """Return the PID listening on ComfyUI's port (Windows only)."""
+    if not IS_WINDOWS:
+        return None
+    port = endpoint_port(cfg)
+    command = (
+        "$p = Get-NetTCPConnection -LocalPort "
+        f"{port} -State Listen -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty OwningProcess -Unique | "
+        "Select-Object -First 1; if ($p) { $p }"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if value.isdigit():
+            return int(value)
+    return None
+
+
+def trim_comfyui_memory(cfg: dict[str, Any]) -> tuple[int, int] | None:
+    """Empty ComfyUI's working set so Windows can reclaim its RAM.
+
+    ComfyUI frees VRAM on ``POST /free`` but Python keeps the pages in its
+    working set, so Task Manager still shows the same RAM.  Emptying the
+    working set moves those idle pages back to the standby list.
+    Returns ``(freed_bytes, working_set_after)`` or ``None``.
+    """
+    if not IS_WINDOWS:
+        return None
+    pid = comfyui_process_id(cfg)
+    if pid is None:
+        return None
+
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+    psapi.EmptyWorkingSet.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(0x0400 | 0x0100, False, pid)
+    if not handle:
+        return None
+    try:
+        def working_set() -> int:
+            counters = ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb
+            ):
+                return 0
+            return int(counters.WorkingSetSize)
+
+        before = working_set()
+        if not psapi.EmptyWorkingSet(handle):
+            return None
+        after = working_set()
+        return max(0, before - after), after
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def start_comfyui(cfg: dict[str, Any]) -> subprocess.Popen[Any]:

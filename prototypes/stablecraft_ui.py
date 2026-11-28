@@ -62,6 +62,7 @@ from models_tools import (  # noqa: E402
     resolve_filename,
     same_model_file,
     set_selected_file,
+    trim_comfyui_memory,
 )
 from platform_support import open_path  # noqa: E402
 from session_store import (  # noqa: E402
@@ -339,6 +340,24 @@ def comfy_json(endpoint: str, path: str, timeout: float = 3.0) -> Any:
         return json.load(response)
 
 
+def comfy_post(
+    endpoint: str,
+    path: str,
+    payload: dict[str, Any],
+    timeout: float = 10.0,
+) -> Any:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint.rstrip("/") + path,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", "replace")
+    return json.loads(raw) if raw.strip() else {}
+
+
 def comfy_node_exists(endpoint: str, node: str) -> bool:
     info = comfy_json(endpoint, f"/object_info/{node}")
     return isinstance(info, dict) and node in info
@@ -548,6 +567,9 @@ class StableCraftApp(tk.Tk):
         self._pending_favorites: dict[int, bool] = {}
         self._pending_favorites_session: str | None = None
         self.xyz_window: Any = None
+        self.tools_window: Any = None
+        self.caption_window: Any = None
+        self._purge_busy = False
         self.progress_value = 0
         self.progress_text = "Prêt."
         self._progress_indeterminate = False
@@ -1596,7 +1618,31 @@ class StableCraftApp(tk.Tk):
             activebackground=BG,
             activeforeground=FG,
             font=("Segoe UI", 9),
-        ).pack(anchor="w")
+        ).pack(side="left", anchor="w")
+        self.purge_btn = tk.Button(
+            neg_row,
+            text="Purge memory",
+            command=self._purge_memory,
+            bg=PANEL_2,
+            fg=MUTED,
+            activebackground=BORDER,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=2,
+            font=("Segoe UI", 8),
+            cursor="hand2",
+            disabledforeground=MUTED,
+        )
+        self.purge_btn.pack(side="right")
+        self.purge_tooltip = Tooltip(
+            self.purge_btn,
+            tr(
+                "Libère la VRAM des modèles et rend la RAM de ComfyUI "
+                "au système."
+            ),
+        )
         self.neg_text = self._text(prompt_frame, 2)
         # hidden until the checkbox is on
         self._neg_visible = False
@@ -2000,10 +2046,10 @@ class StableCraftApp(tk.Tk):
             cursor="hand2",
         )
         self.cancel_btn.pack(side="left", padx=(8, 0))
-        self.xyz_btn = tk.Button(
+        self.tools_btn = tk.Button(
             actions,
-            text="XYZ Plot…",
-            command=self._open_xyz,
+            text=tr("Outils…"),
+            command=self._open_tools,
             bg=PANEL_2,
             fg=FG,
             activebackground=BORDER,
@@ -2014,8 +2060,9 @@ class StableCraftApp(tk.Tk):
             pady=9,
             font=("Segoe UI", 9),
             cursor="hand2",
+            disabledforeground=MUTED,
         )
-        self.xyz_btn.pack(side="left", padx=(8, 0))
+        self.tools_btn.pack(side="left", padx=(8, 0))
         self.action_hint = tk.Label(
             main, text="", bg=BG, fg=YELLOW, anchor="w", font=("Segoe UI", 8)
         )
@@ -2713,14 +2760,15 @@ class StableCraftApp(tk.Tk):
         duplicate = self._duplicate_generation() if batch == 1 else None
         reuse = self._reusable_session()
         has_input = self.has_selection or reuse
+        busy = self.running
         if not self.models_ok:
             enabled = (
-                not self.running
+                not busy
                 and self.profile_key in SUPPORTED_PROFILES
             )
         else:
             enabled = (
-                not self.running
+                not busy
                 and self.profile_key in SUPPORTED_PROFILES
                 and self.pc_ok
                 and self.comfy_ok
@@ -2766,7 +2814,24 @@ class StableCraftApp(tk.Tk):
         self.t2i_radio.config(state=radio_state)
         self.profile_manage_btn.config(state="disabled" if self.running else "normal")
         self.batch_spin.config(state="disabled" if self.running else "normal")
-        self.xyz_btn.config(state="disabled" if self.running else "normal")
+        self.tools_btn.config(state="disabled" if self.running else "normal")
+        self.purge_btn.config(
+            state=(
+                "disabled"
+                if self.running or self._purge_busy
+                else "normal"
+            )
+        )
+        for window, setter in (
+            (self.tools_window, "set_app_busy"),
+            (self.caption_window, "set_app_busy"),
+        ):
+            if window is not None:
+                try:
+                    if window.winfo_exists():
+                        getattr(window, setter)(self.running)
+                except Exception:  # noqa: BLE001
+                    pass
         for name in ("ref_choose", "ref_paste"):
             widget = getattr(self, name, None)
             if widget is not None:
@@ -2796,6 +2861,64 @@ class StableCraftApp(tk.Tk):
         elif self._neg_visible:
             self.neg_text.pack_forget()
             self._neg_visible = False
+
+    def _purge_memory(self) -> None:
+        if self.running or self._purge_busy:
+            return
+        self._purge_busy = True
+        endpoint = str(self.cfg["comfyui"]["endpoint"])
+        self.purge_btn.config(state="disabled", text=tr("Purge…"), fg=YELLOW)
+        self._log(tr("Purge de la mémoire ComfyUI…"))
+        threading.Thread(
+            target=self._purge_memory_worker,
+            args=(endpoint,),
+            daemon=True,
+        ).start()
+
+    def _purge_memory_worker(self, endpoint: str) -> None:
+        try:
+            # ComfyUI's own endpoint: unload every model and release the
+            # cached blocks. Safe only while nothing is sampling.
+            comfy_post(
+                endpoint,
+                "/free",
+                {"unload_models": True, "free_memory": True},
+                timeout=30.0,
+            )
+            free = None
+            for _ in range(6):
+                try:
+                    stats = comfy_json(endpoint, "/system_stats", timeout=5.0)
+                    devices = stats.get("devices") or []
+                    value = devices[0].get("vram_free") if devices else None
+                    if value is not None:
+                        free = max(free or 0.0, float(value))
+                except Exception:  # noqa: BLE001 - the purge already succeeded
+                    pass
+                time.sleep(0.25)
+            # ComfyUI frees VRAM, but Python keeps the pages in its working
+            # set, so Task Manager still shows the same RAM. Emptying it lets
+            # Windows move those idle pages to the standby list.
+            ram_freed = None
+            try:
+                trimmed = trim_comfyui_memory(self.cfg)
+                if trimmed is not None:
+                    ram_freed = trimmed[0]
+            except Exception:  # noqa: BLE001 - RAM trim is best effort
+                ram_freed = None
+            self.queue.put(
+                ("purge", True, {"vram_free": free, "ram_freed": ram_freed})
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("purge", False, str(exc)))
+
+    def _reset_purge_button(self) -> None:
+        if self.running or self._purge_busy:
+            # Keep the result visible until the generation ends, then restore.
+            self.purge_btn.config(state="disabled")
+            self.after(2000, self._reset_purge_button)
+            return
+        self.purge_btn.config(state="normal", text="Purge memory", fg=MUTED)
 
     # ------------------------------------------------------------------
     # Status
@@ -3077,6 +3200,52 @@ class StableCraftApp(tk.Tk):
                                 self.xyz_window.handle_event(kind, str(item[1]))
                         except Exception:  # noqa: BLE001
                             pass
+                elif kind == "purge":
+                    self._purge_busy = False
+                    if item[1]:
+                        payload = item[2]
+                        if not isinstance(payload, dict):
+                            payload = {"vram_free": payload, "ram_freed": None}
+                        parts = []
+                        try:
+                            vram = payload.get("vram_free")
+                            if vram:
+                                parts.append(f"VRAM {float(vram) / 1e9:.1f} GB")
+                        except (TypeError, ValueError):
+                            pass
+                        try:
+                            ram = payload.get("ram_freed")
+                            if ram:
+                                parts.append(f"RAM {float(ram) / 1e9:.1f} GB")
+                        except (TypeError, ValueError):
+                            pass
+                        suffix = (" · " + " · ".join(parts)) if parts else ""
+                        self.purge_btn.config(
+                            text=tr("Purge OK") + suffix, fg=GREEN
+                        )
+                        self._log(tr("Mémoire ComfyUI libérée.") + suffix)
+                    else:
+                        self.purge_btn.config(
+                            text=tr("Purge échouée"), fg=RED
+                        )
+                        self._log(
+                            tr(
+                                "Purge impossible : {error}",
+                                error=str(item[2])[:90],
+                            )
+                        )
+                    if not self.running:
+                        self.purge_btn.config(state="normal")
+                    self.after(3500, self._reset_purge_button)
+                elif kind == "caption":
+                    if self.caption_window is not None:
+                        try:
+                            if self.caption_window.winfo_exists():
+                                self.caption_window.on_caption_result(
+                                    str(item[1])
+                                )
+                        except Exception:  # noqa: BLE001
+                            pass
                 elif kind == "log":
                     self._log(str(item[1]))
                 elif kind == "drop":
@@ -3236,6 +3405,42 @@ class StableCraftApp(tk.Tk):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _open_tools(self) -> None:
+        if self.running:
+            return
+        if self.tools_window is not None:
+            try:
+                if self.tools_window.winfo_exists():
+                    self.tools_window.deiconify()
+                    self.tools_window.lift()
+                    self.tools_window.focus_force()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        from tools_ui import ToolsWindow  # noqa: PLC0415
+
+        self.tools_window = ToolsWindow(self)
+
+    def _on_tools_closed(self, window: Any) -> None:
+        if self.tools_window is window:
+            self.tools_window = None
+
+    def _open_caption(self) -> None:
+        if self.running:
+            return
+        if self.caption_window is not None:
+            try:
+                if self.caption_window.winfo_exists():
+                    self.caption_window.deiconify()
+                    self.caption_window.lift()
+                    self.caption_window.focus_force()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        from caption_ui import CaptionWindow  # noqa: PLC0415
+
+        self.caption_window = CaptionWindow(self)
+
     def _open_xyz(self) -> None:
         if self.running:
             return
@@ -3303,6 +3508,34 @@ class StableCraftApp(tk.Tk):
     def _on_xyz_closed(self, window: Any) -> None:
         if self.xyz_window is window:
             self.xyz_window = None
+
+    def _start_caption_bridge(self, job_path: Path, label: str) -> None:
+        if self.running:
+            return
+        python, error = self._comfy_python()
+        if error:
+            messagebox.showerror(tr("Python ComfyUI introuvable"), error)
+            return
+        bridge = ROOT / "prototypes" / "bridge_cli.py"
+        if not bridge.exists():
+            messagebox.showerror(tr("Bridge introuvable"), str(bridge))
+            return
+        command = [
+            python,
+            str(bridge),
+            "--config",
+            str(self.config_path),
+            "--caption-job",
+            str(job_path),
+        ]
+        self.job_kind = "caption"
+        self._start_bridge(command, label)
+        if not self.running:
+            self.job_kind = "generate"
+
+    def _on_caption_closed(self, window: Any) -> None:
+        if self.caption_window is window:
+            self.caption_window = None
 
     def _open_model_manager(self) -> None:
         from model_manager import ModelManager  # noqa: PLC0415 - avoids import cycle
@@ -5204,6 +5437,9 @@ class StableCraftApp(tk.Tk):
                 kind, _, payload = line.partition(":")
                 self.queue.put((kind.strip().lower(), payload.strip()))
                 continue
+            if line.startswith("CAPTION:"):
+                self.queue.put(("caption", line.split(":", 1)[1].strip()))
+                continue
             if line.startswith("LIVE_PREVIEW:"):
                 self.queue.put(("live_preview", line.split(":", 1)[1].strip()))
                 continue
@@ -5228,6 +5464,9 @@ class StableCraftApp(tk.Tk):
     def _finish(self, code: int) -> None:
         if self.job_kind == "xyz":
             self._finish_xyz(code)
+            return
+        if self.job_kind == "caption":
+            self._finish_caption(code)
             return
         self.running = False
         self.preview_paths["live"] = None
@@ -5295,6 +5534,30 @@ class StableCraftApp(tk.Tk):
             try:
                 if window.winfo_exists():
                     window.on_bridge_done(code, self.last_error)
+            except Exception:  # noqa: BLE001
+                pass
+        self.pending_session_id = None
+        self.pending_generation = None
+        self._set_progress(0, tr("Prêt."))
+        self.progress_label.config(text=tr("Prêt."), fg=MUTED)
+        self.job_kind = "generate"
+        self.proc = None
+        self._flush_pending_favorites()
+
+    def _finish_caption(self, code: int) -> None:
+        self.running = False
+        self._stop_progress_animation()
+        self.cancel_btn.config(state="disabled")
+        self._update_lora_ui()
+        self._update_reference_for_profile()
+        self._update_generate_state()
+        window = self.caption_window
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.on_bridge_done(
+                        code, self.last_error, self._cancel_requested
+                    )
             except Exception:  # noqa: BLE001
                 pass
         self.pending_session_id = None
@@ -5579,11 +5842,17 @@ class StableCraftApp(tk.Tk):
                 pass
         self._stop_progress_animation()
         self._flush_pending_favorites()
-        if self.xyz_window is not None:
+        if self.caption_window is not None:
             try:
-                self.xyz_window.destroy()
+                self.caption_window.shutdown()
             except Exception:  # noqa: BLE001
                 pass
+        for window in (self.xyz_window, self.tools_window):
+            if window is not None:
+                try:
+                    window.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
         self.destroy()
 
 
